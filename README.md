@@ -131,7 +131,10 @@ the position is mixed rather than bad.
   driver (`FB_SIMPLE`) painting the framebuffer the bootloader happens to leave.
 - **No driver in the tree matches the panel.** The device tree declares
   `compatible = "jdi,lpm089a128a"` on two ganged DSI panel nodes; nothing binds to
-  it. The nearest driver in the tree is a *different* JDI panel.
+  it. The nearest driver in the tree is a *different* JDI panel. The sequences,
+  timings and power order a driver needs are now extracted — see
+  [`notes/panel.md`](notes/panel.md) — and `panel-jdi-lpm102a188a.c` is the closest
+  template in the tree.
 - 3D is the more encouraging part: nouveau does support `nvidia,gk20a`, and all
   eight firmware blobs it needs ship in linux-firmware. But the GPU has no display
   hardware of its own, so nouveau runs as a render node and needs a working DRM
