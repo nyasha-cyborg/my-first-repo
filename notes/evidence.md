@@ -105,3 +105,118 @@ Wi-Fi board: `compatible = "google,flounder64"`. It carries no `hw-revision`
 property and no `chassis`, and it includes the downstream-style
 `tegra132-flounder-emc.dtsi` (195 KB of EMC timings) alongside the upstream-named
 `tegra132.dtsi`.
+
+## The bootloader's DTB gate (measured in `hboot.img`, 2026-10-16)
+
+The gate was previously inferred from the fact that both stock images carry all
+four DTBs. It is now read out of the bootloader itself.
+
+- `bootloader.img` is a **256-byte HTC wrapper followed by a ZIP** — first local
+  file header at offset 256, central directory at 2,970,021, end-of-central-dir at
+  2,970,755. The compressed body is why a naive `strings` pass finds nothing.
+- The ZIP holds the whole Tegra boot chain: `hboot.img` (1,045,984), `nvtboot.img`
+  (125,072), `nvtbootwb0.bin` (2,048), `rawbct.img` (8,704), `tos.img` (2,663,168),
+  `sp1.nb0` (6,291,456), `mts_preboot_prod`, `mts_prod`, `gp1.img` (a GPT),
+  `pt_16g.img` / `pt_32g.img` / `pt_64g.img`, and `_android-info.txt` (`board=flounder`).
+- `hboot.img` is raw **ARM 32-bit** (begins `07 00 00 ea`, an ARM branch table) with
+  no ELF wrapper, so it needs
+  `llvm-objcopy -I binary -O elf32-littlearm --binary-architecture=arm` before a
+  disassembler will take it. REA/Ghidra 12.1.4 then decompiles it.
+- The gate function is `FUN_00081ac0`, and it carries these strings — which are the
+  entire argument, in hboot's own words:
+
+  | string | role |
+  |---|---|
+  | `Checking appended FDT at offset 0x%08x\n` | progress, per candidate |
+  | `kernel_has_appended_dtb` | the mechanism it is looking for |
+  | `%s: Invalid fdt header. err: %s\n` | header validation failure |
+  | `%s: FDT size larger than boot image\n` | bounds failure |
+  | `hw-revision` | the second, conditional test |
+  | `Found compatible dtb image at offset 0x%08x, kernel size 0x%08x\r\n` | success |
+  | `Can not find a compatible dtb image\r\n` | the failure we were chasing |
+
+  It also contains both `google,flounder64` and `google,flounder64_lte`.
+
+- Decoded logic — ordinary libfdt use, for each DTB appended in the kernel region:
+  1. read the 40-byte FDT header and validate the magic (`0x28` is the length passed);
+  2. take `totalsize` from header offset 4 and byte-swap it from big-endian;
+  3. bounds-check the DTB against the image size;
+  4. `fdt_path_offset(fdt, "/")` — the `/` literal in the pool;
+  5. `fdt_node_check_compatible(fdt, root, required_compatible)` must return 0;
+  6. `fdt_get_property(fdt, root, "hw-revision")` — **if the property is absent the
+     DTB is accepted immediately**; only if it is present must it match the board.
+- The board revision is a **single letter `a`–`h`**: the comparison path ends in a
+  nine-case switch over one-character strings. That explains the stock values —
+  `"xa,xb"`, `"xc"`, `"xd,xe,pvt"` and `"xa,xb,xc,xd,pvt"` are token lists over
+  those revision letters, not opaque blobs.
+
+**Consequence.** The one-line `compatible` change is *sufficient* — the Wi-Fi DTS
+carries no `hw-revision`, so step 6 accepts it without a revision test — and it is
+*safer* than porting the downstream LTE board file, which would add
+`hw-revision = "xa,xb,xc,xd,pvt"` and thereby arm a second check that can fail. The
+stock LTE DTB covers revisions a–d only; ours, by omitting the property, is
+revision-agnostic and strictly more permissive than Google's own.
+
+Not yet verified: which compatible string the caller (`FUN_0007e084`) passes on LTE
+hardware. hboot holds both strings, so the choice is made at runtime.
+
+Address note: REA reports Ghidra addresses as raw image offset + `0x10000`, and the
+wrapped copy shifts `.data` by a further `0x174`, so an REA address maps to file
+offset `addr - 0x10000 + 0x174`.
+
+## Boot image container (measured)
+
+- The header is the **legacy HTC layout, not modern AOSP**: `name[16]` at `+0x30`
+  and `cmdline[512]` at `+0x40`. Modern `mkbootimg` writes a 32-byte `id` there and
+  puts the cmdline at `+0x50`, so a rebuilt header would parse differently. The
+  stock header must be reused verbatim.
+- Header fields: page_size 2,048 · dt_size 0 · kernel_addr `0x10008000` ·
+  ramdisk_addr `0x11000000` · second_addr `0x10f00000` · tags_addr `0x10000100` ·
+  cmdline `androidboot.hardware=flounder buildvariant=user`.
+- The kernel region is `gzip(Image) || DTB || DTB || DTB || DTB` with **no padding
+  gap** — the last DTB ends exactly where `kernel_size` ends. The DTBs live inside
+  `kernel_size`, which is precisely what hboot scans for.
+- `tools/bootimg-repack.py` performs the transplant: it parses the stock header,
+  rebuilds the kernel region from a supplied `Image` plus DTBs, rewrites
+  `kernel_size`, and leaves the wrapper, header and ramdisk untouched.
+
+## Local 6.19 build (2026-10-16)
+
+- Source `yuka/linux`, branch `flounder`, commit `38ff6862` (shallow clone).
+- Built exactly as the pmOS recipe does — `make ARCH=arm64 LLVM=1` with clang 23.1.1
+  and LLD — using the port's own `config-htc-flounder.aarch64` as
+  `arch/arm64/configs/flounder_defconfig`.
+- Result: `Image` 20,371,464 bytes, banner
+  `Linux version 6.19.0-htc-flounder-g38ff68627120-dirty`, 2,480 objects.
+- Packaged as `boot-lte-6.19.img` (10,885,376 bytes) — stock wrapper, stock header,
+  stock ramdisk (sha256 unchanged), gzip kernel + the LTE DTB at `0x8ba03a`.
+- The built DTB was verified to carry `google,flounder64_lte` and to have **no**
+  `hw-revision` at the root, which is what makes the gate accept it.
+
+## Display and GPU: what the port's config actually does
+
+Measured from the current `config-htc-flounder.aarch64` (220 KB, 6.19-era):
+
+- `# CONFIG_TEGRA_HOST1X is not set` — the display controller stack is not built.
+- `# CONFIG_DRM_TEGRA is not set` — the Tegra DRM driver is not built.
+- `# CONFIG_DRM_SIMPLEDRM is not set` — not even DRM over the bootloader framebuffer.
+- `CONFIG_FB_SIMPLE=y` with `CONFIG_FRAMEBUFFER_CONSOLE=y` — the screen is driven by
+  the *legacy* fbdev path over the `simple-framebuffer` the bootloader leaves behind.
+- `CONFIG_DRM_NOUVEAU=m` — the 3D driver **is** built, but as a module, so it is
+  absent from an `Image`-only build.
+
+So "screen: partial" is a configuration choice plus a missing driver, not a hardware
+limit. There is no DRM/KMS display path at all, and therefore no DRM device for
+nouveau's PRIME to present through.
+
+- The device tree already declares the hardware: `nvidia,tegra132-dsi` on both DSI
+  controllers in ganged mode, two `panel@0` nodes with
+  `compatible = "jdi,lpm089a128a"`, `nvidia,tegra124-dc`, and `nvidia,gk20a`.
+- **No driver anywhere in the tree matches `jdi,lpm089a128a`.** The nearest is
+  `panel-jdi-lpm102a188a.c`, a different JDI panel. Counted across the whole 6.19
+  tree, the string `lpm089` appears only in the flounder DTS.
+- nouveau does support GK20A — `nvkm/engine/gr/gk20a.c`, `ctxgk20a.c`, `gk20a_fifo`,
+  `gk20a_clk`, `gk20a_devfreq`, and a `nvidia,gk20a` platform binding.
+- All eight firmware blobs it needs are present in linux-firmware on this machine:
+  `nvidia/gk20a/{fecs,gpccs}_{data,inst}.bin`, `sw_bundle_init.bin`, `sw_ctx.bin`,
+  `sw_method_init.bin`, `sw_nonctx.bin`.
