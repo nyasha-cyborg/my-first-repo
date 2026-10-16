@@ -54,25 +54,31 @@ notes/     measured evidence, the porting projects, the panel, the display port,
 ## Building a flashable boot image
 
 The kernel is `yuka/linux`, branch `flounder`, commit `38ff6862` — the fork the
-postmarketOS kernel package pins to. It builds with **clang, not GCC**, exactly as
-that package does:
+postmarketOS kernel package pins to. It is a **build input, not tracked here**;
+see [`SOURCES.md`](SOURCES.md) for its provenance and licence. `setup.sh` clones
+it, pins it to that commit, applies `patches/` and installs
+`configs/flounder_defconfig`, so this repository reproduces the tree on its own.
+It builds with **clang, not GCC**, exactly as that package does:
 
 ```sh
-git clone --branch flounder --single-branch --depth 1 https://cyberchaos.dev/yuka/linux.git
-# the port's own config, as arch/arm64/configs/flounder_defconfig:
-curl -o arch/arm64/configs/flounder_defconfig \
-  https://gitlab.postmarketos.org/postmarketOS/pmaports/-/raw/main/device/testing/linux-htc-flounder/config-htc-flounder.aarch64
+./setup.sh                 # creates ./linux-flounder and ./linux-flounder-out
 
-make O=out ARCH=arm64 LLVM=1 -j8 flounder_defconfig
-make O=out ARCH=arm64 LLVM=1 -j8 dtbs Image
+make -C linux-flounder O=$PWD/linux-flounder-out ARCH=arm64 LLVM=1 -j"$(nproc)" dtbs Image
 
 python3 -I tools/bootimg-repack.py \
     --stock ~/Downloads/nexus9/extract-lte/boot.img \
-    --image out/arch/arm64/boot/Image \
-    --dtb   out/arch/arm64/boot/dts/nvidia/tegra132-flounder.dtb \
+    --image linux-flounder-out/arch/arm64/boot/Image \
+    --dtb   linux-flounder-out/arch/arm64/boot/dts/nvidia/tegra132-flounder.dtb \
     --append-cmdline "console=tty0" \
     -o boot-lte.img
 ```
+
+`configs/flounder_defconfig` is a snapshot of that same postmarketOS config,
+kept here so the build does not depend on a URL that can move under it. Refresh
+it from the pmaports path recorded in `SOURCES.md` when upstream changes.
+
+Build `dtbs` alone after a device-tree change — it takes seconds, whereas
+`Image` rebuilds the kernel.
 
 The image format is the **legacy HTC layout, not modern AOSP**: the command line
 sits at `+0x40` rather than `+0x50`, there is a 256-byte `78 56 34 12` wrapper
