@@ -173,31 +173,54 @@ output stage, and it also does jack detection. **Mainline has no rt5506 driver**
 (`grep -rl rt5506 sound/` is empty), so the rt5677 node committed above gives a
 card whose headphone output has nothing to drive it.
 
-## Finding 6 — the speaker path needs a machine driver, not just a DT node
+## Finding 6 — the speaker path is DT, and the card driver to use is graph-based
 
-The obvious way to express two amps on one I2S is the generic `audio-graph-card`.
-It cannot be used here:
+An earlier version of this note claimed the speaker path needed a machine driver
+because `tegra30_i2s.c` has no `of_graph` support. **That reasoning was wrong.**
+`audio-graph-card` parses the graph out of the device tree itself and resolves
+each component by matching its `of_node`; the CPU-side driver does not need
+graph support. What the DT needs is `port`/`endpoint` nodes, and those can be
+added in the board file, since `i2s@70301200` is already overridden there.
 
-- `tegra30_i2s.c` has **no `of_graph` / `fwnode_graph` support at all**;
-- the I2S nodes in `tegra132.dtsi` declare no `port` subnodes.
+What *is* true and does constrain the choice:
 
-`audio-graph-card` binds a CPU DAI through a graph endpoint, so with neither
-end of the graph present there is nothing for it to resolve. And
-`simple-audio-card` carries only one codec per link, which two amps do not fit.
+- `simple-audio-card` is hard-limited to **one codec per link** — the parser is
+  `of_get_child_by_name(node, "codec")`, which returns a single node. Two amps
+  do not fit.
+- The qcom `sound` nodes that do carry two amps use
+  `codec { sound-dai = <&top>, <&bottom>; };` — a phandle *list*, which is that
+  card driver's own extension, not something `simple-audio-card` parses.
+- Both generic graph drivers are already enabled
+  (`SND_AUDIO_GRAPH_CARD=m`, `SND_AUDIO_GRAPH_CARD2=m`).
 
-So the speaker path needs the same thing downstream had: a **machine driver**
-that declares two DAI links — which is exactly why `tegra_rt5677.c` existed.
-This is code, not device tree.
+So the speaker path is device tree work after all, using a graph card.
+
+## Templates that already exist in this tree
+
+- **`tegra124-xiaomi-mocha.dts`** — the Shield Tablet, same Tegra124 family,
+  declares two `nxp,tfa9890` amps at 0x36/0x37 with `sound-name-prefix`
+  "Speaker Right" / "Speaker Left" and a `vddd-supply`. Closest hardware match
+  to flounder's speaker path. Note it declares the amps but has **no card node**,
+  so the amps are described and unwired — mainline has not finished the Shield
+  Tablet's audio either.
+- **`msm8916-alcatel-idol347.dts`** — a working two-amp card, with
+  `pin-switches` so the speakers can be disabled individually.
+- **`nxp,tfa989x.yaml`** documents exactly this topology: two amp nodes, each
+  with `sound-name-prefix`, `#sound-dai-cells = <0>`, optional `vddd-supply`.
+  It sets `additionalProperties: false`, so whether it tolerates the `port`
+  subnode a graph card needs is unverified here — the same schema check that
+  could not be run.
 
 ## The two paths, honestly
 
 | Path | What it is blocked on |
 |---|---|
-| Headphones | an **rt5506 driver** (none in mainline) |
-| Speakers | a **machine driver** for two amps on one I2S (none in mainline) |
+| Headphones | an **rt5506 driver** — mainline has none, and the register map would have to come out of the shipped binary |
+| Speakers | device tree only — amp nodes plus a graph card |
 
-Neither is a DT change. The node committed here is real progress — it registers
-a card and proves the wiring — but it is not yet a path to sound.
+The node committed here registers a card and proves the rt5677 wiring, but its
+headphone output has no driver behind it. The speaker path is the one that can
+be finished in the device tree.
 
 ## What was implemented
 
@@ -227,14 +250,19 @@ PLL_A (216) / PLL_A_OUT0 (217) / PMC CLK_OUT_1, and the GPIOs to 131 and 188.
   python package, which is not installed here. The node was checked by hand
   against `nvidia,tegra-audio-rt5677.yaml` and `realtek,rt5677.yaml` instead,
   which is exactly the gap the panel driver's binding still has.
-- **The speaker path is untouched**, and Findings 5 and 6 say both paths need
-  code rather than DT. The decision below is which driver to write first.
-- **Which path to take is now the open question**, and it is a driver job
-  either way. Headphones need an rt5506 driver; speakers need a machine driver.
-  The machine driver is the more conventional work — the amp driver already
-  exists and downstream's `tegra_rt5677.c` is a reference — while the speaker
-  path also gives up the shipped acoustic tuning, which the amps' ioctl
-  configuration used to apply.
+- **The speaker path is untouched.** Per Finding 6 it is device tree work: two
+  `nxp,tfa9895` nodes at 0x34 and 0x35 with a shared `vddd-supply` gated by the
+  `tfa9895-power-enable` GPIO (PX5 downstream), plus graph endpoints on
+  `i2s@70301200`, and a `sound` node using a graph card.
+- **It will run without the shipped acoustic tuning.** The amps' protection and
+  EQ configuration was applied from the Android HAL over ioctl
+  (`TFA9895_WRITE_CONFIG`), so mainline gets the hardware defaults. That is a
+  behaviour difference to expect, not a bug to chase.
+- **Mainline's amp DAI is narrower than the path**: `tfa989x-hifi` is
+  playback-only, `S16_LE`, 8-48 kHz.
+- **The `rt5506` register map is not known.** Writing that driver would mean
+  recovering it from the shipped binary — a reverse-engineering job on the scale
+  of the panel work, not a driver-writing one.
 - `dtbs` builds clean, but three pre-existing warnings appear from the port's own
   DT, not from this change: `usb@7d000000` / `usb@7d004000` / `usb@7d008000`
   each share a unit address with their `usb-phy@` sibling.
