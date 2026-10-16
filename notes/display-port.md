@@ -89,6 +89,48 @@ built-in symbol inside a module, which cannot exist. `drm_mipi_dsi.c` was never
 compiled and every `mipi_dsi_*` export was undefined at modpost. The fix is to
 build the DRM stack in (`DRM=y`), which is what a display driver wants anyway.
 
+## DSI mode: sync events, not sync pulses
+
+The driver sets:
+
+```c
+dsi->mode_flags = MIPI_DSI_MODE_VIDEO | MIPI_DSI_CLOCK_NON_CONTINUOUS;
+```
+
+That was a real risk, because the Tegra DSI host treats `MIPI_DSI_MODE_VIDEO` and
+`MIPI_DSI_MODE_VIDEO_SYNC_PULSE` as a two-bit switch selecting *different packet
+sequences* (`drivers/gpu/drm/tegra/dsi.c:497-505`), and "non-burst" alone does not
+say which.
+
+The downstream driver settles it. It picks its packet sequence from
+`video_burst_mode`, and the panel sets `TEGRA_DSI_VIDEO_NONE_BURST_MODE` — the
+plain variant, not `_WITH_SYNC_END`:
+
+```c
+case TEGRA_DSI_VIDEO_NONE_BURST_MODE_WITH_SYNC_END:
+        pkt_seq = dsi_pkt_seq_video_non_burst_syne;
+case TEGRA_DSI_VIDEO_NONE_BURST_MODE:
+default:
+        pkt_seq = dsi_pkt_seq_video_non_burst;      /* ours */
+```
+
+Comparing that sequence against both mainline candidates entry by entry:
+
+```
+downstream 'non_burst' == mainline 'sync_events' ?  True    (all 13 entries)
+downstream 'non_burst' == mainline 'sync_pulses' ?  False
+```
+
+`dsi_pkt_seq_video_non_burst` is identical to `pkt_seq_video_non_burst_sync_events`
+— `V_SYNC_START + EOT`, then `H_SYNC_START + EOT` pairs, then the
+`H_SYNC_START + BLANKING + PIXEL24` and `BLANKING` pair. Mainline selects that
+sequence exactly when `SYNC_PULSE` is **clear**.
+
+So `SYNC_PULSE` must stay absent and the flags are correct as written. Two further
+notes for anyone changing this later: Tegra has **no burst branch at all**
+(`MIPI_DSI_MODE_VIDEO_BURST` has no consumer under `drivers/gpu/drm/tegra/`), and
+the `_HSE` / `NO_HFP` / `NO_HBP` / `NO_HSA` flags are likewise no-ops there.
+
 ## The risk this carries
 
 `drivers/gpu/drm/tegra/drm.c:1260`:
