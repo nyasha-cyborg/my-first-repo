@@ -120,6 +120,23 @@ dmesg | tail -30                # any "new USB device" line?
 - A device appears but `fastboot devices` is empty → it is enumerating as
   something other than a fastboot device; check the screen state.
 
+## Observed state, 2026-10-16
+
+The tablet has not enumerated on USB yet. What was actually seen, as opposed to
+assumed:
+
+- The tablet's LED blinks when plugged in, so the cable carries **power**.
+- **No USB bus activity at all**: no HTC (`0bb4`) or Google (`18d1`) device, no
+  line in `dmesg`, `fastboot devices` empty — across repeated checks and a
+  90-second window in which the tablet was unplugged and replugged.
+- The one enumeration failure on the same bus belonged to an unrelated LG
+  monitor hub peripheral (`error -32`, `error -71`), which is what an
+  underpowered hub port looks like, not what the tablet looks like.
+
+Power without data is the signature of a **charge-only or damaged cable**. The
+test that settles it: use the same cable with a different device that needs
+data. If that one also only charges, the cable is proven.
+
 ## Still unproven, no matter how this goes
 
 Nothing in this repository has ever run on this hardware. The boot gate is the
