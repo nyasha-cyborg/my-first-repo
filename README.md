@@ -140,9 +140,13 @@ the position is mixed rather than bad.
   hardware of its own, so nouveau runs as a render node and needs a working DRM
   display to present through.
 
-So the ladder is: get *a* DRM device (`DRM_SIMPLEDRM` is a one-line start, and enough
-for a compositor with software rendering) → write the panel driver for real
+So the ladder is: get *a* DRM device → write the panel driver for real
 mode-setting and backlight → nouveau plus PRIME for hardware 3D.
+
+A panel driver is now written and the whole display stack builds — see
+[`notes/display-port.md`](notes/display-port.md) for the driver, the device tree
+and kernel config changes it needs, and the two-image arrangement that keeps a
+working console available while it is proven. None of it has run on hardware yet.
 
 ## Where the work actually stands
 
