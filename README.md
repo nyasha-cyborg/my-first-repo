@@ -16,17 +16,20 @@ board's `compatible` string, so a kernel whose DTS says `google,flounder64` is
 rejected on LTE hardware, which wants `google,flounder64_lte`. That is what
 `patches/dts-compatible-flounder64-lte.patch` changes.
 
-**The measurements do not support it.** Both stock boot images ship the *same*
-device trees — including one that already says `google,flounder64_lte` — so the
-device tree is not what distinguishes the variants. The difference is in the
-kernel build. See `notes/evidence.md`.
+**That looks right, and it is what the patch does.** Each stock boot image carries
+the *same set of four* device trees — one per board revision, including an LTE one
+that already says `google,flounder64_lte` — so the set itself does not tell the two
+variants apart; the bootloader picks from it by `compatible` and `hw-revision`. A
+kernel built from the Wi-Fi tree alone therefore has nothing the LTE bootloader will
+accept. See `notes/evidence.md` for the measurements and `notes/projects.md` for
+who else has been down this road and where they stopped.
 
 ## Layout
 
 ```
 tools/     read-only extractors for the boot image and its device trees
-patches/   the DTS `compatible` hypothesis, kept as a record
-notes/     measured evidence taken from the two stock images
+patches/   the DTS `compatible` change, and the file it was made against
+notes/     measured evidence, and the state of the existing porting projects
 ```
 
 ## Data
@@ -59,19 +62,23 @@ directly. `fdt-scan.py` finds embedded flattened device trees by the `d00dfeed`
 magic and prints their early strings, which is where `compatible` and `hw-revision`
 live.
 
-## Answering the original question
+## Where the work actually stands
 
-1. **Diff the two kernel configs.** They are the same version but different commits
-   (`gfa7d4389a60` LTE vs `g0a2199e` Wi-Fi) built six months apart. The kernel is
-   where the variants diverge, so that is where the LTE/Wi-Fi difference has to be.
-2. **Work out what the four DTBs in each image are for.** They are distinct builds
-   of slightly different size, the bootloader picks one of them, and the set is
-   identical across both variants — which is itself the evidence against the DTS
-   patch being the answer.
-3. **Only then** decide whether a DTS change is needed at all, and if so for
-   *mainline* boot rather than for the stock images.
+1. **The four DTBs are now identified.** They are the four downstream board files —
+   `xa,xb`, `xc`, `xd,xe,pvt`, and the LTE `xa,xb,xc,xd,pvt` — and both stock images
+   ship all four. So the question is not "which DTB" but "does the tree you build
+   from carry an LTE-compatible board file".
+2. **The DTS change is already known to be necessary, but not sufficient on its own
+   terms.** The postmarketOS wiki records the same finding, and the commit it cites
+   is a one-line probe by `dcambie` (2023-04-14) that says "Ugly hack — just to check
+   if this is really the issue" — the same one-line change as
+   `patches/dts-compatible-flounder64-lte.patch`. Nobody followed it up.
+3. **Everything else is out of tree.** Upstream Linux has no Nexus 9 device tree at
+   all, so any port lives in a personal fork. See `notes/projects.md`.
 
 ## Status
 
-Extraction and comparison are done and reproducible. The kernel-config comparison
-(step 1) is the next piece of work.
+Extraction and comparison are done and reproducible, and the existing projects have
+been surveyed. The next useful step is to decide whether to carry the LTE fix
+locally, or to push it into the fork postmarketOS builds — see `notes/projects.md`
+for why that fork is the one that matters.

@@ -52,15 +52,31 @@ only their offsets move, and the shift is exactly the kernel size difference
 | 107,842 | `52d18069409495f895a7761945583ae22693afd445ceb5c35871c34ab9a4d3c9` | `0x6a22e6` | `0x6a574a` | `google,flounder64` | `xd,xe,pvt` |
 | 107,850 | `bc9141a42e98948d1851ed9690f01b40abbe11cebf208d2a3513e3f76b0fbf11` | `0x6bc828` | `0x6bfc8c` | `google,flounder64_lte` | `xa,xb,xc,xd,pvt` |
 
-The four entries are different sizes, so they are genuinely four builds rather than
-copies; the `hw-revision` values differ between them, so the set looks like per
-board-revision device trees that the bootloader picks from. **Which revision maps to
-which entry is not yet established.**
+The four entries are different sizes and carry different `hw-revision` values, so
+they are four distinct builds. Reading the `hw-revision` property out of each blob
+(this needs a real parse — `xc` is too short for `strings` to show) identifies them
+exactly, and they match the four board files in the downstream Android kernel:
 
-The point that matters: an LTE boot image already carries a `google,flounder64_lte`
-device tree, and a Wi-Fi boot image carries exactly the same one. Editing a DTS
-`compatible` string therefore does not explain why one variant's kernel would refuse
-to come up on the other's hardware.
+| blob size | `compatible` | `hw-revision` | downstream source file |
+|---|---|---|---|
+| 107,788 | `google,flounder64` | `xa,xb` | `tegra132-flounder-xaxb.dts` |
+| 107,784 | `google,flounder64` | `xc` | `tegra132-flounder-xc.dts` |
+| 107,842 | `google,flounder64` | `xd,xe,pvt` | `tegra132-flounder-xdxepvt.dts` |
+| 107,850 | `google,flounder64_lte` | `xa,xb,xc,xd,pvt` | `tegra132-flounder_lte-xaxbxcxdpvt.dts` |
+
+Those sources are in the Android 3.10 tree (e.g.
+`CaptainThrowback/kernel_android-tegra-flounder-3.10`, branch `BeyondStock-M-MR1`,
+`arch/arm64/boot/dts/`), and each one just sets `compatible` plus `hw-revision` on
+top of the shared `tegra132-flounder-generic.dtsi`.
+
+**What this means.** The DTB set is per board *revision*, not per variant, and both
+stock images carry the complete set — including the LTE blob. So the set does not
+distinguish Wi-Fi from LTE; the bootloader does, by matching `compatible` and
+`hw-revision`, which is why an LTE boot image is happy to contain a Wi-Fi blob it
+will never choose. Building a kernel from the Wi-Fi board file alone produces a
+single DTB that the LTE bootloader has no reason to accept. The `compatible` change
+in `patches/dts-compatible-flounder64-lte.patch` is therefore the right kind of fix,
+and corresponds exactly to the two stock DTBs that Google built for these boards.
 
 ## Ramdisks
 
@@ -75,3 +91,17 @@ to come up on the other's hardware.
 
 That is build metadata, SELinux policy and a handful of binaries — no board
 description, no kernel configuration.
+
+## Provenance of the patched file
+
+`patches/flounder.dts.orig` is byte-identical (sha256
+`578f10226fb341e32961a3fe853ed106e6f91957370f0feeaef16187ab556371`) to
+`arch/arm64/boot/dts/nvidia/tegra132-flounder.dts` in **`yuka/linux`** at commit
+`38ff68627120b204b30d030e5f4dd7d1ee33acc3` — the fork postmarketOS's kernel package
+pins. So the patch is not against upstream, which has no such file.
+
+That fork's tree is the surviving flounder device tree, and it is written for the
+Wi-Fi board: `compatible = "google,flounder64"`. It carries no `hw-revision`
+property and no `chassis`, and it includes the downstream-style
+`tegra132-flounder-emc.dtsi` (195 KB of EMC timings) alongside the upstream-named
+`tegra132.dtsi`.
