@@ -153,6 +153,52 @@ Mainline's `tfa989x` DAI is also narrower than the path needs:
 
 The `tfa9895-power-enable` GPIO is a single pin shared by both amps.
 
+## Finding 5 — the rt5506 is the headphone output stage, and has no driver
+
+This settles the open question from Finding 1, and the answer is bad for the
+headphone path. The shipped kernel carries a complete driver for it:
+
+```
+rt5506_probe        set_rt5506_hp_en        rt5506_volume_ramp
+rt5506_headset_detect   set_rt5506_amp      rt5506_set_gain
+```
+
+plus two GPIOs (`rt5506-enable`, `rt5506-power-en`) and an LDO
+(`rt5506_reg ldoen is enabled`). Its compat string is `richtek,rt5506-amp`, and
+its mixer control is literally "Headset rt5506 Volume", with headset impedance
+detection alongside it.
+
+So the amp is not an optional accessory to the jack — it *is* the headphone
+output stage, and it also does jack detection. **Mainline has no rt5506 driver**
+(`grep -rl rt5506 sound/` is empty), so the rt5677 node committed above gives a
+card whose headphone output has nothing to drive it.
+
+## Finding 6 — the speaker path needs a machine driver, not just a DT node
+
+The obvious way to express two amps on one I2S is the generic `audio-graph-card`.
+It cannot be used here:
+
+- `tegra30_i2s.c` has **no `of_graph` / `fwnode_graph` support at all**;
+- the I2S nodes in `tegra132.dtsi` declare no `port` subnodes.
+
+`audio-graph-card` binds a CPU DAI through a graph endpoint, so with neither
+end of the graph present there is nothing for it to resolve. And
+`simple-audio-card` carries only one codec per link, which two amps do not fit.
+
+So the speaker path needs the same thing downstream had: a **machine driver**
+that declares two DAI links — which is exactly why `tegra_rt5677.c` existed.
+This is code, not device tree.
+
+## The two paths, honestly
+
+| Path | What it is blocked on |
+|---|---|
+| Headphones | an **rt5506 driver** (none in mainline) |
+| Speakers | a **machine driver** for two amps on one I2S (none in mainline) |
+
+Neither is a DT change. The node committed here is real progress — it registers
+a card and proves the wiring — but it is not yet a path to sound.
+
 ## What was implemented
 
 `patches/flounder-audio.patch`, applied after the cumulative patch. It is
@@ -181,14 +227,14 @@ PLL_A (216) / PLL_A_OUT0 (217) / PMC CLK_OUT_1, and the GPIOs to 131 and 188.
   python package, which is not installed here. The node was checked by hand
   against `nvidia,tegra-audio-rt5677.yaml` and `realtek,rt5677.yaml` instead,
   which is exactly the gap the panel driver's binding still has.
-- **The speaker path is untouched.** It needs two amp nodes on `tegra_i2s2`, a
-  multi-codec card (generic `audio-graph-card`, not the Tegra one), and it will
-  run without the shipped acoustic tuning. Given the amps also want a power
-  enable GPIO and bring 16-bit-only playback with them, this is the larger job.
-- **The `rt5506` question is unresolved.** It sits on the headphone path with no
-  mainline driver, and the shipped kernel configures it. Whether playback needs
-  it or the codec drives the jack directly is the thing most likely to decide
-  whether this node produces sound.
+- **The speaker path is untouched**, and Findings 5 and 6 say both paths need
+  code rather than DT. The decision below is which driver to write first.
+- **Which path to take is now the open question**, and it is a driver job
+  either way. Headphones need an rt5506 driver; speakers need a machine driver.
+  The machine driver is the more conventional work — the amp driver already
+  exists and downstream's `tegra_rt5677.c` is a reference — while the speaker
+  path also gives up the shipped acoustic tuning, which the amps' ioctl
+  configuration used to apply.
 - `dtbs` builds clean, but three pre-existing warnings appear from the port's own
   DT, not from this change: `usb@7d000000` / `usb@7d004000` / `usb@7d008000`
   each share a unit address with their `usb-phy@` sibling.
