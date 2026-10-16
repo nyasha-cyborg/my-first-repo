@@ -1,0 +1,10 @@
+# The ROMs and everything extracted from them stay out of git: they are ~1.6 GB of
+# derivable data, and committing them would bloat every clone forever.
+roms/
+extract-*/
+rd-*/
+*.zip
+boot.img
+bootloader.img
+*.dtb
+*.raw
