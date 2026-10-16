@@ -1,3 +1,63 @@
+diff --git a/Documentation/devicetree/bindings/display/panel/jdi,lpm089a128a.yaml b/Documentation/devicetree/bindings/display/panel/jdi,lpm089a128a.yaml
+new file mode 100644
+index 000000000..d7dfaf72e
+--- /dev/null
++++ b/Documentation/devicetree/bindings/display/panel/jdi,lpm089a128a.yaml
+@@ -0,0 +1,54 @@
++# SPDX-License-Identifier: GPL-2.0-only OR BSD-2-Clause
++%YAML 1.2
++---
++$id: http://devicetree.org/schemas/display/panel/jdi,lpm089a128a.yaml#
++$schema: http://devicetree.org/meta-schemas/core.yaml#
++
++title: 'JDI LPM089A128A 1536x2048 8.9" DSI Panel'
++
++maintainers:
++  - Nyasha <nmushambi@proton.me>
++
++description: |
++  The LPM089A128A is an 8.9" panel with a resolution of 1536x2048, found in the
++  Google Nexus 9. It is driven as two ganged DSI links of four lanes each.
++
++allOf:
++  - $ref: panel-common.yaml#
++
++properties:
++  compatible:
++    const: jdi,lpm089a128a
++
++  reg:
++    maxItems: 1
++
++  avdd-supply:
++    description: 4.0V analogue supply for the panel
++
++  iovdd-supply:
++    description: 1.8V IO supply for the panel
++
++  reset-gpios: true
++
++  dcdc-en-gpios:
++    description: Enable for the panel's DC-DC converter
++
++  link2:
++    description: The panel node on the second DSI link, for ganged operation
++
++required:
++  - compatible
++  - reg
++
++if:
++  required:
++    - link2
++then:
++  required:
++    - avdd-supply
++    - iovdd-supply
++    - reset-gpios
++    - dcdc-en-gpios
++
++additionalProperties: false
 diff --git a/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts b/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
 index b3b0bafa9..2cd8157c7 100644
 --- a/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts

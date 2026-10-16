@@ -172,9 +172,12 @@ being applied alongside it. Applying both will conflict on the DTS hunk.
 
 - **Nothing has run on hardware.** Every claim above is from source, build
   output, or the built artifacts. The driver has never bound to the panel.
-- **No device tree binding document.** `Documentation/devicetree/bindings/display/panel/jdi,lpm089a128a.yaml`
-  does not exist and would be required before this could go upstream. The sibling
-  `jdi,lpm102a188a.yaml` is the model.
+- **The binding document is a draft, not a reviewed one.**
+  `Documentation/devicetree/bindings/display/panel/jdi,lpm089a128a.yaml` exists,
+  modelled on the sibling `jdi,lpm102a188a.yaml`, and is carried in
+  `patches/flounder-lte-and-display.patch`. It has never been through
+  `dt_binding_check`, and `link2` is declared without a `$ref` to the phandle
+  type, so expect warnings before it would go upstream.
 - **The CMU and smart-dimming tables are not ported.** They are downstream-only
   (`CONFIG_TEGRA_DC_CMU`) with no mainline equivalent, so expect a different
   colour response from Android until that is addressed separately.
