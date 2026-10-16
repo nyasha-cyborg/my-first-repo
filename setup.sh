@@ -60,6 +60,12 @@ echo "==> applying patches/flounder-lte-and-display.patch"
 git -C "$DEST" apply --verbose \
     "$REPO_ROOT/patches/flounder-lte-and-display.patch"
 
+# Stacks on top of the cumulative patch above; it is the rt5677 sound node,
+# not a replacement for anything in it.
+echo "==> applying patches/flounder-audio.patch"
+git -C "$DEST" apply --verbose \
+    "$REPO_ROOT/patches/flounder-audio.patch"
+
 # --- install the kernel config ---------------------------------------------
 echo "==> installing configs/flounder_defconfig"
 cp "$REPO_ROOT/configs/flounder_defconfig" \

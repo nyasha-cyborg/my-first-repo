@@ -107,10 +107,88 @@ llvm-objcopy -I binary -O elf64-littleaarch64 -B aarch64 \
     ~/Downloads/nexus9/kernel-lte.raw kernel-lte.elf
 ```
 
+## Finding 3 — the Tegra audio graph card cannot be used here
+
+`tegra_audio_graph_card.c` matches only three compatibles:
+
+```c
+{ .compatible = "nvidia,tegra210-audio-graph-card", ... }
+{ .compatible = "nvidia,tegra186-audio-graph-card", ... }
+{ .compatible = "nvidia,tegra264-audio-graph-card", ... }
+```
+
+No Tegra124/132. So the modern Tegra card driver — the one that would express
+several DAI links cleanly — is unavailable, and the single-codec
+`nvidia,tegra-audio-rt5677` machine driver is the only supported route. Its
+shape, from source:
+
+```c
+components = "codec:rt5677"
+dai     = "RT5677", codec DAI name "rt5677-aif1"
+dai_fmt = SND_SOC_DAIFMT_I2S | _NB_NF | _CBC_CFC    /* Tegra is master */
+```
+
+## Finding 4 — the downstream amps were separate drivers, driven by ioctl
+
+REA on the shipped kernel finds two distinct codec drivers, not one:
+
+```
+sound/soc/codecs/tfa9895.c      tfa9895_probe, set_tfa9895_spkamp, tfa9895_disable
+sound/soc/codecs/tfa9895l.c     tfa9895l_probe, set_tfa9895l_spkamp, tfa9895l_disable
+```
+
+and the strings `TFA9895_WRITE_CONFIG`, `TFA9895_READ_CONFIG`,
+`TFA9895_ENABLE_DSP` show they were configured from userspace over ioctl, with
+the machine driver registering them. So the acoustic tuning (protection
+filters, EQ) the tablet shipped with lives in an Android HAL, **not in the
+device tree** — mainline will run these amps at defaults.
+
+Mainline's `tfa989x` DAI is also narrower than the path needs:
+
+```c
+.name = "tfa989x-hifi"          playback only
+.formats = SNDRV_PCM_FMTBIT_S16_LE     16-bit only
+.rates   = 8000..48000
+```
+
+The `tfa9895-power-enable` GPIO is a single pin shared by both amps.
+
+## What was implemented
+
+`patches/flounder-audio.patch`, applied after the cumulative patch. It is
+deliberately the **rt5677 path only** — the one mainline actually has a machine
+driver and binding for.
+
+- `rt5677@2d` gains its label, is enabled, and gets the two optional GPIOs the
+  codec driver asks for: `realtek,pow-ldo2-gpio` (PQ3, active high) and
+  `realtek,reset-gpio` (PX4, active low). Both are downstream board-file
+  numbers.
+- `vdd_audio` (palmas LDO2, 1.2 V) becomes `regulator-always-on`. Downstream
+  consumed this rail as `v_ldo2` from the machine driver; mainline's machine
+  driver has no supply consumer, so nothing else would ever enable it.
+- A `sound` node: `nvidia,tegra-audio-rt5677` on `tegra_i2s1` with the rt5677,
+  headphone and headset-mic routing, and the PLL_A -> EXTERN1 -> PMC clock-out
+  mclk chain copied from the Nexus 7, which uses the same machine driver.
+
+Verified: `dtbs` builds clean, and the built DTB resolves `nvidia,i2s-controller`
+to `tegra_i2s1`, `nvidia,audio-codec` to the rt5677, the three clocks to
+PLL_A (216) / PLL_A_OUT0 (217) / PMC CLK_OUT_1, and the GPIOs to 131 and 188.
+
 ## Not done, and what it needs
 
-- **No drivers have bound; no card exists yet.**
-- The speaker path needs a **second DAI link**, so it wants the audio-graph-card
-  route rather than the single-codec machine driver.
-- The headphone path is gated on the `rt5506` question above.
-- All three GPIOs and the LDO2 supply still have to be wired into the DT.
+- **Nothing has run on hardware. No driver has bound; no card has been seen.**
+- **The schema check was not run** — `make CHECK_DTBS=1` needs the `dtschema`
+  python package, which is not installed here. The node was checked by hand
+  against `nvidia,tegra-audio-rt5677.yaml` and `realtek,rt5677.yaml` instead,
+  which is exactly the gap the panel driver's binding still has.
+- **The speaker path is untouched.** It needs two amp nodes on `tegra_i2s2`, a
+  multi-codec card (generic `audio-graph-card`, not the Tegra one), and it will
+  run without the shipped acoustic tuning. Given the amps also want a power
+  enable GPIO and bring 16-bit-only playback with them, this is the larger job.
+- **The `rt5506` question is unresolved.** It sits on the headphone path with no
+  mainline driver, and the shipped kernel configures it. Whether playback needs
+  it or the codec drives the jack directly is the thing most likely to decide
+  whether this node produces sound.
+- `dtbs` builds clean, but three pre-existing warnings appear from the port's own
+  DT, not from this change: `usb@7d000000` / `usb@7d004000` / `usb@7d008000`
+  each share a unit address with their `usb-phy@` sibling.

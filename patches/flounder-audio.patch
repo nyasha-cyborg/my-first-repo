@@ -1,0 +1,84 @@
+--- a/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
++++ b/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
+@@ -731,11 +731,20 @@
+ 		status = "okay";
+ 		clock-frequency = <400000>;
+ 
+-		/* TODO */
+-		rt5677@2d {
++		/*
++		 * Codec for the headphone/mic path, on tegra_i2s1. GPIO numbers
++		 * are downstream board-file pdata (gpio_ldo2_en = PQ3,
++		 * gpio_reset = PX4); reset is active low per the binding.
++		 */
++		rt5677: rt5677@2d {
+ 			compatible = "realtek,rt5677";
+-			status = "disabled";
+ 			reg = <0x2d>;
++			status = "okay";
++
++			realtek,pow-ldo2-gpio =
++				<&gpio TEGRA_GPIO(Q, 3) GPIO_ACTIVE_HIGH>;
++			realtek,reset-gpio =
++				<&gpio TEGRA_GPIO(X, 4) GPIO_ACTIVE_LOW>;
+ 		};
+ 
+ 		/* TODO */
+@@ -956,6 +965,13 @@
+ 						regulator-name = "vdd-audio";
+ 						regulator-min-microvolt = <1200000>;
+ 						regulator-max-microvolt = <1200000>;
++						/*
++						 * Downstream the rt5677 machine driver
++						 * consumed this rail as "v_ldo2". The
++						 * mainline machine driver has no supply
++						 * consumer, so keep it on.
++						 */
++						regulator-always-on;
+ 					};
+ 
+ 					vdd_sensor_io: ldo3 {
+@@ -1190,6 +1206,43 @@
+ 		};
+ 	};
+ 
++	/*
++	 * Headphone/mic card on the codec in i2c@7000c400 (rt5677@2d).
++	 *
++	 * Flounder has a second, independent playback path: two tfa9895
++	 * speaker amplifiers hang off tegra_i2s2 (dap3 pins) and downstream
++	 * registered them from the board file with their own codec drivers.
++	 * This node covers the rt5677 only - the single-codec
++	 * nvidia,tegra-audio-rt5677 machine driver cannot express both links,
++	 * and the Tegra audio graph card does not support Tegra132.
++	 *
++	 * The mclk plumbing follows the Nexus 7, which uses the same machine
++	 * driver: the codec is fed from PLL_A via EXTERN1 on the PMC clock.
++	 */
++	sound {
++		compatible = "nvidia,tegra-audio-rt5677";
++		nvidia,model = "Google Nexus 9";
++
++		nvidia,audio-routing =
++			"Headphone", "LOUT1",
++			"Headphone", "LOUT2",
++			"IN1P", "Headset Mic",
++			"IN1N", "Headset Mic";
++
++		nvidia,i2s-controller = <&tegra_i2s1>;
++		nvidia,audio-codec = <&rt5677>;
++
++		clocks = <&tegra_car TEGRA124_CLK_PLL_A>,
++			 <&tegra_car TEGRA124_CLK_PLL_A_OUT0>,
++			 <&tegra_pmc TEGRA_PMC_CLK_OUT_1>;
++		clock-names = "pll_a", "pll_a_out0", "mclk";
++
++		assigned-clocks = <&tegra_car TEGRA124_CLK_EXTERN1>,
++				  <&tegra_pmc TEGRA_PMC_CLK_OUT_1>;
++		assigned-clock-parents = <&tegra_car TEGRA124_CLK_PLL_A_OUT0>,
++					 <&tegra_car TEGRA124_CLK_EXTERN1>;
++	};
++
+ 	/* NEEDS WORK */
+ 	extcon_usb_otg: extcon-usb-gpio {
+ 		compatible = "linux,extcon-usb-gpio";
