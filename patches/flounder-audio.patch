@@ -1,6 +1,6 @@
 --- a/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
 +++ b/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
-@@ -731,11 +731,20 @@
+@@ -731,25 +731,57 @@
  		status = "okay";
  		clock-frequency = <400000>;
  
@@ -23,8 +23,51 @@
 +				<&gpio TEGRA_GPIO(X, 4) GPIO_ACTIVE_LOW>;
  		};
  
- 		/* TODO */
-@@ -956,6 +965,13 @@
+-		/* TODO */
+-		tfa9895@34 {
++		/*
++		 * Speaker amplifiers: one per channel, both fed from the same
++		 * I2S (tegra_i2s2), so they share one stereo DAI link. That
++		 * link is described by the multi graph in the spk sound node.
++		 * VDDD comes from the rail gated by the downstream
++		 * tfa9895-power-enable pin (PX5).
++		 */
++		tfa9895_r: audio-codec@34 {
+ 			compatible = "nxp,tfa9895";
+-			status = "disabled";
+ 			reg = <0x34>;
++			status = "okay";
++			#sound-dai-cells = <0>;
++			vddd-supply = <&spk_ldo>;
++			sound-name-prefix = "Speaker Right";
++
++			port {
++				spk_amp_r_ep: endpoint {
++					remote-endpoint = <&spk_amp_r_multi_ep>;
++				};
++			};
+ 		};
+ 
+-		/* TODO */
+-		tfa9895l@35 {
++		tfa9895_l: audio-codec@35 {
+ 			compatible = "nxp,tfa9895";
+-			status = "disabled";
+ 			reg = <0x35>;
++			status = "okay";
++			#sound-dai-cells = <0>;
++			vddd-supply = <&spk_ldo>;
++			sound-name-prefix = "Speaker Left";
++
++			port {
++				spk_amp_l_ep: endpoint {
++					remote-endpoint = <&spk_amp_l_multi_ep>;
++				};
++			};
+ 		};
+ 
+ 		ina230@40 {
+@@ -956,6 +988,13 @@
  						regulator-name = "vdd-audio";
  						regulator-min-microvolt = <1200000>;
  						regulator-max-microvolt = <1200000>;
@@ -38,10 +81,107 @@
  					};
  
  					vdd_sensor_io: ldo3 {
-@@ -1190,6 +1206,43 @@
+@@ -1179,9 +1218,30 @@
+ 			status = "okay";
+ 		};
+ 
+-		/* TODO */
++		/*
++		 * I2S carrying the speaker amplifiers. Tegra drives the bus, so
++		 * it is bitclock and frame master, matching the
++		 * SND_SOC_DAIFMT_CBC_CFC the Tegra machine drivers use.
++		 */
+ 		i2s@70301200 {
+ 			status = "okay";
++
++			ports {
++				#address-cells = <1>;
++				#size-cells = <0>;
++
++				dai-format = "i2s";
++				bitclock-master;
++				frame-master;
++
++				spk: port@0 {
++					reg = <0>;
++
++					spk_i2s_ep: endpoint {
++						remote-endpoint = <&spk_i2s_multi_ep>;
++					};
++				};
++			};
+ 		};
+ 
+ 		/* TODO */
+@@ -1190,6 +1250,108 @@
  		};
  	};
  
++	/*
++	 * Speaker rail. Downstream gated the amplifiers' supply with the
++	 * tfa9895-power-enable pin, which is PX5 in the board file.
++	 */
++	spk_ldo: regulator-spk-ldo {
++		compatible = "regulator-fixed";
++		regulator-name = "spk-ldo";
++		regulator-min-microvolt = <5000000>;
++		regulator-max-microvolt = <5000000>;
++		gpio = <&gpio TEGRA_GPIO(X, 5) GPIO_ACTIVE_HIGH>;
++		enable-active-high;
++	};
++
++	/*
++	 * Speaker card: one CPU DAI (tegra_i2s2) and two amplifier codecs on a
++	 * single stereo link, which is the "semi-multi, CPU:Codec = 1:N" case
++	 * of audio-graph-card2. Neither simpler card driver can express it -
++	 * both simple-audio-card and audio-graph-card hardcode one codec per
++	 * link.
++	 *
++	 * Expect the amplifiers at their hardware defaults: the acoustic
++	 * tuning the tablet shipped with was applied from the Android HAL over
++	 * ioctl, not from the device tree.
++	 */
++	sound-speakers {
++		compatible = "audio-graph-card2";
++		label = "Google Nexus 9 speakers";
++
++		links = <&spk>;
++
++		multi {
++			#address-cells = <1>;
++			#size-cells = <0>;
++
++			ports@0 {
++				reg = <0>;
++				#address-cells = <1>;
++				#size-cells = <0>;
++
++				/* (X) the CPU this group pairs with */
++				port@0 {
++					reg = <0>;
++					spk_i2s_multi_ep: endpoint {
++						remote-endpoint = <&spk_i2s_ep>;
++					};
++				};
++
++				/* (A), (B) the codecs it fans out to */
++				port@1 {
++					reg = <1>;
++					spk_amp_r_multi_ep: endpoint {
++						remote-endpoint = <&spk_amp_r_ep>;
++					};
++				};
++
++				port@2 {
++					reg = <2>;
++					spk_amp_l_multi_ep: endpoint {
++						remote-endpoint = <&spk_amp_l_ep>;
++					};
++				};
++			};
++		};
++	};
++
 +	/*
 +	 * Headphone/mic card on the codec in i2c@7000c400 (rt5677@2d).
 +	 *

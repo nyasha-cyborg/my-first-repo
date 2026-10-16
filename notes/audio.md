@@ -224,9 +224,26 @@ be finished in the device tree.
 
 ## What was implemented
 
-`patches/flounder-audio.patch`, applied after the cumulative patch. It is
-deliberately the **rt5677 path only** — the one mainline actually has a machine
-driver and binding for.
+`patches/flounder-audio.patch`, applied after the cumulative patch. It carries
+two cards: the rt5677 headphone/mic card, and a speaker card built on
+`audio-graph-card2`.
+
+The speaker card is the interesting one, because neither simpler driver can
+express the topology — both `simple-audio-card` and `audio-graph-card` hardcode
+one codec per link. What does is card2's **"semi-multi, CPU:Codec = 1:N"** form,
+worked from `audio-graph-card2-custom-sample1.dtsi`, which gives one stereo PCM
+with one CPU DAI and two codecs:
+
+- two `nxp,tfa9895` nodes at 0x34 and 0x35, each with `#sound-dai-cells = <0>`,
+  a `sound-name-prefix` and a shared `vddd-supply`;
+- `spk_ldo`, a `regulator-fixed` gated by the `tfa9895-power-enable` pin (PX5
+  downstream);
+- a `port` on `i2s@70301200` carrying `bitclock-master` / `frame-master` and
+  `dai-format = "i2s"`, since Tegra drives the bus;
+- a `multi` node pairing that CPU port with the two amplifier ports, and
+  `links = <&spk>`.
+
+The rt5677 card:
 
 - `rt5677@2d` gains its label, is enabled, and gets the two optional GPIOs the
   codec driver asks for: `realtek,pow-ldo2-gpio` (PQ3, active high) and
@@ -239,9 +256,18 @@ driver and binding for.
   headphone and headset-mic routing, and the PLL_A -> EXTERN1 -> PMC clock-out
   mclk chain copied from the Nexus 7, which uses the same machine driver.
 
-Verified: `dtbs` builds clean, and the built DTB resolves `nvidia,i2s-controller`
-to `tegra_i2s1`, `nvidia,audio-codec` to the rt5677, the three clocks to
-PLL_A (216) / PLL_A_OUT0 (217) / PMC CLK_OUT_1, and the GPIOs to 131 and 188.
+Verified: `dtbs` builds clean, and in the built DTB
+
+- the rt5677 card resolves `nvidia,i2s-controller` to `tegra_i2s1`,
+  `nvidia,audio-codec` to the rt5677, the three clocks to PLL_A (216) /
+  PLL_A_OUT0 (217) / PMC CLK_OUT_1, and the GPIOs to 131 and 188;
+- every speaker-graph `remote-endpoint` pair is reciprocal — the I2S port pairs
+  with the multi node's `port@0`, and each amplifier with `port@1` / `port@2`;
+- PX5 is used by no other node in the tree.
+
+Adding nodes shifted the auto-assigned phandles, so the rt5677 card's references
+moved (0x2c → 0x34, 0x2d → 0x35). Both were re-checked rather than assumed:
+`0x34` is `tegra_i2s1` and `0x35` is the rt5677.
 
 ## Not done, and what it needs
 
@@ -250,10 +276,15 @@ PLL_A (216) / PLL_A_OUT0 (217) / PMC CLK_OUT_1, and the GPIOs to 131 and 188.
   python package, which is not installed here. The node was checked by hand
   against `nvidia,tegra-audio-rt5677.yaml` and `realtek,rt5677.yaml` instead,
   which is exactly the gap the panel driver's binding still has.
-- **The speaker path is untouched.** Per Finding 6 it is device tree work: two
-  `nxp,tfa9895` nodes at 0x34 and 0x35 with a shared `vddd-supply` gated by the
-  `tfa9895-power-enable` GPIO (PX5 downstream), plus graph endpoints on
-  `i2s@70301200`, and a `sound` node using a graph card.
+- **Nothing has bound, on either card.** Builds and DT resolution are not
+  binding. The speaker card is the one that could plausibly come up, but
+  `audio-graph-card2` has never been pointed at a Tegra I2S before, so whether
+  it resolves a Tegra DAI to a PCM is the first thing to find out.
+- **`nxp,tfa989x.yaml` sets `additionalProperties: false` and does not mention a
+  `port`.** The speaker card needs one on each amplifier. The kernel will parse
+  it regardless, but whether the binding would accept it is unverified — the
+  same `dtschema` gap as above.
+- **The speaker amps have no acoustic tuning here** (see below).
 - **It will run without the shipped acoustic tuning.** The amps' protection and
   EQ configuration was applied from the Android HAL over ioctl
   (`TFA9895_WRITE_CONFIG`), so mainline gets the hardware defaults. That is a
