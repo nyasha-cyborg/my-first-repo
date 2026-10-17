@@ -200,3 +200,27 @@ fastboot boot boot-fbcon.img
 
 This is a diagnostic configuration, not the target: it gives a console, not a
 display driver.
+
+## The DSI reset, which moved the failure
+
+The bootloader draws its logo through this same DSI controller and leaves it
+programmed for its own stream. `tegra_dsi_prepare()` only *deasserts* the module
+reset in `runtime_resume()`; it never toggles it, so the controller keeps the
+bootloader's state and refuses to act as a command host.
+
+Asserting and deasserting the reset at the top of `tegra_dsi_prepare()` moved the
+failure from the panel's **first** command to a much later one:
+
+    before:  sending generic data b0 04 failed: -110
+    after:   sending dcs data 51 e0 failed: -110
+
+Everything up to brightness now gets through, so panel init genuinely runs. The
+remaining timeout is on DCS 0x51, and only on the write that the backlight device
+issues *after* video streaming has started -- a command cannot be injected into a
+running stream. Two follow-ups were tried and did **not** fix it, and are not in
+the patches: keeping `MIPI_DSI_MODE_LPM` set permanently, and sending a brightness
+value from `prepare()` before the stream starts.
+
+The next thing to try is the approach the downstream driver takes: stop the DC
+stream at a frame boundary before any command, then resume it
+(`tegra_dsi_stop_dc_stream_at_frame_end` in `dsi-downstream.c`).

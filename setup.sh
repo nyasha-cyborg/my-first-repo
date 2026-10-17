@@ -91,6 +91,12 @@ echo "==> applying patches/tegra132-mipi-clken-ovr.patch"
 git -C "$DEST" apply --verbose \
     "$REPO_ROOT/patches/tegra132-mipi-clken-ovr.patch"
 
+# The bootloader leaves the DSI programmed for its own logo; a deassert alone
+# does not clear that state and every panel command then times out.
+echo "==> applying patches/tegra-dsi-module-reset.patch"
+git -C "$DEST" apply --verbose \
+    "$REPO_ROOT/patches/tegra-dsi-module-reset.patch"
+
 # Applies on top of the audio patch, since both touch the same file.
 echo "==> applying patches/flounder-bluetooth.patch"
 git -C "$DEST" apply --verbose \

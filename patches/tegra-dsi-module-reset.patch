@@ -1,0 +1,26 @@
+diff --git a/drivers/gpu/drm/tegra/dsi.c b/drivers/gpu/drm/tegra/dsi.c
+index 175f5f993..f0efcc3d5 100644
+--- a/drivers/gpu/drm/tegra/dsi.c
++++ b/drivers/gpu/drm/tegra/dsi.c
+@@ -890,6 +890,21 @@ static int tegra_dsi_prepare(struct tegra_dsi *dsi)
+ 		return err;
+ 	}
+ 
++	/*
++	 * Toggle the module reset before configuring anything. The bootloader
++	 * leaves the DSI programmed for its own logo (ganged, streaming), and a
++	 * deassert on its own does not clear that state -- the host then accepts
++	 * writes but never completes a transmission, so every panel command
++	 * times out (-110). The downstream driver clears the whole register
++	 * block explicitly for the same reason.
++	 */
++	if (dsi->rst) {
++		reset_control_assert(dsi->rst);
++		udelay(10);
++		reset_control_deassert(dsi->rst);
++		usleep_range(1000, 2000);
++	}
++
+ 	err = tegra_mipi_enable(dsi->mipi);
+ 	if (err < 0)
+ 		dev_err(dsi->dev, "failed to enable MIPI calibration: %d\n",
