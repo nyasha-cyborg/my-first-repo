@@ -165,10 +165,42 @@ working console available while it is proven. None of it has run on hardware yet
    flashed to hardware.
 3. **Everything else is out of tree.** Upstream Linux has no Nexus 9 device tree at
    all, so every port lives in a personal fork. See `notes/projects.md`.
+4. **Audio is written but unproven.** Two cards, because flounder plays through two
+   independent paths: the `rt5677` on `tegra_i2s1` for headphones and mics, and two
+   `tfa9895` amplifiers on `tegra_i2s2` for the speakers. The second needed a machine
+   driver, since no generic card driver puts two codecs on one link and both bindings
+   involved refuse graph nodes. See `notes/audio.md`.
+5. **Bluetooth is written but unproven**, and no longer firmware-blocked — the
+   firmware turned out to be in the ROM. See `notes/bluetooth.md`.
+6. **The device tree now checks against the bindings**, which it did not before: the
+   audio, bluetooth, serial and DSI schemas all pass. That check found real errors
+   that a clean `dtbs` build had hidden. See `notes/schema-check.md`.
+
+## Where the work is blocked
+
+- **The tablet does not enumerate on USB.** Power arrives — the LED blinks — but
+  there is no bus activity at all, which is the signature of a charge-only or
+  damaged cable. The test that settles it, using the same cable with a different
+  device that needs data, has not been run.
+- **Headphones need a driver mainline does not have.** The `rt5506` is the headphone
+  output stage, and its tuning lives in `/etc/RT5506` in the ROM — as a plain text
+  register table, which makes that driver a transcription job rather than a
+  reverse-engineering one.
+- **The speaker amplifiers give up their shipped tuning**, which came from the
+  Android HAL over ioctl.
 
 ## Status
 
 Extraction, comparison and the bootloader analysis are done and reproducible; the
-existing porting projects have been surveyed; the kernel builds. The next step needs
-the tablet itself: charge it, boot it, dump its current boot partition, then flash
-the built image and see whether the bootloader accepts it.
+existing porting projects have been surveyed; the kernel builds. The audio and
+Bluetooth device trees are written and the whole tree checks against the bindings.
+The ROM's system and vendor partitions have been opened, which is where the
+Bluetooth firmware and the headphone amplifier's register table turned out to live.
+
+**Nothing has run on hardware.** Every driver described here has been written,
+built and audited against its source, and none of it has bound to a device. The one
+claim with strong evidence behind it is the boot gate; treat the rest as prepared
+experiments.
+
+The next step needs the tablet itself: charge it, boot it, dump its current boot
+partition, then flash the built image and see whether the bootloader accepts it.
