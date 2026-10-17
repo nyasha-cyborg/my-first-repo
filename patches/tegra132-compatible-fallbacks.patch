@@ -1,0 +1,31 @@
+diff --git a/arch/arm64/boot/dts/nvidia/tegra132.dtsi b/arch/arm64/boot/dts/nvidia/tegra132.dtsi
+index c356a6fd4..bd30d4efa 100644
+--- a/arch/arm64/boot/dts/nvidia/tegra132.dtsi
++++ b/arch/arm64/boot/dts/nvidia/tegra132.dtsi
+@@ -143,7 +143,7 @@ hdmi@54280000 {
+ 		};
+ 
+ 		dsia: dsi@54300000 {
+-			compatible = "nvidia,tegra132-dsi";
++			compatible = "nvidia,tegra132-dsi", "nvidia,tegra124-dsi";
+ 			reg = <0x0 0x54300000 0x0 0x00040000>;
+ 			clocks = <&tegra_car TEGRA124_CLK_DSIA>,
+ 				 <&tegra_car TEGRA124_CLK_DSIALP>,
+@@ -159,7 +159,7 @@ dsia: dsi@54300000 {
+ 		};
+ 
+ 		dsib: dsi@54400000 {
+-			compatible = "nvidia,tegra132-dsi";
++			compatible = "nvidia,tegra132-dsi", "nvidia,tegra124-dsi";
+ 			reg = <0x0 0x54400000 0x0 0x00040000>;
+ 			clocks = <&tegra_car TEGRA124_CLK_DSIB>,
+ 				 <&tegra_car TEGRA124_CLK_DSIBLP>,
+@@ -624,7 +624,7 @@ tegra_pmc: pmc@7000e400 {
+ 	};
+ 
+ 	fuse@7000f800 {
+-		compatible = "nvidia,tegra132-efuse";
++		compatible = "nvidia,tegra132-efuse", "nvidia,tegra124-efuse";
+ 		reg = <0x0 0x7000f800 0x0 0x400>;
+ 		clocks = <&tegra_car TEGRA124_CLK_FUSE>;
+ 		clock-names = "fuse";

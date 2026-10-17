@@ -209,23 +209,13 @@ attempt reached for the wrong reason, and what downstream shipped.
 ## Checking the device tree against the bindings
 
 `make CHECK_DTBS=1` needs `dtschema`, which is not installed system-wide here.
-It does not have to be — `dt-validate` validates a built DTB against a bindings
-directory directly, so a throwaway venv is enough and nothing system-wide is
-touched:
+It does not need to be: `dt-validate` will validate a built DTB against a
+bindings directory directly, so a throwaway venv is enough. The recipe, and the
+tree-wide results, are in [`schema-check.md`](schema-check.md).
 
-```sh
-python3 -m venv ~/.local/share/nexus9-dtschema-venv
-~/.local/share/nexus9-dtschema-venv/bin/pip install dtschema
-
-cd linux-flounder
-~/.local/share/nexus9-dtschema-venv/bin/dt-validate \
-    -s Documentation/devicetree/bindings -l '/sound/' -m \
-    linux-flounder-out/arch/arm64/boot/dts/nvidia/tegra132-flounder.dtb
-```
-
-Worth doing before trusting any binding claim. On the first run it found four
-real errors in nodes that built perfectly cleanly, because `dtc` checks syntax
-and this checks meaning:
+Run before trusting any binding claim. It found five real errors in the audio
+nodes, all in nodes that had built perfectly cleanly, because `dtc` checks
+syntax and this checks meaning:
 
 | Node | Error |
 |---|---|
@@ -238,28 +228,13 @@ and this checks meaning:
 The irq is `PS4`, which is `gpio_irq1` in the downstream board file — so the
 requirement is satisfiable from evidence rather than guesswork.
 
-## The rest of the tree, for the record
+## The rest of the tree
 
 Running the same check without the `-l '/sound/'` filter takes about twenty
 minutes and reports roughly 150 lines of diagnostics. Audio is clean in it; the
-remainder is the port's own device tree, and it is worth knowing that this
-port's DT is **not** schema-clean as a whole:
-
-| Node | Diagnosis |
-|---|---|
-| `/` | `google,flounder64_lte` is not in the Tegra board list — structural, since mainline has never had a flounder tree |
-| `dsi@54300000`, `dsi@54400000` | `nvidia,tegra132-dsi` alone is "too short"; the binding wants a fallback to `nvidia,tegra124-dsi` |
-| `fuse@7000f800` | `nvidia,tegra132-efuse`, same fallback problem |
-| `ccplex-clock@70040000` | `nvidia,tegra132-ccplex-clk` matches no schema at all |
-| `touchscreen@0` | `rmi-f01@1` / `rmi-f12@12` subnodes not admitted by `syna,rmi4.yaml` |
-| `extcon-usb-gpio` | two errors against `linux,extcon-usb-gpio.yaml` |
-| `clock@70040084` and the regulators | `nvidia,dfll` / `ti,roof-floor` values reported as `b'\x00\x00\x00\x01'` — i.e. as bytes, not integers |
-
-The DSI and efuse rows are real and are a two-word fix each: add the fallback
-compatible. The last row is worth treating with suspicion rather than believing
-it — a cell value rendering as a bytes literal points at how the validator
-represented an untyped property, not at the device tree being wrong. It is
-recorded here as unresolved rather than as a defect.
+rest is the port's own device tree, and **this port's DT is not schema-clean as
+a whole.** The full breakdown, including what was fixed in the SoC dtsi and what
+is still open, is in [`schema-check.md`](schema-check.md).
 
 ## Templates that already exist in this tree
 

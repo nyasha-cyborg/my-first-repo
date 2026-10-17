@@ -66,6 +66,13 @@ echo "==> applying patches/flounder-audio.patch"
 git -C "$DEST" apply --verbose \
     "$REPO_ROOT/patches/flounder-audio.patch"
 
+# Independent of the two above. Three compatibles in the SoC dtsi that the
+# bindings document as two-element lists but the file supplies as one-element
+# ones; see notes/schema-check.md.
+echo "==> applying patches/tegra132-compatible-fallbacks.patch"
+git -C "$DEST" apply --verbose \
+    "$REPO_ROOT/patches/tegra132-compatible-fallbacks.patch"
+
 # --- install the kernel config ---------------------------------------------
 echo "==> installing configs/flounder_defconfig"
 cp "$REPO_ROOT/configs/flounder_defconfig" \
