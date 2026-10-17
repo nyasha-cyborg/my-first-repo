@@ -318,3 +318,31 @@ Diagnostic technique that works and does not hang: dump DC-wide registers from a
 delayed work; read window registers **only** if a follow-up probe shows the
 window block is alive (e.g. by writing and reading back a scratch register),
 because a hung read costs a full boot cycle and looks exactly like a boot failure.
+
+## The framebuffer address is zero
+
+The plane path runs. Instrumenting it (prints only -- no register reads) gives:
+
+    plane0 update: crtc=1 fb=1 visible=1
+    plane0 setup:  base=0x0000000000000000 stride=6144 bpp=32 dst=1536x2048+0+0
+    flush:         planes=0x2
+    pin0:          group=1 phys=0x0000000000000000 bo_iova=0x0000000000000000 chunks=1
+
+So the plane is set up with the right size, stride and pixel format, the window
+is activated (`planes=0x2` is `WIN_A_ACT_REQ`), the DC is in `C_DISPLAY`, and DSI
+is enabled in the window options -- but the address the display controller is
+told to scan out from is **zero**, and so is the physical address in the pin
+path. Two independent zeroes look like a field that was never assigned rather
+than a genuine address, which is consistent with the DC fetching nothing and the
+DSI reporting idle.
+
+Note that `dc->client.group` is 1, so host1x is behind the SMMU: the display
+asks the IOMMU for its buffers, and `bo->iova` is what gets programmed into the
+window. The next question is therefore why that IOVA is 0 -- whether the DRM
+GEM/IOMMU mapping is being created at all, and whether the SMMU is programmed
+with it.
+
+The instrumentation used here is safe and reusable: `dev_err` prints in
+`tegra_plane_atomic_update()`, in `tegra_crtc_atomic_flush()` (showing
+`dc_state->planes`) and in the pin loop in `plane.c`. None of them touch the
+window register block, which is the thing that hangs.
