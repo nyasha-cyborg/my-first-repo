@@ -41,8 +41,8 @@ second test that can fail. The minimal patch is both sufficient and safer.
 tools/     boot-image and device-tree tools
 patches/   the DTS `compatible` change, and the file it was made against
 notes/     measured evidence, the porting projects, the panel, the display port,
-           audio, bluetooth, the device-tree schema check, and a rehearsed flash
-           plan
+           audio, bluetooth, the ROM's system and vendor partitions, the
+           device-tree schema check, and a rehearsed flash plan
 ```
 
 | Tool | What it does |
@@ -51,6 +51,7 @@ notes/     measured evidence, the porting projects, the panel, the display port,
 | `fdt-scan.py` | finds embedded device trees by the `d00dfeed` magic |
 | `fdt-prop.py` | parses the FDT structure block for `compatible`, `model`, `hw-revision` |
 | `bootimg-repack.py` | transplants a kernel and DTB into a stock boot image, preserving the wrapper, header and ramdisk |
+| `ota-image.py` | replays an OTA's `transfer.list` and `new.dat` into a raw partition image, which is what makes the ROM's system and vendor files readable |
 
 ## Building a flashable boot image
 

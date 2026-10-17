@@ -4,8 +4,10 @@ Surveyed 2026-10-17. Wireless audio matters for this tablet's stated use — mus
 while doing cardio, where a cable is in the way — so it is worth knowing what
 stands between here and a pair of earbuds.
 
-**Short version: Bluetooth is blocked on firmware that is not in the kernel, not
-in linux-firmware, and would have to come out of the Android ROM.**
+**Short version: this survey concluded Bluetooth was blocked on firmware — and
+the firmware then turned up in the ROM's vendor partition, so what is left is a
+device tree node.** See [`vendor-partition.md`](vendor-partition.md) for how the
+image was opened.
 
 ## What the shipped artifacts show
 
@@ -44,8 +46,10 @@ BCM20703A1 Generic USB 20Mhz fcbga_BU
 It is **BCM20703A1**, the chip in the HTC **Vive** link box — a different HTC
 product entirely, which is why the vendor ID matched.
 
-So the firmware for this chip (a `BCM4354A2`-class `.hcd`, given the combo part)
-would have to be pulled out of the Android ROM's system partition.
+So the firmware is absent from linux-firmware. **It is in the ROM, though**, at
+`/vendor/firmware/bcm4354.hcd` in the vendor partition, extracted and identified
+in [`vendor-partition.md`](vendor-partition.md). It announces itself as
+`BCM4354 37.4MHz WLBGA HTC T1-0192` — this chip, this board.
 
 ## What mainline already has
 
@@ -63,16 +67,14 @@ in userspace.
 
 ## What it needs, in order
 
-1. **Extract the Bluetooth firmware from the ROM.** The OTAs in
-   `~/Downloads/nexus9/roms/` carry a system partition; the firmware will be
-   under `etc/firmware/` in it. Extracting an OTA needs `sdat2img`-style
-   handling, so this is a task in itself rather than a file copy.
-2. **Identify the UART and its control pins.** Which of the four
-   `tegra114-hsuart` controllers carries Bluetooth, and the enable/wake GPIOs —
-   the downstream `board-flounder.c` is the place to look, as it was for the
-   audio pin numbers.
-3. **Add the `bluetooth` node** under that UART, with `shutdown-gpios`,
-   `device-wakeup-gpios` and, if the extracted firmware needs it,
-   `firmware-name`.
+1. ~~Extract the firmware from the ROM~~ — **done.** `/vendor/firmware/bcm4354.hcd`
+   is extracted. It still has to be named the way `btbcm` looks for it, or
+   pointed at with a `firmware-name` property on the node.
+2. ~~Identify the UART~~ — **done.** `/etc/bluetooth/bt_vendor.conf` states
+   `UartPort = /dev/ttyTHS2`, which is `serial@70006300`. What is still missing
+   is its control pins: the enable and wake GPIOs, for which the downstream
+   `board-flounder.c` is the place to look, as it was for the audio pin numbers.
+3. **Add the `bluetooth` node** under `serial@70006300`, with the wake and
+   shutdown GPIOs and the firmware name.
 
 None of this has been started, and none of it has run on hardware.
