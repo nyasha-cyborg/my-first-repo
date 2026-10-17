@@ -41,7 +41,7 @@ second test that can fail. The minimal patch is both sufficient and safer.
 tools/     boot-image and device-tree tools
 patches/   the DTS `compatible` change, and the file it was made against
 notes/     measured evidence, the porting projects, the panel, the display port,
-           audio, and a rehearsed flash plan
+           audio, the device-tree schema check, and a rehearsed flash plan
 ```
 
 | Tool | What it does |

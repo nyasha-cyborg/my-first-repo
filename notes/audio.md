@@ -289,7 +289,12 @@ On the device tree side:
 - two `nxp,tfa9895` nodes at 0x34 and 0x35, each with `#sound-dai-cells = <0>`,
   a `sound-name-prefix` and a shared `vddd-supply`;
 - `spk_ldo`, a `regulator-fixed` gated by the `tfa9895-power-enable` pin (PX5
-  downstream);
+  downstream). It declares **no voltage**, because none is known: downstream
+  only ever toggled the enable, and the amplifier driver only gets and enables
+  the regulator without ever setting a voltage. An earlier draft carried an
+  invented 5 V, which nothing would have caught and which would have been a
+  guess sitting in the tree looking like a measurement. Dropping it was
+  revalidated against `fixed-regulator.yaml`;
 - a `sound-speakers` node with the I2S, both codecs, and the routing
   `"Speakers", "Speaker <side> OUT"`. Both amplifiers expose the same DAPM pin
   `OUT`; the `sound-name-prefix` is what disambiguates them, since ASoC prefixes
@@ -311,6 +316,31 @@ The rt5677 card:
 - A `sound` node: `nvidia,tegra-audio-rt5677` on `tegra_i2s1` with the rt5677,
   headphone and headset-mic routing, and the PLL_A -> EXTERN1 -> PMC clock-out
   mclk chain copied from the Nexus 7, which uses the same machine driver.
+
+## Auditing the driver before any hardware
+
+The panel driver yielded seven bugs to a pre-hardware audit, so the same was
+done here. This one came back clean, which is worth stating as plainly as a
+finding would be, along with what was actually checked:
+
+- **`num_codecs` is genuinely 2 at compile time.** `SND_SOC_DAILINK_REG1`
+  expands to `ARRAY_SIZE()` of the codec array, and `DAILINK_COMP_ARRAY` is a
+  variadic passthrough, so two `COMP_CODEC` entries really do yield 2. Had it
+  been 0 the probe loop would silently skip and the card would register with no
+  codecs at all — the kind of failure that reads as "no sound" rather than an
+  error.
+- **The other cards are untouched.** Every existing card has `num_codecs == 1`,
+  so the loop runs once at index 0, which is what the old code did
+  unconditionally. The AC97 path never assigned codecs and still does not.
+- **The shared `init` is safe with two codecs.** `tegra_asoc_machine_init`
+  touches the codec only from jack paths, every one of which is behind an
+  `asoc->add_*_jack` flag that this card leaves false, so it returns without
+  looking at a codec at all.
+- **`card->components` is only a label.** `snd_component_add()` puts the string
+  into the ALSA card's component list; it is not instantiation, so
+  `codec:tfa989x` cannot attempt to create a device.
+- **The amplifiers never constrain the supply voltage** — `devm_regulator_get`
+  and enable/disable only — which is why declaring none is safe.
 
 Verified, in the order the checks were run:
 

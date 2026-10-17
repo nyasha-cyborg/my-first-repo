@@ -342,19 +342,22 @@ index d48463ac1..5a80ca82a 100644
  		i2s@70301200 {
  			status = "okay";
  		};
-@@ -1190,6 +1234,94 @@
+@@ -1190,6 +1234,97 @@
  		};
  	};
  
 +	/*
-+	 * Speaker rail. Downstream gated the amplifiers' supply with the
-+	 * tfa9895-power-enable pin, which is PX5 in the board file.
++	 * Supply for the speaker amplifiers, gated by the pin downstream called
++	 * tfa9895-power-enable, which is PX5 in the board file.
++	 *
++	 * No voltage is declared because none is known: downstream only ever
++	 * toggled the enable, and the tfa989x driver only gets and enables this
++	 * regulator - it never sets a voltage. Inventing one would put a guess
++	 * in the tree that nothing would catch.
 +	 */
 +	spk_ldo: regulator-spk-ldo {
 +		compatible = "regulator-fixed";
 +		regulator-name = "spk-ldo";
-+		regulator-min-microvolt = <5000000>;
-+		regulator-max-microvolt = <5000000>;
 +		gpio = <&gpio TEGRA_GPIO(X, 5) GPIO_ACTIVE_HIGH>;
 +		enable-active-high;
 +	};
