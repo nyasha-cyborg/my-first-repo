@@ -72,8 +72,20 @@ in userspace.
    pointed at with a `firmware-name` property on the node.
 2. ~~Identify the UART~~ — **done.** `/etc/bluetooth/bt_vendor.conf` states
    `UartPort = /dev/ttyTHS2`.
-3. **Add the `bluetooth` node** under that UART, with the firmware name and
-   whatever control pins it turns out to need.
+3. ~~Add the `bluetooth` node~~ — **done**, in
+   `patches/flounder-bluetooth.patch`: `serial@70006200` enabled with a
+   `bluetooth` child on `brcm,bcm43540-bt`, the compatible that maps to
+   `bcm4354_device_data` in the driver's match table. No control pins are
+   declared, because none are established.
+
+The firmware filename is worth spelling out, because it is not the ROM's.
+`btbcm` reads the chip subversion over HCI, looks it up in `bcm_subver_table`
+— where `0x610c` is `"BCM4354"` — and requests `brcm/BCM4354.hcd`. The ROM
+carries it as `bcm4354.hcd`, lower case, so installing it is a rename as well
+as a copy.
+
+Nothing here has run on hardware; the node has only been built and validated
+against the bindings.
 
 ## Which controller is ttyTHS2
 

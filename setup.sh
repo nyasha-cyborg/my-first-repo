@@ -73,6 +73,11 @@ echo "==> applying patches/tegra132-compatible-fallbacks.patch"
 git -C "$DEST" apply --verbose \
     "$REPO_ROOT/patches/tegra132-compatible-fallbacks.patch"
 
+# Applies on top of the audio patch, since both touch the same file.
+echo "==> applying patches/flounder-bluetooth.patch"
+git -C "$DEST" apply --verbose \
+    "$REPO_ROOT/patches/flounder-bluetooth.patch"
+
 # --- install the kernel config ---------------------------------------------
 echo "==> installing configs/flounder_defconfig"
 cp "$REPO_ROOT/configs/flounder_defconfig" \

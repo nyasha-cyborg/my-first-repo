@@ -1,0 +1,31 @@
+--- a/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
++++ b/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
+@@ -664,9 +664,26 @@
+ 		status = "okay";
+ 	};
+ 
+-	/* TODO: UARTC */
++	/*
++	 * Bluetooth.
++	 *
++	 * serial-tegra.2 is ttyTHS2 in the downstream AUXDATA table, which is
++	 * this node - not 70006300, as numbering the UARTs by hand would
++	 * suggest. That table is worth trusting over arithmetic here because
++	 * the second UART sits at +0x40 rather than +0x100, so the addresses
++	 * are not evenly spaced.
++	 *
++	 * Android drove the chip through an rfkill, so a control pin exists
++	 * somewhere, but it is not established and none is declared. See
++	 * notes/bluetooth.md. The firmware the driver will ask for,
++	 * brcm/BCM4354.hcd, is in the ROM's vendor partition.
++	 */
+ 	serial@70006200 {
+-		status = "disabled";
++		status = "okay";
++
++		bluetooth {
++			compatible = "brcm,bcm43540-bt";
++		};
+ 	};
+ 
+ 	/* TODO: UARTD */
