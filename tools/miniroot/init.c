@@ -167,8 +167,8 @@ void _start(void)
 	flags |= F_MOUNTED;
 	emit(flags, log, 0);
 
-	/* 15 s: long enough for host1x, DSI and the panel to probe or fail */
-	sleep_s(15);
+	/* 90 s: deferred probes can take ~60 s, and the panel needs time after */
+	sleep_s(90);
 	flags |= F_SLEPT;
 
 	fd = sc(SYS_openat, AT_FDCWD, (long)"/dev/kmsg", O_RDONLY | O_NONBLOCK, 0, 0);
@@ -219,7 +219,7 @@ void _start(void)
 	}
 
 	sc(SYS_sync, 0, 0, 0, 0, 0);
-	sleep_s(1);
+	sleep_s(10);
 
 #ifdef PROBE
 	/* Build with -DPROBE to answer one question with no log to read:
