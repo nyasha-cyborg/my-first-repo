@@ -236,6 +236,11 @@ Result, confirmed twice on hardware:
 The strobing seen first is the freestanding init painting the framebuffer in
 64 KiB chunks; it settles to solid white.
 
+The injection stays enabled for the lifetime of the stream, so runtime
+backlight writes (DCS 0x51) also go through the video path. Confirmed on
+hardware: kernel console text with a cursor, then full white at full
+brightness.
+
 ## Next steps
 
 1. **Backlight updates after streaming.** The panel driver currently latches
