@@ -192,6 +192,32 @@ void _start(void)
 	if (emit(flags, log, total))
 		flags |= F_BLK;
 
+	/*
+	 * Paint the DRM framebuffer solid white. If the DSI video stream is
+	 * working but nothing has drawn into the buffer yet, this is the
+	 * difference between a black panel and a white one -- and it settles
+	 * whether the display path is alive without needing a console.
+	 */
+	{
+		static unsigned char white[65536];
+		long fb = sc(SYS_openat, AT_FDCWD, (long)"/dev/fb0", O_WRONLY, 0, 0);
+		int i;
+
+		if (fb < 0) {
+			sc(SYS_mknodat, AT_FDCWD, (long)"/fb0", S_IFCHR | 0600,
+			   dev_of(29, 0), 0);
+			fb = sc(SYS_openat, AT_FDCWD, (long)"/fb0", O_WRONLY, 0, 0);
+		}
+		if (fb >= 0) {
+			for (i = 0; i < (int)sizeof(white); i++)
+				white[i] = 0xff;
+			for (i = 0; i < 256; i++)
+				sc(SYS_write, fb, (long)white, sizeof(white), 0, 0);
+			sc(SYS_fsync, fb, 0, 0, 0, 0);
+			sc(SYS_close, fb, 0, 0, 0, 0);
+		}
+	}
+
 	sc(SYS_sync, 0, 0, 0, 0, 0);
 	sleep_s(1);
 

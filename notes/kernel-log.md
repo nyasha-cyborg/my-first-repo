@@ -266,3 +266,31 @@ REA's limits hit here too: `search_strings` works against the shipped kernel for
 messages and names, but `xrefs` on the DSI strings resolve to nothing, so the
 video path cannot be followed from the image. `dsi-downstream.c` is the only way
 to read those functions.
+
+## The video stream: nailed down to the display controller
+
+A deferred (workqueue) register dump, one second after streaming starts, settles
+where the pixels stop:
+
+    DSI:  status=00000400 power=00000001 control=00103032 host=00000020
+          ganged=00000001 start=00000000 size=03000300
+    DC:   winopt=20000000 displaycmd=00000020
+
+Read as: `status` is `DSI_STATUS_IDLE` (bit 10) with **no** underflow or
+overflow; `control=0x103032` is video mode enabled, 4 lanes (`LANES(3)`),
+RGB888, with `SOURCE(pipe)`; `ganged=1` with `size=0x03000300` (768 per link,
+i.e. the 1536-wide panel split across two links); `winopt=0x20000000` is
+`DSI_ENABLE`; `displaycmd=0x20` is `DISP_CTRL_MODE_C_DISPLAY`.
+
+So the panel is initialised, the link is configured and ganged correctly, and
+the display controller says it is in continuous-display mode -- but the DSI is
+**idle**, meaning no pixel data is arriving from the DC. The remaining fault is
+in the DC's window/plane programming, not in DSI, the PHY or the panel.
+
+Also ruled out along the way: full backlight (brightness 255) and painting the
+DRM framebuffer solid white through `/dev/fb0`. Neither produced any light, which
+is consistent with the DC never sending frames -- and it rules out the
+"backlight is off" explanation.
+
+The framebuffer-painting diagnostic is still in `tools/miniroot/init.c` because
+it is cheap and will be the quickest confirmation once the DC is fixed.
