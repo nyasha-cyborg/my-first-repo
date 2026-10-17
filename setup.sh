@@ -80,6 +80,17 @@ echo "==> applying patches/tegra132-pmc-scratch.patch"
 git -C "$DEST" apply --verbose \
     "$REPO_ROOT/patches/tegra132-pmc-scratch.patch"
 
+# Display, part two: the DSI-B calibrate mask named pads the pad table does not
+# have (see the patch), and MIPI calibration needs CLKEN_OVR on this part --
+# the shipped kernel sets it, upstream says otherwise.
+echo "==> applying patches/tegra132-dsib-mipi-pads.patch"
+git -C "$DEST" apply --verbose \
+    "$REPO_ROOT/patches/tegra132-dsib-mipi-pads.patch"
+
+echo "==> applying patches/tegra132-mipi-clken-ovr.patch"
+git -C "$DEST" apply --verbose \
+    "$REPO_ROOT/patches/tegra132-mipi-clken-ovr.patch"
+
 # Applies on top of the audio patch, since both touch the same file.
 echo "==> applying patches/flounder-bluetooth.patch"
 git -C "$DEST" apply --verbose \

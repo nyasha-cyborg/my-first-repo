@@ -101,3 +101,41 @@ Still failing, lower priority: `tegra124-dfll` (-22, so cpufreq is deferred),
 `tegra-phy`/`tegra-xusb-padctl` (-22 and -517, so USB is dead),
 `gpio-keys` (-22). The USB one matters for a second reason: a working gadget
 would be a far better console than this partition dance.
+
+## Display, round two: the DSI-B pad mask
+
+With the device tree intact, MIPI calibration still failed with `-110`, but on
+`54400000.dsi` rather than on the panel. `tegra_mipi_start_calibration()` walks
+`tegra124_mipi_pads[]` and selects a pad only when `device->pads & BIT(i)`. That
+table has seven entries -- CSIA, CSIB, CSIC, CSID, CSIE, DSIA, DSIB -- so
+`dsib`'s `nvidia,mipi-calibrate = <&mipi 0x180>` asked for bits 7 and 8, **which
+do not exist**. No pad was selected, so calibration could never complete. The
+board's DSI-B is the second link of a ganged pair on the same DSIA/DSIB pads, so
+it now uses `0x060` like DSI-A. Calibration completes immediately afterwards.
+
+The shipped kernel's `tegra_dsi_mipi_calibration_13x()` also sets
+`MIPI_CAL_CLKEN_OVR`, while upstream's `tegra132_mipi_soc` says
+`clock_enable_override = false`. That was changed to true; whether it is
+strictly required is not yet isolated.
+
+## Where it stands
+
+After both fixes the log contains exactly one error:
+
+    panel-jdi-lpm089a128a 54300000.dsi.0: sending generic data b0 04 failed: -110
+
+The panel is powered (`avdd-supply`, `iovdd-supply`, `dcdc-en-gpios`,
+`reset-gpios` and `link2` are all present in the device tree), the PHY
+calibrates, and DRM registers `tegradrmfb`. What still fails is the panel's very
+first generic command, which means command traffic is not getting an answer from
+the panel.
+
+## Two things that make iteration cheap now
+
+- **`fastboot boot <image>`** loads the kernel into RAM without writing flash.
+  After the diagnostic init reboots, hboot boots the untouched LineageOS image,
+  Android comes back on its own, and the log can be pulled -- no flashing, no
+  restore, no button presses. A full experiment is about 90 seconds.
+- The `-110` investigations above were resolved by reading the *shipped* kernel
+  with REA rather than by guessing: `tegra_dsi_mipi_calibration_13x()` and the
+  `clk72mhz` dependency were both found that way.

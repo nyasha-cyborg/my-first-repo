@@ -1,0 +1,19 @@
+diff --git a/drivers/gpu/host1x/mipi.c b/drivers/gpu/host1x/mipi.c
+index e51b43dd1..843d7df58 100644
+--- a/drivers/gpu/host1x/mipi.c
++++ b/drivers/gpu/host1x/mipi.c
+@@ -446,7 +446,13 @@ static const struct tegra_mipi_soc tegra132_mipi_soc = {
+ 	.has_clk_lane = true,
+ 	.pads = tegra124_mipi_pads,
+ 	.num_pads = ARRAY_SIZE(tegra124_mipi_pads),
+-	.clock_enable_override = false,
++	/*
++	 * The shipped flounder kernel's tegra_dsi_mipi_calibration_13x() writes
++	 * MIPI_CAL_CTRL with MIPI_CAL_CLKEN_OVR set, and calibration on this part
++	 * times out (-110) without it. Upstream says false here; the hardware we
++	 * are actually running disagrees.
++	 */
++	.clock_enable_override = true,
+ 	.needs_vclamp_ref = false,
+ 	.pad_drive_down_ref = 0x0,
+ 	.pad_drive_up_ref = 0x3,

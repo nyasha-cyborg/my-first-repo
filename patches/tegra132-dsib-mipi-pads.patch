@@ -1,0 +1,20 @@
+diff --git a/arch/arm64/boot/dts/nvidia/tegra132.dtsi b/arch/arm64/boot/dts/nvidia/tegra132.dtsi
+index c356a6fd4..56c53adac 100644
+--- a/arch/arm64/boot/dts/nvidia/tegra132.dtsi
++++ b/arch/arm64/boot/dts/nvidia/tegra132.dtsi
+@@ -167,7 +167,14 @@ dsib: dsi@54400000 {
+ 			clock-names = "dsi", "lp", "parent";
+ 			resets = <&tegra_car TEGRA124_CLK_DSIB>;
+ 			reset-names = "dsi";
+-			nvidia,mipi-calibrate = <&mipi 0x180>; /* DSIC & DSID pads */
++			/*
++			 * 0x180 means "DSIC & DSID pads", but tegra124_mipi_pads[]
++			 * in drivers/gpu/host1x/mipi.c has only seven entries -- CSIA
++			 * through DSIB -- so BIT(7) and BIT(8) select nothing and the
++			 * calibration never completes (-110). On this board DSI-B is the
++			 * second link of a ganged pair driving the same DSIA/DSIB pads.
++			 */
++			nvidia,mipi-calibrate = <&mipi 0x060>; /* DSIA & DSIB pads */
+ 			status = "disabled";
+ 
+ 			#address-cells = <1>;
