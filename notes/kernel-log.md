@@ -244,3 +244,25 @@ The screen is still black, so what remains is the video path itself -- the
 framebuffer is registered but the panel is not being fed pixels. Note that the
 same panel *does* light up and paint fbcon when `DRM_TEGRA=n`, so the hardware
 and the backlight are proven; this is specific to the DRM video stream.
+
+## Video stream: what has been ruled out
+
+With the command path fixed the panel initialises cleanly, but no image appears.
+Things tried and **ruled out** (reverted, so they are not in the patches):
+
+- **Sync-pulse video mode.** Adding `MIPI_DSI_MODE_VIDEO_SYNC_PULSE` changes the
+  packet sequence from sync events to sync pulses. Boot log stayed clean; still
+  no image.
+- **Mode flags in general.** The panel does declare `MIPI_DSI_MODE_VIDEO` and
+  `MIPI_DSI_CLOCK_NON_CONTINUOUS` at attach, so `tegra_dsi_configure()` is not
+  falling back to command mode.
+
+Also learned, and worth not repeating: **reading DSI registers inline from
+`encoder_enable` deadlocks the DSI block.** It hangs before userspace ever runs,
+which looks exactly like "the kernel did not boot". Any further register
+inspection has to be deferred to a workqueue.
+
+REA's limits hit here too: `search_strings` works against the shipped kernel for
+messages and names, but `xrefs` on the DSI strings resolve to nothing, so the
+video path cannot be followed from the image. `dsi-downstream.c` is the only way
+to read those functions.
