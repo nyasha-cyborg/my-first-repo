@@ -60,6 +60,10 @@ postmarketOS kernel package pins to. It is a **build input, not tracked here**;
 see [`SOURCES.md`](SOURCES.md) for its provenance and licence. `setup.sh` clones
 it, pins it to that commit, applies `patches/` and installs
 `configs/flounder_defconfig`, so this repository reproduces the tree on its own.
+
+That claim is checked rather than asserted: applying the four patches in order to
+a clean checkout of the pinned commit reproduces every file they touch,
+byte-for-byte, including the ones the cumulative patch brings.
 It builds with **clang, not GCC**, exactly as that package does:
 
 ```sh
