@@ -173,27 +173,93 @@ output stage, and it also does jack detection. **Mainline has no rt5506 driver**
 (`grep -rl rt5506 sound/` is empty), so the rt5677 node committed above gives a
 card whose headphone output has nothing to drive it.
 
-## Finding 6 — the speaker path is DT, and the card driver to use is graph-based
+## Finding 6 — the speaker path needs a machine driver, and the bindings are why
 
-An earlier version of this note claimed the speaker path needed a machine driver
-because `tegra30_i2s.c` has no `of_graph` support. **That reasoning was wrong.**
+This finding was wrong twice before it was right, so the route matters as much
+as the conclusion.
+
+**First attempt:** "the speaker path needs a machine driver, because
+`tegra30_i2s.c` has no `of_graph` support." The reasoning was bad —
 `audio-graph-card` parses the graph out of the device tree itself and resolves
-each component by matching its `of_node`; the CPU-side driver does not need
-graph support. What the DT needs is `port`/`endpoint` nodes, and those can be
-added in the board file, since `i2s@70301200` is already overridden there.
+components by `of_node`, so the CPU driver needs no graph code.
 
-What *is* true and does constrain the choice:
+**Second attempt:** "so it is device tree work, using a graph card." Also wrong,
+and the schema check below is what settled it. Both bindings involved are
+`additionalProperties: false` and admit no graph nodes at all:
+
+- `nvidia,tegra30-i2s.yaml` allows only `^pinctrl-[0-9]+$` beyond its named
+  properties — no `port`, no `ports`;
+- `nxp,tfa989x.yaml` likewise allows only `^pinctrl-[0-9]+$`.
+
+So graph nodes on a Tegra I2S are not merely undocumented, they are excluded by
+design. What is genuinely true and constrains the choice:
 
 - `simple-audio-card` is hard-limited to **one codec per link** — the parser is
-  `of_get_child_by_name(node, "codec")`, which returns a single node. Two amps
-  do not fit.
-- The qcom `sound` nodes that do carry two amps use
-  `codec { sound-dai = <&top>, <&bottom>; };` — a phandle *list*, which is that
-  card driver's own extension, not something `simple-audio-card` parses.
-- Both generic graph drivers are already enabled
-  (`SND_AUDIO_GRAPH_CARD=m`, `SND_AUDIO_GRAPH_CARD2=m`).
+  `of_get_child_by_name(node, "codec")`, which returns a single node;
+- `audio-graph-card` hardcodes `li->num[li->link].codecs = 1`; only
+  `audio-graph-card2` handles `num_codecs > 1`, and it needs the ports that
+  Tegra30 forbids;
+- the qcom cards that carry two amps use a `sound-dai` phandle *list*, which is
+  that card driver's own extension.
 
-So the speaker path is device tree work after all, using a graph card.
+That leaves a **machine driver**, declaring the link in C where the codec array
+size is not the bindings' business — which is also the conclusion the first
+attempt reached for the wrong reason, and what downstream shipped.
+
+## Checking the device tree against the bindings
+
+`make CHECK_DTBS=1` needs `dtschema`, which is not installed system-wide here.
+It does not have to be — `dt-validate` validates a built DTB against a bindings
+directory directly, so a throwaway venv is enough and nothing system-wide is
+touched:
+
+```sh
+python3 -m venv ~/.local/share/nexus9-dtschema-venv
+~/.local/share/nexus9-dtschema-venv/bin/pip install dtschema
+
+cd linux-flounder
+~/.local/share/nexus9-dtschema-venv/bin/dt-validate \
+    -s Documentation/devicetree/bindings -l '/sound/' -m \
+    linux-flounder-out/arch/arm64/boot/dts/nvidia/tegra132-flounder.dtb
+```
+
+Worth doing before trusting any binding claim. On the first run it found four
+real errors in nodes that built perfectly cleanly, because `dtc` checks syntax
+and this checks meaning:
+
+| Node | Error |
+|---|---|
+| `rt5677@2d` | `gpio-controller` and `#gpio-cells` are required by `realtek,rt5677.yaml` |
+| `rt5677@2d` | needs `interrupts` or `interrupts-extended` |
+| `audio-codec@34/35` | `port` rejected — the graph node above |
+| `i2s@70301200` | `ports` rejected — the graph node above |
+| `sound` | `nvidia,tegra-audio-rt5677` alone is too short; the binding wants a board-suffixed compatible first |
+
+The irq is `PS4`, which is `gpio_irq1` in the downstream board file — so the
+requirement is satisfiable from evidence rather than guesswork.
+
+## The rest of the tree, for the record
+
+Running the same check without the `-l '/sound/'` filter takes about twenty
+minutes and reports roughly 150 lines of diagnostics. Audio is clean in it; the
+remainder is the port's own device tree, and it is worth knowing that this
+port's DT is **not** schema-clean as a whole:
+
+| Node | Diagnosis |
+|---|---|
+| `/` | `google,flounder64_lte` is not in the Tegra board list — structural, since mainline has never had a flounder tree |
+| `dsi@54300000`, `dsi@54400000` | `nvidia,tegra132-dsi` alone is "too short"; the binding wants a fallback to `nvidia,tegra124-dsi` |
+| `fuse@7000f800` | `nvidia,tegra132-efuse`, same fallback problem |
+| `ccplex-clock@70040000` | `nvidia,tegra132-ccplex-clk` matches no schema at all |
+| `touchscreen@0` | `rmi-f01@1` / `rmi-f12@12` subnodes not admitted by `syna,rmi4.yaml` |
+| `extcon-usb-gpio` | two errors against `linux,extcon-usb-gpio.yaml` |
+| `clock@70040084` and the regulators | `nvidia,dfll` / `ti,roof-floor` values reported as `b'\x00\x00\x00\x01'` — i.e. as bytes, not integers |
+
+The DSI and efuse rows are real and are a two-word fix each: add the fallback
+compatible. The last row is worth treating with suspicion rather than believing
+it — a cell value rendering as a bytes literal points at how the validator
+represented an untyped property, not at the device tree being wrong. It is
+recorded here as unresolved rather than as a defect.
 
 ## Templates that already exist in this tree
 
@@ -228,20 +294,35 @@ be finished in the device tree.
 two cards: the rt5677 headphone/mic card, and a speaker card built on
 `audio-graph-card2`.
 
-The speaker card is the interesting one, because neither simpler driver can
-express the topology — both `simple-audio-card` and `audio-graph-card` hardcode
-one codec per link. What does is card2's **"semi-multi, CPU:Codec = 1:N"** form,
-worked from `audio-graph-card2-custom-sample1.dtsi`, which gives one stereo PCM
-with one CPU DAI and two codecs:
+The speaker card is the interesting one, because no generic driver can express
+the topology. It is declared in `sound/soc/tegra/tegra_asoc_machine.c`, next to
+the other Tegra machines, so the link reuses that driver's clocks, hw_params and
+ops instead of duplicating them:
+
+- a `SND_SOC_DAILINK_DEFS(flounder_spk, …)` with **two** codec entries, which is
+  what makes `num_codecs = 2` and gives one stereo PCM rather than two mono
+  ones;
+- a `tegra_flounder_spk_data` entry matched by
+  `nvidia,tegra-audio-tfa989x-flounder`;
+- the probe now reads as many `nvidia,audio-codec` phandles as the link
+  declares, via a new indexed variant of `tegra_machine_parse_phandle`. The
+  original is kept as a one-line wrapper, so no existing card changes
+  behaviour.
+
+On the device tree side:
 
 - two `nxp,tfa9895` nodes at 0x34 and 0x35, each with `#sound-dai-cells = <0>`,
   a `sound-name-prefix` and a shared `vddd-supply`;
 - `spk_ldo`, a `regulator-fixed` gated by the `tfa9895-power-enable` pin (PX5
   downstream);
-- a `port` on `i2s@70301200` carrying `bitclock-master` / `frame-master` and
-  `dai-format = "i2s"`, since Tegra drives the bus;
-- a `multi` node pairing that CPU port with the two amplifier ports, and
-  `links = <&spk>`.
+- a `sound-speakers` node with the I2S, both codecs, and the routing
+  `"Speakers", "Speaker <side> OUT"`. Both amplifiers expose the same DAPM pin
+  `OUT`; the `sound-name-prefix` is what disambiguates them, since ASoC prefixes
+  widget names as `"<prefix> <widget>"`.
+- **no `fully_routed`** on this card. It takes the shared widget set, which
+  carries headphone and microphone widgets flounder does not wire through here,
+  so asserting completeness would fail on its own. That is a real gap in the
+  routing check for this card, not an oversight.
 
 The rt5677 card:
 
@@ -256,18 +337,31 @@ The rt5677 card:
   headphone and headset-mic routing, and the PLL_A -> EXTERN1 -> PMC clock-out
   mclk chain copied from the Nexus 7, which uses the same machine driver.
 
-Verified: `dtbs` builds clean, and in the built DTB
+Verified, in the order the checks were run:
 
-- the rt5677 card resolves `nvidia,i2s-controller` to `tegra_i2s1`,
-  `nvidia,audio-codec` to the rt5677, the three clocks to PLL_A (216) /
-  PLL_A_OUT0 (217) / PMC CLK_OUT_1, and the GPIOs to 131 and 188;
-- every speaker-graph `remote-endpoint` pair is reciprocal — the I2S port pairs
-  with the multi node's `port@0`, and each amplifier with `port@1` / `port@2`;
-- PX5 is used by no other node in the tree.
+1. **`dtbs` builds clean.**
+2. **`Image` and `modules` build clean**, which is what actually compile-tests the
+   `CONFIG_SND_SOC_TFA989X=m` change — `dtbs` alone would not have.
+3. **`tegra_asoc_machine.c` recompiles with no warnings**, forced with a `touch`
+   rather than trusted to an incremental build that had nothing to do.
+4. **`dt-validate` reports zero errors for every sound binding**, including the
+   new one. Before the fixes it reported five.
+5. **In the built DTB**, every reference resolves to what it should:
 
-Adding nodes shifted the auto-assigned phandles, so the rt5677 card's references
-moved (0x2c → 0x34, 0x2d → 0x35). Both were re-checked rather than assumed:
-`0x34` is `tegra_i2s1` and `0x35` is the rt5677.
+   | Reference | Resolves to |
+   |---|---|
+   | speaker card `nvidia,i2s-controller` | `i2s@70301200` (`tegra_i2s2`) |
+   | speaker card `nvidia,audio-codec` | `audio-codec@34`, `audio-codec@35` |
+   | rt5677 card `nvidia,i2s-controller` | `i2s@70301100` (`tegra_i2s1`) |
+   | rt5677 card `nvidia,audio-codec` | `rt5677@2d` |
+
+   The two amplifier phandles are in the same order as the routing entries, so
+   `Speaker Right` and `Speaker Left` are not swapped.
+6. **The patch applies cleanly to a pre-audio tree**, checked by rewinding the
+   DTS, the driver and the binding and running `git apply --check`.
+
+Phandles are auto-assigned and shifted twice while this work landed, so the
+numbers in the table were resolved and read back rather than assumed.
 
 ## How to point a binary analyser at a kernel Image
 
@@ -306,18 +400,16 @@ register writes are not reachable by following its strings.
 ## Not done, and what it needs
 
 - **Nothing has run on hardware. No driver has bound; no card has been seen.**
-- **The schema check was not run** — `make CHECK_DTBS=1` needs the `dtschema`
-  python package, which is not installed here. The node was checked by hand
-  against `nvidia,tegra-audio-rt5677.yaml` and `realtek,rt5677.yaml` instead,
-  which is exactly the gap the panel driver's binding still has.
+- **The schema check now runs** (recipe above), and it found real errors that a
+  clean `dtbs` build had hidden — which is the argument for running it before
+  trusting any binding claim.
 - **Nothing has bound, on either card.** Builds and DT resolution are not
   binding. The speaker card is the one that could plausibly come up, but
   `audio-graph-card2` has never been pointed at a Tegra I2S before, so whether
   it resolves a Tegra DAI to a PCM is the first thing to find out.
-- **`nxp,tfa989x.yaml` sets `additionalProperties: false` and does not mention a
-  `port`.** The speaker card needs one on each amplifier. The kernel will parse
-  it regardless, but whether the binding would accept it is unverified — the
-  same `dtschema` gap as above.
+- **There is no binding for `nvidia,tegra-audio-tfa989x-flounder`.** The new
+  speaker card needs one to be schema-clean; as it stands only the rt5677 card
+  was validated against real schemas.
 - **The speaker amps have no acoustic tuning here** (see below).
 - **It will run without the shipped acoustic tuning.** The amps' protection and
   EQ configuration was applied from the Android HAL over ioctl

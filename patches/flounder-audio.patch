@@ -1,3 +1,250 @@
+diff --git a/Documentation/devicetree/bindings/sound/nvidia,tegra-audio-tfa989x-flounder.yaml b/Documentation/devicetree/bindings/sound/nvidia,tegra-audio-tfa989x-flounder.yaml
+new file mode 100644
+index 000000000..45deb1ebf
+--- /dev/null
++++ b/Documentation/devicetree/bindings/sound/nvidia,tegra-audio-tfa989x-flounder.yaml
+@@ -0,0 +1,96 @@
++# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
++%YAML 1.2
++---
++$id: http://devicetree.org/schemas/sound/nvidia,tegra-audio-tfa989x-flounder.yaml#
++$schema: http://devicetree.org/meta-schemas/core.yaml#
++
++title: NVIDIA Tegra audio complex with a pair of TFA989X speaker amplifiers
++
++maintainers:
++  - Nyasha <nmushambi@proton.me>
++
++description: |
++  The Google Nexus 9 drives both of its TFA9895 speaker amplifiers from a single
++  Tegra I2S controller, one amplifier per channel, so they belong on one stereo
++  DAI link.
++
++  No generic card driver expresses that shape. simple-audio-card and
++  audio-graph-card both hardcode one codec per link, the Tegra audio graph card
++  does not cover Tegra132, and nvidia,tegra30-i2s.yaml admits no graph ports.
++  The link is therefore declared by a machine driver.
++
++  This does not reference nvidia,tegra-audio-common.yaml, deliberately. That
++  binding types nvidia,audio-codec as a single phandle, and an allOf reference
++  is a conjunction, so the two-codec array here could not satisfy it. The
++  shared properties are restated below instead.
++
++  The amplifiers take their clocks from BCLK and LRCK and are I2S slaves, so
++  Tegra drives the bus and neither amplifier consumes mclk. The clock spec is
++  still required, because the shared Tegra machine setup uses it for the I2S
++  controller itself.
++
++properties:
++  compatible:
++    const: nvidia,tegra-audio-tfa989x-flounder
++
++  nvidia,model:
++    $ref: /schemas/types.yaml#/definitions/string
++    description: The user-visible name of this sound complex.
++
++  nvidia,i2s-controller:
++    $ref: /schemas/types.yaml#/definitions/phandle
++    description: The phandle of the Tegra I2S controller.
++
++  nvidia,audio-codec:
++    $ref: /schemas/types.yaml#/definitions/phandle-array
++    description: |
++      The two speaker amplifiers sharing the DAI link, one per channel.
++    minItems: 2
++    maxItems: 2
++
++  nvidia,audio-routing:
++    $ref: /schemas/types.yaml#/definitions/non-unique-string-array
++    description: |
++      Each amplifier exposes one DAPM pin, OUT, so both would otherwise be named
++      identically. The sound-name-prefix on each amplifier is what tells them
++      apart, and ASoC forms widget names as "<prefix> <widget>".
++    minItems: 2
++    items:
++      enum:
++        - Speakers
++        - Speaker Left OUT
++        - Speaker Right OUT
++
++  clocks:
++    maxItems: 3
++
++  clock-names:
++    items:
++      - const: pll_a
++      - const: pll_a_out0
++      - const: mclk
++
++  assigned-clocks: true
++
++  assigned-clock-parents: true
++
++required:
++  - compatible
++  - nvidia,i2s-controller
++  - nvidia,audio-codec
++
++unevaluatedProperties: false
++
++examples:
++  - |
++    sound {
++        compatible = "nvidia,tegra-audio-tfa989x-flounder";
++        nvidia,model = "Google Nexus 9 speakers";
++
++        nvidia,i2s-controller = <&tegra_i2s2>;
++        nvidia,audio-codec = <&speaker_right>, <&speaker_left>;
++
++        nvidia,audio-routing =
++                "Speakers", "Speaker Right OUT",
++                "Speakers", "Speaker Left OUT";
++    };
+diff --git a/sound/soc/tegra/tegra_asoc_machine.c b/sound/soc/tegra/tegra_asoc_machine.c
+index d48463ac1..5a80ca82a 100644
+--- a/sound/soc/tegra/tegra_asoc_machine.c
++++ b/sound/soc/tegra/tegra_asoc_machine.c
+@@ -380,14 +380,16 @@ static void tegra_machine_node_release(void *of_node)
+ }
+ 
+ static struct device_node *
+-tegra_machine_parse_phandle(struct device *dev, const char *name)
++tegra_machine_parse_phandle_index(struct device *dev, const char *name,
++				  int index)
+ {
+ 	struct device_node *np;
+ 	int err;
+ 
+-	np = of_parse_phandle(dev->of_node, name, 0);
++	np = of_parse_phandle(dev->of_node, name, index);
+ 	if (!np) {
+-		dev_err(dev, "Property '%s' missing or invalid\n", name);
++		dev_err(dev, "Property '%s' index %d missing or invalid\n",
++			name, index);
+ 		return ERR_PTR(-EINVAL);
+ 	}
+ 
+@@ -398,6 +400,12 @@ tegra_machine_parse_phandle(struct device *dev, const char *name)
+ 	return np;
+ }
+ 
++static struct device_node *
++tegra_machine_parse_phandle(struct device *dev, const char *name)
++{
++	return tegra_machine_parse_phandle_index(dev, name, 0);
++}
++
+ static void tegra_machine_unregister_codec(void *pdev)
+ {
+ 	platform_device_unregister(pdev);
+@@ -427,6 +435,7 @@ int tegra_asoc_machine_probe(struct platform_device *pdev)
+ {
+ 	struct device_node *np_codec, *np_i2s, *np_ac97;
+ 	const struct tegra_asoc_data *asoc;
++	int i;
+ 	struct device *dev = &pdev->dev;
+ 	struct tegra_machine *machine;
+ 	struct snd_soc_card *card;
+@@ -498,17 +507,26 @@ int tegra_asoc_machine_probe(struct platform_device *pdev)
+ 		card->dai_link->cpus->of_node = np_ac97;
+ 		card->dai_link->platforms->of_node = np_ac97;
+ 	} else {
+-		np_codec = tegra_machine_parse_phandle(dev, "nvidia,audio-codec");
+-		if (IS_ERR(np_codec))
+-			return PTR_ERR(np_codec);
+-
+ 		np_i2s = tegra_machine_parse_phandle(dev, "nvidia,i2s-controller");
+ 		if (IS_ERR(np_i2s))
+ 			return PTR_ERR(np_i2s);
+ 
+ 		card->dai_link->cpus->of_node = np_i2s;
+-		card->dai_link->codecs->of_node = np_codec;
+ 		card->dai_link->platforms->of_node = np_i2s;
++
++		/*
++		 * Most cards have one codec. Flounder's speakers have two
++		 * amplifiers on a shared I2S, one per channel, so read as many
++		 * phandles as the link declares.
++		 */
++		for (i = 0; i < card->dai_link->num_codecs; i++) {
++			np_codec = tegra_machine_parse_phandle_index(dev,
++					"nvidia,audio-codec", i);
++			if (IS_ERR(np_codec))
++				return PTR_ERR(np_codec);
++
++			card->dai_link->codecs[i].of_node = np_codec;
++		}
+ 	}
+ 
+ 	if (asoc->add_common_controls) {
+@@ -885,6 +903,58 @@ static const struct tegra_asoc_data tegra_rt5677_data = {
+ 	.add_hp_jack = true,
+ };
+ 
++/* Flounder speaker machine */
++
++/*
++ * The Nexus 9 drives both TFA9895 speaker amplifiers from one I2S controller,
++ * one amplifier per channel, so they belong on a single stereo DAI link.
++ *
++ * No generic card driver expresses that: simple-audio-card and audio-graph-card
++ * both hardcode one codec per link, the Tegra audio graph card stops at
++ * Tegra210, and nvidia,tegra30-i2s.yaml admits no graph ports anyway. Downstream
++ * shipped a board driver for the same reason - this is that link, with the
++ * array size declared in C where it is not a problem.
++ *
++ * The amplifiers take their clocks from BCLK and LRCK, so they need no mclk of
++ * their own; the Tegra I2S still does, which is what the shared mclk handling
++ * already here provides.
++ */
++
++SND_SOC_DAILINK_DEFS(flounder_spk,
++	DAILINK_COMP_ARRAY(COMP_EMPTY()),
++	DAILINK_COMP_ARRAY(COMP_CODEC(NULL, "tfa989x-hifi"),
++			   COMP_CODEC(NULL, "tfa989x-hifi")),
++	DAILINK_COMP_ARRAY(COMP_EMPTY()));
++
++static struct snd_soc_dai_link tegra_flounder_spk_dai = {
++	.name = "TFA9895",
++	.stream_name = "TFA9895 PCM",
++	.init = tegra_asoc_machine_init,
++	.dai_fmt = SND_SOC_DAIFMT_I2S |
++		   SND_SOC_DAIFMT_NB_NF |
++		   SND_SOC_DAIFMT_CBC_CFC,
++	SND_SOC_DAILINK_REG(flounder_spk),
++};
++
++static struct snd_soc_card snd_soc_tegra_flounder_spk = {
++	.components = "codec:tfa989x",
++	.dai_link = &tegra_flounder_spk_dai,
++	.num_links = 1,
++	/*
++	 * No fully_routed: this card takes the shared widget set, which
++	 * carries headphone and microphone widgets flounder does not wire
++	 * here, and asserting completeness would fail on them.
++	 */
++};
++
++static const struct tegra_asoc_data tegra_flounder_spk_data = {
++	.mclk_rate = tegra_machine_mclk_rate_256,
++	.card = &snd_soc_tegra_flounder_spk,
++	.add_common_dapm_widgets = true,
++	.add_common_controls = true,
++	.add_common_snd_ops = true,
++};
++
+ /* RT5640 machine */
+ 
+ SND_SOC_DAILINK_DEFS(rt5640_aif1,
+@@ -994,6 +1064,8 @@ static const struct of_device_id tegra_machine_of_match[] = {
+ 	{ .compatible = "nvidia,tegra-audio-wm9712", .data = &tegra_wm9712_data },
+ 	{ .compatible = "nvidia,tegra-audio-wm8753", .data = &tegra_wm8753_data },
+ 	{ .compatible = "nvidia,tegra-audio-rt5677", .data = &tegra_rt5677_data },
++	{ .compatible = "nvidia,tegra-audio-tfa989x-flounder",
++	  .data = &tegra_flounder_spk_data },
+ 	{ .compatible = "nvidia,tegra-audio-rt5640", .data = &tegra_rt5640_data },
+ 	{ .compatible = "nvidia,tegra-audio-alc5632", .data = &tegra_rt5632_data },
+ 	{ .compatible = "nvidia,tegra-audio-rt5631", .data = &tegra_rt5631_data },
 --- a/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
 +++ b/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
 @@ -731,25 +731,57 @@
@@ -21,16 +268,28 @@
 +				<&gpio TEGRA_GPIO(Q, 3) GPIO_ACTIVE_HIGH>;
 +			realtek,reset-gpio =
 +				<&gpio TEGRA_GPIO(X, 4) GPIO_ACTIVE_LOW>;
++
++			/*
++			 * The codec is itself a GPIO controller and the binding
++			 * requires the property; irq1 is PS4 in the board file.
++			 */
++			gpio-controller;
++			#gpio-cells = <2>;
++
++			interrupt-parent = <&gpio>;
++			interrupts = <TEGRA_GPIO(S, 4) IRQ_TYPE_LEVEL_HIGH>;
  		};
  
 -		/* TODO */
 -		tfa9895@34 {
 +		/*
 +		 * Speaker amplifiers: one per channel, both fed from the same
-+		 * I2S (tegra_i2s2), so they share one stereo DAI link. That
-+		 * link is described by the multi graph in the spk sound node.
-+		 * VDDD comes from the rail gated by the downstream
-+		 * tfa9895-power-enable pin (PX5).
++		 * I2S (tegra_i2s2), so they share one stereo DAI link declared
++		 * by the machine driver for this board. VDDD comes from the rail
++		 * gated by the downstream tfa9895-power-enable pin (PX5).
++		 *
++		 * The name prefixes matter: they are what disambiguates the two
++		 * amplifiers' identical DAPM pin ("OUT") in the card's routing.
 +		 */
 +		tfa9895_r: audio-codec@34 {
  			compatible = "nxp,tfa9895";
@@ -40,12 +299,6 @@
 +			#sound-dai-cells = <0>;
 +			vddd-supply = <&spk_ldo>;
 +			sound-name-prefix = "Speaker Right";
-+
-+			port {
-+				spk_amp_r_ep: endpoint {
-+					remote-endpoint = <&spk_amp_r_multi_ep>;
-+				};
-+			};
  		};
  
 -		/* TODO */
@@ -58,12 +311,6 @@
 +			#sound-dai-cells = <0>;
 +			vddd-supply = <&spk_ldo>;
 +			sound-name-prefix = "Speaker Left";
-+
-+			port {
-+				spk_amp_l_ep: endpoint {
-+					remote-endpoint = <&spk_amp_l_multi_ep>;
-+				};
-+			};
  		};
  
  		ina230@40 {
@@ -81,39 +328,21 @@
  					};
  
  					vdd_sensor_io: ldo3 {
-@@ -1179,9 +1218,30 @@
+@@ -1179,7 +1218,12 @@
  			status = "okay";
  		};
  
 -		/* TODO */
 +		/*
-+		 * I2S carrying the speaker amplifiers. Tegra drives the bus, so
-+		 * it is bitclock and frame master, matching the
-+		 * SND_SOC_DAIFMT_CBC_CFC the Tegra machine drivers use.
++		 * I2S carrying the speaker amplifiers. Tegra drives the bus;
++		 * the machine driver sets the DAI format and the mclk, so no
++		 * graph port belongs here - nvidia,tegra30-i2s.yaml allows
++		 * none.
 +		 */
  		i2s@70301200 {
  			status = "okay";
-+
-+			ports {
-+				#address-cells = <1>;
-+				#size-cells = <0>;
-+
-+				dai-format = "i2s";
-+				bitclock-master;
-+				frame-master;
-+
-+				spk: port@0 {
-+					reg = <0>;
-+
-+					spk_i2s_ep: endpoint {
-+						remote-endpoint = <&spk_i2s_multi_ep>;
-+					};
-+				};
-+			};
  		};
- 
- 		/* TODO */
-@@ -1190,6 +1250,108 @@
+@@ -1190,6 +1234,94 @@
  		};
  	};
  
@@ -131,55 +360,40 @@
 +	};
 +
 +	/*
-+	 * Speaker card: one CPU DAI (tegra_i2s2) and two amplifier codecs on a
-+	 * single stereo link, which is the "semi-multi, CPU:Codec = 1:N" case
-+	 * of audio-graph-card2. Neither simpler card driver can express it -
-+	 * both simple-audio-card and audio-graph-card hardcode one codec per
-+	 * link.
++	 * Speaker card: one I2S and two amplifiers on a single stereo link.
++	 * No generic card driver expresses that shape, so the link is declared
++	 * by the machine driver this compatible matches.
 +	 *
 +	 * Expect the amplifiers at their hardware defaults: the acoustic
 +	 * tuning the tablet shipped with was applied from the Android HAL over
 +	 * ioctl, not from the device tree.
 +	 */
 +	sound-speakers {
-+		compatible = "audio-graph-card2";
-+		label = "Google Nexus 9 speakers";
++		compatible = "nvidia,tegra-audio-tfa989x-flounder";
++		nvidia,model = "Google Nexus 9 speakers";
 +
-+		links = <&spk>;
++		nvidia,i2s-controller = <&tegra_i2s2>;
++		nvidia,audio-codec = <&tfa9895_r>, <&tfa9895_l>;
 +
-+		multi {
-+			#address-cells = <1>;
-+			#size-cells = <0>;
++		/* The amplifiers' pin is "OUT"; the prefix tells them apart. */
++		nvidia,audio-routing =
++			"Speakers", "Speaker Right OUT",
++			"Speakers", "Speaker Left OUT";
 +
-+			ports@0 {
-+				reg = <0>;
-+				#address-cells = <1>;
-+				#size-cells = <0>;
++		/*
++		 * The amplifiers run from BCLK and LRCK and need no mclk, but
++		 * the machine driver requires the clock spec to be present
++		 * because the shared Tegra I2S setup uses it.
++		 */
++		clocks = <&tegra_car TEGRA124_CLK_PLL_A>,
++			 <&tegra_car TEGRA124_CLK_PLL_A_OUT0>,
++			 <&tegra_pmc TEGRA_PMC_CLK_OUT_1>;
++		clock-names = "pll_a", "pll_a_out0", "mclk";
 +
-+				/* (X) the CPU this group pairs with */
-+				port@0 {
-+					reg = <0>;
-+					spk_i2s_multi_ep: endpoint {
-+						remote-endpoint = <&spk_i2s_ep>;
-+					};
-+				};
-+
-+				/* (A), (B) the codecs it fans out to */
-+				port@1 {
-+					reg = <1>;
-+					spk_amp_r_multi_ep: endpoint {
-+						remote-endpoint = <&spk_amp_r_ep>;
-+					};
-+				};
-+
-+				port@2 {
-+					reg = <2>;
-+					spk_amp_l_multi_ep: endpoint {
-+						remote-endpoint = <&spk_amp_l_ep>;
-+					};
-+				};
-+			};
-+		};
++		assigned-clocks = <&tegra_car TEGRA124_CLK_EXTERN1>,
++				  <&tegra_pmc TEGRA_PMC_CLK_OUT_1>;
++		assigned-clock-parents = <&tegra_car TEGRA124_CLK_PLL_A_OUT0>,
++					 <&tegra_car TEGRA124_CLK_EXTERN1>;
 +	};
 +
 +	/*
@@ -196,7 +410,8 @@
 +	 * driver: the codec is fed from PLL_A via EXTERN1 on the PMC clock.
 +	 */
 +	sound {
-+		compatible = "nvidia,tegra-audio-rt5677";
++		compatible = "nvidia,tegra-audio-rt5677-flounder",
++			     "nvidia,tegra-audio-rt5677";
 +		nvidia,model = "Google Nexus 9";
 +
 +		nvidia,audio-routing =
