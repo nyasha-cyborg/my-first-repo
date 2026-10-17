@@ -73,6 +73,13 @@ echo "==> applying patches/tegra132-compatible-fallbacks.patch"
 git -C "$DEST" apply --verbose \
     "$REPO_ROOT/patches/tegra132-compatible-fallbacks.patch"
 
+# The PMC node had no "scratch" aperture, so tegra-pmc never registered its
+# reboot notifier and `reboot bootloader` was silently a plain reboot. Without
+# this a diagnostic kernel can only loop, never hand control back to fastboot.
+echo "==> applying patches/tegra132-pmc-scratch.patch"
+git -C "$DEST" apply --verbose \
+    "$REPO_ROOT/patches/tegra132-pmc-scratch.patch"
+
 # Applies on top of the audio patch, since both touch the same file.
 echo "==> applying patches/flounder-bluetooth.patch"
 git -C "$DEST" apply --verbose \

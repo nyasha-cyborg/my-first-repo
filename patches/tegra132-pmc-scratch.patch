@@ -1,0 +1,22 @@
+diff --git a/arch/arm64/boot/dts/nvidia/tegra132.dtsi b/arch/arm64/boot/dts/nvidia/tegra132.dtsi
+index c356a6fd4..5f0d2a11b 100644
+--- a/arch/arm64/boot/dts/nvidia/tegra132.dtsi
++++ b/arch/arm64/boot/dts/nvidia/tegra132.dtsi
+@@ -617,14 +617,16 @@ tegra_rtc: rtc@7000e000 {
+
+ 	tegra_pmc: pmc@7000e400 {
+ 		compatible = "nvidia,tegra124-pmc";
+-		reg = <0x0 0x7000e400 0x0 0x400>;
++		reg = <0x0 0x7000e400 0x0 0x400>, /* PMC */
++		      <0x0 0x7000e800 0x0 0x800>; /* scratch */
++		reg-names = "pmc", "scratch";
+ 		clocks = <&tegra_car TEGRA124_CLK_PCLK>, <&clk32k_in>;
+ 		clock-names = "pclk", "clk32k_in";
+ 		#clock-cells = <1>;
+ 	};
+
+ 	fuse@7000f800 {
+ 		compatible = "nvidia,tegra132-efuse";
+ 		reg = <0x0 0x7000f800 0x0 0x400>;
+ 		clocks = <&tegra_car TEGRA124_CLK_FUSE>;
+ 		clock-names = "fuse";

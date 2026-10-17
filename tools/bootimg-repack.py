@@ -99,6 +99,8 @@ def main():
     ap.add_argument("--image", required=True, help="kernel Image (raw or already gzipped)")
     ap.add_argument("--dtb", action="append", default=[], help="DTB to append (repeatable)")
     ap.add_argument("--append-cmdline", default="", help="extra cmdline tokens")
+    ap.add_argument("--ramdisk",
+                    help="replacement ramdisk; default is to keep the stock one")
     ap.add_argument("-o", "--output", required=True)
     args = ap.parse_args()
 
@@ -133,14 +135,30 @@ def main():
         header[0x40 : 0x40 + 512] = b"\0" * 512
         header[0x40 : 0x40 + len(enc)] = enc
         print(f"cmdline      : {new_cmd!r}")
+
+    # Read the replacement ramdisk *before* assembling the image. An earlier
+    # version patched ramdisk_size into the header afterwards using
+    # `len(out) - len(header)` as the offset, which by then pointed at the last
+    # 2048 bytes of the appended DTB rather than at the header. That silently
+    # overwrote the DTB's string table with the boot header -- properties such
+    # as bus-width and #nvidia,mipi-calibrate-cells disappeared, nodes came out
+    # duplicated, and DSI failed to probe. The header is now final before it is
+    # appended, so there is nothing to patch in place.
+    if args.ramdisk:
+        with open(args.ramdisk, "rb") as fh:
+            rd = fh.read()
+        struct.pack_into("<I", header, 0x10, len(rd))         # ramdisk_size
+        print(f"ramdisk      : {len(rd):,} bytes from {args.ramdisk}")
+    else:
+        rd = st["blob"][st["ramdisk_off"] : st["ramdisk_off"] + st["ramdisk_size"]]
+        if len(rd) != st["ramdisk_size"]:
+            sys.exit("error: stock ramdisk is truncated")
+
     out += header
 
     out += region
     out += b"\0" * (round_up(len(region), page) - len(region))
 
-    rd = st["blob"][st["ramdisk_off"] : st["ramdisk_off"] + st["ramdisk_size"]]
-    if len(rd) != st["ramdisk_size"]:
-        sys.exit("error: stock ramdisk is truncated")
     out += rd
     out += b"\0" * (round_up(len(rd), page) - len(rd))
 
@@ -151,6 +169,15 @@ def main():
     with open(args.output, "wb") as fh:
         fh.write(out)
     print(f"\nwrote {args.output} ({len(out):,} bytes)")
+
+    # Every DTB must be present byte-for-byte. Counting FDT magics is not
+    # enough -- the bug that motivated this check replaced a DTB's tail with
+    # the boot header and left the magic perfectly intact.
+    for dtb_path in args.dtb:
+        with open(dtb_path, "rb") as fh:
+            src = fh.read()
+        if src not in out:
+            sys.exit(f"error: {dtb_path} did not survive the rebuild intact")
 
     # round-trip check through the same parser the project already uses
     chk = parse_stock(args.output)

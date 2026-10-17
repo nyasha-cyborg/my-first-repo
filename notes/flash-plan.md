@@ -26,26 +26,32 @@ unchanged (`8c7e5b8a11f447999f884cb5a4e59be4b40f28b7eafd3c4649cf4ab628142a6b`).
 
 ## Step 0 — back up the boot partition
 
-**Do not skip.** The tablet runs LineageOS. Flashing replaces the boot partition,
-and `boot-stock-lte-N4F27P.img` is *not* a true restore — it is Google's stock
-kernel *and* ramdisk, which is not what LineageOS is running.
+**Do not skip, and this has now been done.** The tablet runs LineageOS, and
+flashing replaces its boot partition. `boot-stock-lte-N4F27P.img` is *not* a true
+restore — it is Google's stock kernel *and* ramdisk.
 
-If Android boots:
+Corrected 2026-10-17 against the actual device, because the paths below differ
+from what this plan originally said:
+
+- The ROM is **LineageOS 16.0** (`16.0-20241220-UNOFFICIAL-flounder`), not 14.1.
+- There is **no `/dev/block/bootdevice/by-name/`**. This device uses HTC-style
+  partition names under `/dev/block/platform/sdhci-tegra.3/by-name/`, and the
+  boot partition is **`LNX`** = `/dev/block/mmcblk0p16`, 32 MiB.
+- `adb root` needs **Developer options → Root access** enabled first. Without it
+  the daemon says "root access is disabled by system setting".
+- The tablet's `dd` is toybox: use `bs=1048576`, not `bs=1M`.
 
 ```sh
-adb devices        # confirm the tablet is listed
-adb root           # LineageOS 14.1 userdebug permits this
-adb shell dd if=/dev/block/bootdevice/by-name/boot of=/sdcard/boot-backup.img
+adb devices            # confirm the tablet is listed
+adb root               # restarts adbd as root; dd needs it for a block device
+adb shell 'dd if=/dev/block/mmcblk0p16 of=/sdcard/boot-backup.img bs=1048576'
 adb pull /sdcard/boot-backup.img
 ```
 
-Reading these: `adb devices` lists attached devices · `adb root` restarts the
-adbd daemon as root, which `dd` needs to read a block device · `adb shell dd …`
-copies the `boot` partition to a file on the tablet's storage · `adb pull` copies
-that file to the laptop.
-
-If Android will not boot, proceed without a backup and accept that restoring
-LineageOS may mean a full reinstall.
+That produced `boot-backup-lineage16.img`, sha256
+`b26351cb47efbad150a046a3a9bb2a1d677547723c76a155a084e3ad729fbc7e`. It has been
+restored once and read back over `adb` to confirm the partition matches it
+exactly, so the restore path is proven rather than assumed.
 
 ## Step 1 — reach fastboot
 
