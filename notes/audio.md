@@ -269,6 +269,40 @@ Adding nodes shifted the auto-assigned phandles, so the rt5677 card's references
 moved (0x2c → 0x34, 0x2d → 0x35). Both were re-checked rather than assumed:
 `0x34` is `tegra_i2s1` and `0x35` is the rt5677.
 
+## How to point a binary analyser at a kernel Image
+
+Worth writing down, because the first attempt was subtly useless.
+
+`objcopy -B aarch64` on a raw kernel `Image` lands the bytes in **`.data`**,
+which is not executable, so Ghidra treats the whole 16 MB as data: string
+searches work and nothing else does. Every xref comes back empty, and asking for
+a function by name fails with "unknown procedure", which reads like the symbol
+is missing rather than like no code was ever analysed.
+
+Wrapping so the bytes land in an executable section fixes it:
+
+```sh
+llvm-objcopy -I binary -O elf64-littleaarch64 -B aarch64 \
+    --rename-section .data=.text,alloc,load,readonly,code \
+    ~/Downloads/nexus9/kernel-lte.raw kernel-lte-text.elf
+```
+
+With this, Ghidra's procedure inventory for the image exceeds the MCP response
+budget — code analysis is genuinely running.
+
+Two limits remain, and between them they cap what this can answer:
+
+- **The name lookup still fails.** The `rt5677_*` / `rt5506_*` / `tfa9895_*`
+  names the string search finds are `kallsyms` data, compressed for crash
+  reporting. No analyser applies them, so there is still no way to ask for a
+  function by name; a code address has to be reached some other way.
+- **String xrefs still resolve to nothing**, including for
+  `"rt5506 hs imp value ..."`. Making the section executable did not change it,
+  which points at the image's load base rather than at the section flags.
+
+Neither blocker is fatal on its own, but the second one means the driver's own
+register writes are not reachable by following its strings.
+
 ## Not done, and what it needs
 
 - **Nothing has run on hardware. No driver has bound; no card has been seen.**
@@ -291,9 +325,13 @@ moved (0x2c → 0x34, 0x2d → 0x35). Both were re-checked rather than assumed:
   behaviour difference to expect, not a bug to chase.
 - **Mainline's amp DAI is narrower than the path**: `tfa989x-hifi` is
   playback-only, `S16_LE`, 8-48 kHz.
-- **The `rt5506` register map is not known.** Writing that driver would mean
-  recovering it from the shipped binary — a reverse-engineering job on the scale
-  of the panel work, not a driver-writing one.
+- **The `rt5506` register map is not recoverable from the kernel alone**, and
+  that is a change of estimate rather than a restatement. The kernel side only
+  wrote gain, amplifier enable and headphone enable; the tuning that made the
+  tablet sound like itself was pushed from the Android HAL over ioctl, so the
+  part worth having is in **userspace blobs, not in this image**. That makes
+  headphone support a larger job than the panel was, and of a different kind —
+  the panel's answers were all in `hboot.img`.
 - `dtbs` builds clean, but three pre-existing warnings appear from the port's own
   DT, not from this change: `usb@7d000000` / `usb@7d004000` / `usb@7d008000`
   each share a unit address with their `usb-phy@` sibling.
