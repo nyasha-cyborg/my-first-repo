@@ -317,6 +317,39 @@ The rt5677 card:
   headphone and headset-mic routing, and the PLL_A -> EXTERN1 -> PMC clock-out
   mclk chain copied from the Nexus 7, which uses the same machine driver.
 
+## How downstream modelled the speaker link, and why this differs
+
+Worth recording, because the card here does it differently and the difference
+should be deliberate rather than accidental.
+
+Downstream's `tegra_rt5677.c` declares its speaker link with a **dummy** codec:
+
+```c
+.codec_name     = "spdif-dit.0",
+.platform_name  = "tegra30-i2s.2",
+.cpu_dai_name   = "tegra30-i2s.2",
+```
+
+`spdif-dit.0` is a stub SPDIF transmitter — it is not the amplifier. The
+tfa9895s appear in that driver only as function calls, `set_tfa9895_spkamp(1, 0)`
+and `set_tfa9895l_spkamp(1, 0)`, made from the PCM `startup` and `shutdown`
+callbacks on playback.
+
+So downstream's model is: a link whose codec is there to satisfy ASoC, with the
+real amplifiers enabled over I2C from stream callbacks.
+
+The card here instead puts the two `nxp,tfa9895` amps on the link as codecs,
+which relies on their own DAPM `POWER` widget powering up when the PCM starts.
+That should come to the same thing, and is the more conventional modelling —
+the amps really are I2S-attached devices with DAIs, which is why the generic
+binding describes them with `#sound-dai-cells`.
+
+**What is not established** is whether it does come to the same thing on this
+hardware. If the speaker path stays silent despite binding, the first thing to
+try is reproducing downstream's shape: a dummy codec on the link plus an
+explicit enable from the stream callbacks, which is a small change to the
+machine driver already added.
+
 ## Auditing the driver before any hardware
 
 The panel driver yielded seven bugs to a pre-hardware audit, so the same was
