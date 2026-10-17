@@ -62,6 +62,161 @@ VCO max is 1 GHz. Display clocks above 500 MHz are rejected from this parent:
   through the current DT clock. Either PLLD's limits are conservative for
   Tegra132, or a different parent/clock path is needed.
 
+## The clock is now correct (2026-10-18)
+
+The `DIAG` ganged override that hardcoded `plld = 742.5 MHz` / `scdiv = 6` was
+wrong twice over: 742.5 MHz is rejected on `PLL_D_OUT0` (it would need a
+1485 MHz PLLD, and `plld_params.vco_max` is 1 GHz), and the stored state is
+still used by `tegra_dc_atomic_enable()`, so the display ran with divider 6
+instead of 1. With the mainline (and vendor) formula restored, the first run
+that used the correct boot-image format reports:
+
+    DIAG clk: mode=247600000 lanes=8 mul=3 div=1
+              plld=371500000 scdiv=1 slave=1 master=0
+    DIAG dc-enable: clkctl=00000001 div=1 pclk=371500000 rate=371500000
+
+That matches the downstream driver exactly (`default_hs_clk` 371.5 MHz,
+shift clock divider register 1, `pixel_scaler_mul/div` 3/1, 8 lanes).
+
+Consequences:
+
+- The master DSI link now reports `DSI_STATUS=0x0` (streaming) instead of
+  `0x400` (idle).
+- The slave link (DSI-B) still reports `0x400` (idle) after 2 s. Both are
+  configured identically (`ctrl=0x103032`, ganged enabled, start 0 / 0x300,
+  size 0x300 each), so the remaining question is why the second half of the
+  ganged pair is not transmitting.
+
+## Matching the bootloader's live DSI configuration (2026-10-18)
+
+At handover hboot is driving this exact panel through the same DSI block, so
+its registers are a known-good reference. Dumping them in `tegra_dsi_prepare()`
+*before* the module-reset toggle gives (master):
+
+    ctrl=00103032 host=00000023 pwr=00000001 status=00000000
+    sol=0000017f phy=0b080d06 070b1805 000000b5
+    pktlen=00000000 090000dc 000001ba 0f0f0000 videomode=00000009
+
+Against mainline, this exposed four real differences, all now patched:
+
+- `DSI_HOST_CONTROL`: bootloader `0x23` = `HS | CS | ECC`; mainline's video
+  path set only `HS`.
+- `DSI_SOL_DELAY`: bootloader 383, mainline 403 (the `+20` that the vendor
+  adds only in command mode).
+- `DSI_PKT_LEN_0_1`: bootloader 0; mainline wrote `hsw << 16`. In ganged
+  non-burst mode the vendor writes 0 here.
+- `DSI_VIDEO_MODE_CONTROL`: bootloader 0x9 on the master; mainline never wrote
+  it, so the reset cleared it to 0.
+
+Against the bootloader the PHY timing values differ substantially, and using
+the bootloader's exact values (`0b080d06 070b1805 000000b5`) was tested too.
+
+### Result: still black, but the link is now indistinguishable from hboot's
+
+After the fixes, the streaming registers read back exactly as the bootloader's:
+
+    ctrl=00103032 sol=0000017f phy=0b080d06 070b1805 000000b5
+    pktlen=00000000 090000dc 000001ba 0f0f0000 vm=00000009
+    ganged: master start=0 size=03000300, slave start=0300 size=03000300
+    status: both links 0x0 (streaming), DC dispcmd=0x20
+
+The panel's `GET_POWER_MODE` still returns `0x00` after the init sequence, and
+its brightness commands report `accum_err=0` (all ACKed). So either the panel
+ignores the commands it ACKs, or the DC is sending valid-timing black frames.
+
+The remaining unexplored area is the DC window/plane programming: the window
+register block cannot be read without hanging the kernel, and nothing yet
+proves the DC is sending the fbcon/`fb0` content rather than blank frames.
+
+### Two more ruled out on 2026-10-18
+
+- **Framebuffer IOVA 0.** Reserving the first 64 KiB of the IOVA space so the
+  GEM buffer gets IOVA `0x10000` (`gem-map: iova=0x0000000000010000`,
+  `iovaphys=0x813ae000`) changes nothing; the screen stays black.
+- **Panel init in the kernel.** Leaving the panel completely untouched (no
+  `drm_panel_prepare()`, no stop/start, only the video stream taken over with
+  hboot-identical registers) also leaves the screen black. Since hboot was
+  displaying on that panel at handover, this suggests the panel *is* latching
+  our stream and that the stream itself carries black frames.
+
+That moves the open question firmly to the DC/plane: whether window A is
+actually enabled and fetching the framebuffer. Note that DSI reports no
+underflow, which means the DC is feeding packets at the right rate -- black
+ones are still packets.
+
+### The window is enabled and programmed correctly
+
+Reading the window block back inside `tegra_plane_setup()` -- the one place it is
+provably clocked; reads from a delayed work hang -- gives:
+
+    winopt=40000000 start=00000000 stride=00001800
+    size=08000600 prescaled=08001800 fmt=00000025
+
+`0x40000000` is `WIN_ENABLE`, `size` is 1536x2048, `stride` is 6144, and
+`0x25` is `WIN_COLOR_DEPTH_B8G8R8X8` (32-bit XRGB8888). So the plane is enabled
+and correctly described. There is no underflow.
+
+### Physical vs IOVA addressing is not it either
+
+Pointing the window at the translated physical address
+(`start=82a80000` for `iova=0`) also leaves the screen black, with no underflow
+or SMMU fault.
+
+### The panel still reports sleep/display-off
+
+With a 100 ms delay after `DISPLAY_ON`, `GET_POWER_MODE` returns `0x00` on
+**both** links. Its commands are ACKed (`accum_err=0`), so either the panel
+ignores what it acknowledges (unlikely for real hardware) or this read is a
+dummy (the downstream driver never reads it, so the read path was never
+validated on this panel).
+
+### Leaving hboot's DSI untouched also fails
+
+Two tries at skipping `tegra_dsi_prepare()` entirely and only enabling the DC's
+DSI output:
+
+- with the late diagnostic read: black, then the kernel hangs (reading the DSI
+  registers while the block was never resumed wedges the bus).
+- without any DSI register access: still black, and it hangs again.
+
+So the DSI block cannot simply be inherited: host1x runtime PM has already put
+it into a state where the bootloader's configuration is gone, and streaming the
+DC into it without a proper resume wedges the kernel.
+
+### Error and pad registers (2026-10-18, latest run)
+
+    int_status=00000000 int_mask=00000000 host=00000023 cd=00000000
+    pad0=00000000 pad1=00000000 pad2=00077110 pad3=00003333
+
+No latched DSI protocol errors. `host=0x23` matches the bootloader; the pad
+values are the ones `tegra_dsi_pad_calibrate()` programs (the bootloader read
+0x0 before our reset). This run also reported `accum_err=-110` for the panel
+init and `status=0x200` (underflow) on both links at the 2 s check, unlike the
+earlier clean runs -- the command path is flaky and the video FIFO starved at
+some point after the stop/start. Whether the underflow is a real starvation or
+a stale sticky bit set while the DC was stopped is not yet established.
+
+### Next experiments, in order
+
+1. **Read the window block while it is safe.** The earlier hang happened with
+   the window registers read from a delayed work *after* streaming. Try reading
+   `DC_WIN_WIN_OPTIONS`, `DC_WINBUF_START_ADDR`, `DC_WIN_LINE_STRIDE` and
+   `DC_WIN_SIZE` from inside `tegra_plane_setup()` immediately after writing
+   them (block is actively clocked there), and log them.
+2. **Force the window on after the fact.** From the deferred work, write
+   `WIN_ENABLE` to `DC_WIN_WIN_OPTIONS` and re-commit. Writes do not hang (the
+   plane path already writes it); only reads did. If the window was somehow
+   disabled by the time streaming starts, this should produce an image.
+3. **Dump `DC_DISP_DISP_WIN_OPTIONS` and `DC_CMD_STATE_CONTROL` right after
+   `tegra_dc_commit()`** in `tegra_crtc_atomic_enable()` and again at the late
+   work, to see whether `WIN_A_ACT_REQ` actually latches.
+4. If the window is fetching, verify the *contents*: paint the fb from the
+   kernel (e.g. `memset` the GEM buffer) before enabling instead of relying on
+   the userspace fb0 write, then check DSI again.
+
+Keep `bootimg-repack.py` output wrapper-stripped for `fastboot boot` (see the
+section above) and always verify the `#<build>` line in the pulled log.
+
 ## Next steps (in order)
 
 1. Implement vendor-style panel commands: stop the DC stream at a frame end,
@@ -80,3 +235,34 @@ VCO max is 1 GHz. Display clocks above 500 MHz are rejected from this parent:
 `fastboot boot` only; never flash diagnostic images. Init in
 `tools/miniroot/init.c` now sleeps 90 s and holds the paint for 10 s. Log record
 format and pull procedure are in `kernel-log.md`.
+
+## The boot image must have the HTC wrapper stripped for `fastboot boot`
+
+Discovered the hard way on 2026-10-18, after three "experiments" silently ran
+yesterday's kernel. The symptom is deceptive:
+
+- `fastboot boot <image>` prints `Booting OKAY` in under a second.
+- The device **stays in fastboot** (or falls back to Android); no kernel runs.
+- The DTB log partition keeps the previous record, so the log you pull looks
+  plausible but is stale. Two consecutive runs produced byte-identical logs.
+- **Always check the `Linux version ... #<build>` line against the build you
+  sent before believing anything else in the log.**
+
+`tools/bootimg-repack.py --stock extract-lte/boot.img` preserves the stock
+256-byte HTC wrapper (`78 56 34 12`) and puts `ANDROID!` at 0x100. That layout
+is correct for `fastboot flash boot`, but this `fastboot boot` path passes the
+buffer straight to hboot's kernel loader and **requires `ANDROID!` at offset
+0**. The working images (e.g. `boot-lte-6.19-diag23.img`) are exactly 256 bytes
+smaller for this reason.
+
+Make a bootable test image like this:
+
+```sh
+python3 -I tools/bootimg-repack.py ... -o wrapped.img
+tail -c +257 wrapped.img > bootable.img   # strip the HTC wrapper
+fastboot boot bootable.img
+```
+
+Confirm the run started by watching USB: the device disappears from both
+`fastboot devices` and `adb devices` within ~6 s while the kernel runs. If it
+sits in `fastboot devices` for 40 s, it was rejected.
