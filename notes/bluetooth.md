@@ -71,10 +71,41 @@ in userspace.
    is extracted. It still has to be named the way `btbcm` looks for it, or
    pointed at with a `firmware-name` property on the node.
 2. ~~Identify the UART~~ — **done.** `/etc/bluetooth/bt_vendor.conf` states
-   `UartPort = /dev/ttyTHS2`, which is `serial@70006300`. What is still missing
-   is its control pins: the enable and wake GPIOs, for which the downstream
-   `board-flounder.c` is the place to look, as it was for the audio pin numbers.
-3. **Add the `bluetooth` node** under `serial@70006300`, with the wake and
-   shutdown GPIOs and the firmware name.
+   `UartPort = /dev/ttyTHS2`.
+3. **Add the `bluetooth` node** under that UART, with the firmware name and
+   whatever control pins it turns out to need.
+
+## Which controller is ttyTHS2
+
+Worth writing down, because counting the UARTs is the obvious approach and it
+gives the wrong answer. The downstream `board-flounder.c` AUXDATA table maps
+them explicitly:
+
+| Address | Device | Port |
+|---|---|---|
+| `0x70006000` | `serial-tegra.0` | `ttyTHS0` |
+| `0x70006040` | `serial-tegra.1` | `ttyTHS1` |
+| `0x70006200` | `serial-tegra.2` | **`ttyTHS2`** |
+| `0x70006300` | `serial-tegra.3` | `ttyTHS3` |
+
+Note the second entry is at `+0x40`, not `+0x100`, so the addresses are not
+evenly spaced and numbering them off by hand goes wrong. **Bluetooth is
+`serial@70006200`.** The port's device tree currently has that node
+`status = "disabled"`.
+
+## The control pins, which are the one thing still missing
+
+Android drove this through an rfkill device — `init.flounder.rc` writes
+`/sys/class/rfkill/rfkill0/state 0` under its `# bluetooth` heading — so a GPIO
+is involved somewhere. It is not in `board-flounder.c`: that file includes
+`rfkill-gpio.h` but never instantiates a device, and the shipped DTB has no
+rfkill, bluetooth or `bcm_bt` node. So the registration is somewhere not yet
+looked at.
+
+That is recorded as the open item rather than as a blocker, because it may not
+be one: a BCM4354's Bluetooth section on a design like this often runs from an
+always-on rail, with the UART's flow-control pins used for host and device wake.
+The way to find out is a node without the pins and see whether `btbcm` brings
+the controller up.
 
 None of this has been started, and none of it has run on hardware.
