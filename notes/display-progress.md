@@ -196,6 +196,21 @@ earlier clean runs -- the command path is flaky and the video FIFO starved at
 some point after the stop/start. Whether the underflow is a real starvation or
 a stale sticky bit set while the DC was stopped is not yet established.
 
+### The panel reset pulse (2026-10-18, latest)
+
+The panel driver was only driving the reset line high; it never asserted it.
+Because the panel is battery-powered and keeps state across SoC reboots, a
+stuck state survives a `fastboot boot`. It now pulses reset (low 10 ms, high
+120 ms) before the init sequence.
+
+That did **not** fix the timeouts. In the latest boot:
+
+    accum_err=-110 power(1)=00 fmt(1)=00 addr(1)=00
+
+The reads complete (`1` byte) but return 0x00 for power mode, pixel format and
+address mode; at least one write still times out. So the panel acknowledges
+reads with zeros and does not reach a usable state.
+
 ### Next experiments, in order
 
 1. **Read the window block while it is safe.** The earlier hang happened with
