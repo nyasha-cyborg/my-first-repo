@@ -173,3 +173,30 @@ compare them against what the shipped `tegra_dsi_init_hw()` leaves in the same
 registers. That function is in `~/Downloads/nexus9/kernel-analysis/`
 (`dsi-downstream.c`), and the shipped kernel can be searched with REA
 (`kernel-lte.elf`, `search_strings` for `tegra_dsi_init_hw`).
+
+## A visible console, today
+
+Dropping `CONFIG_DRM_TEGRA` is enough to get an actual picture on the panel. The
+bootloader leaves a live framebuffer at `0xac001000` and `simple-framebuffer`
+registers against it; the only reason the screen is black otherwise is that
+`tegra-drm` evicts that framebuffer (`aperture_remove_conflicting_devices`) and
+then fails to programme the DSI, leaving nothing on screen.
+
+With `DRM_TEGRA=n` and `console=tty0`, the kernel log appears on the panel at its
+native 1536x2048 -- small text, but real output. That proves the panel, the
+bootloader handover and fbcon all work; what does not work is the DRM/DSI path
+that would replace them.
+
+Reproduce with:
+
+```sh
+scripts/config --file "$OUT/.config" -d DRM_TEGRA
+make O="$OUT" ARCH=arm64 LLVM=1 olddefconfig Image
+python3 tools/bootimg-repack.py --stock <stock> --image "$OUT/arch/arm64/boot/Image" \
+    --dtb "$OUT/arch/arm64/boot/dts/nvidia/tegra132-flounder.dtb" \
+    --ramdisk <logdump-initramfs> -o boot-fbcon.img
+fastboot boot boot-fbcon.img
+```
+
+This is a diagnostic configuration, not the target: it gives a console, not a
+display driver.
