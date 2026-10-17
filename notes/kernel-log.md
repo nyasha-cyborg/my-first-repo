@@ -294,3 +294,27 @@ is consistent with the DC never sending frames -- and it rules out the
 
 The framebuffer-painting diagnostic is still in `tools/miniroot/init.c` because
 it is cheap and will be the quickest confirmation once the DC is fixed.
+
+## Probing the window registers hangs, which is itself the clue
+
+Reading the DC-wide registers from the deferred work is safe
+(`DC_DISP_DISP_WIN_OPTIONS`, `DC_CMD_DISPLAY_COMMAND` both returned values), but
+adding the **window A** registers -- `DC_WIN_WIN_OPTIONS`,
+`DC_WINBUF_START_ADDR`, `DC_WIN_LINE_STRIDE` -- hangs the kernel before
+userspace starts. The log then simply does not update, which reads like "the
+kernel did not boot" and is easy to misdiagnose a second time.
+
+A window block that cannot be read behaves like one that was never powered or
+clocked, which matches the DSI being idle: `tegra_plane_setup()` writes
+`WIN_ENABLE` into `DC_WIN_WIN_OPTIONS` (dc.c, around the `value = WIN_ENABLE`
+line), and if that never ran for the fbdev plane the DSI would have nothing to
+transmit.
+
+So the next thing to check is the plane path rather than the DSI: whether
+`tegra_plane_setup()`/`tegra_plane_atomic_update()` runs for the fbdev
+framebuffer, and what `tegra_dc_commit()` is being asked to latch.
+
+Diagnostic technique that works and does not hang: dump DC-wide registers from a
+delayed work; read window registers **only** if a follow-up probe shows the
+window block is alive (e.g. by writing and reading back a scratch register),
+because a hung read costs a full boot cycle and looks exactly like a boot failure.
