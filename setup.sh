@@ -97,6 +97,12 @@ echo "==> applying patches/tegra-dsi-module-reset.patch"
 git -C "$DEST" apply --verbose \
     "$REPO_ROOT/patches/tegra-dsi-module-reset.patch"
 
+# Brightness cannot be written while the DC is streaming, so the panel latches
+# it and sends it from prepare(); this is what stops DCS 0x51 timing out.
+echo "==> applying patches/panel-jdi-brightness-while-idle.patch"
+git -C "$DEST" apply --verbose \
+    "$REPO_ROOT/patches/panel-jdi-brightness-while-idle.patch"
+
 # Applies on top of the audio patch, since both touch the same file.
 echo "==> applying patches/flounder-bluetooth.patch"
 git -C "$DEST" apply --verbose \

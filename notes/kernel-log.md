@@ -224,3 +224,23 @@ value from `prepare()` before the stream starts.
 The next thing to try is the approach the downstream driver takes: stop the DC
 stream at a frame boundary before any command, then resume it
 (`tegra_dsi_stop_dc_stream_at_frame_end` in `dsi-downstream.c`).
+
+## The panel now initialises cleanly
+
+With the module reset in place, the last remaining `-110` was the backlight
+write. REA found the reason: `tegra_dsi_set_to_lp_mode()` in the shipped kernel
+switches to HS host mode, **stops the DC stream at a frame end**, waits frames,
+and only then goes to LP. Mainline never stops the stream, so a command issued
+while streaming is accepted and then never transmitted.
+
+Rather than rework mainline's streaming path, the panel driver now latches the
+requested brightness and writes DCS 0x51 from `prepare()`, while the link is
+still idle, and skips writes once streaming has begun.
+
+Result: **no display errors at all** in the boot log. The panel init sequence,
+including display-on and brightness, completes. `tegradrmfb` registers.
+
+The screen is still black, so what remains is the video path itself -- the
+framebuffer is registered but the panel is not being fed pixels. Note that the
+same panel *does* light up and paint fbcon when `DRM_TEGRA=n`, so the hardware
+and the backlight are proven; this is specific to the DRM video stream.
