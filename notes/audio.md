@@ -422,13 +422,13 @@ register writes are not reachable by following its strings.
   behaviour difference to expect, not a bug to chase.
 - **Mainline's amp DAI is narrower than the path**: `tfa989x-hifi` is
   playback-only, `S16_LE`, 8-48 kHz.
-- **The `rt5506` register map is not recoverable from the kernel alone**, and
-  that is a change of estimate rather than a restatement. The kernel side only
-  wrote gain, amplifier enable and headphone enable; the tuning that made the
-  tablet sound like itself was pushed from the Android HAL over ioctl, so the
-  part worth having is in **userspace blobs, not in this image**. That makes
-  headphone support a larger job than the panel was, and of a different kind —
-  the panel's answers were all in `hboot.img`.
+- **The `rt5506` is the blocker, and it turned out to be smaller than this note
+  first estimated.** It is the headphone output stage with no mainline driver,
+  and its tuning was expected to be locked in a compiled HAL. It is not — it is
+  `/etc/RT5506` in the ROM, a plain-text register table of 21 modes. See
+  [`rt5506.md`](rt5506.md), including the question that has to be answered
+  first: whether it is an analog amplifier or a codec, which decides both the
+  driver's shape and whether the headphone routing on the card above is right.
 - `dtbs` builds clean, but three pre-existing warnings appear from the port's own
   DT, not from this change: `usb@7d000000` / `usb@7d004000` / `usb@7d008000`
   each share a unit address with their `usb-phy@` sibling.
