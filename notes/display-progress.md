@@ -211,39 +211,53 @@ The reads complete (`1` byte) but return 0x00 for power mode, pixel format and
 address mode; at least one write still times out. So the panel acknowledges
 reads with zeros and does not reach a usable state.
 
-### Next experiments, in order
+## It works: inject panel commands into the running video stream
 
-1. **Read the window block while it is safe.** The earlier hang happened with
-   the window registers read from a delayed work *after* streaming. Try reading
-   `DC_WIN_WIN_OPTIONS`, `DC_WINBUF_START_ADDR`, `DC_WIN_LINE_STRIDE` and
-   `DC_WIN_SIZE` from inside `tegra_plane_setup()` immediately after writing
-   them (block is actively clocked there), and log them.
-2. **Force the window on after the fact.** From the deferred work, write
-   `WIN_ENABLE` to `DC_WIN_WIN_OPTIONS` and re-commit. Writes do not hang (the
-   plane path already writes it); only reads did. If the window was somehow
-   disabled by the time streaming starts, this should produce an image.
-3. **Dump `DC_DISP_DISP_WIN_OPTIONS` and `DC_CMD_STATE_CONTROL` right after
-   `tegra_dc_commit()`** in `tegra_crtc_atomic_enable()` and again at the late
-   work, to see whether `WIN_A_ACT_REQ` actually latches.
-4. If the window is fetching, verify the *contents*: paint the fb from the
-   kernel (e.g. `memset` the GEM buffer) before enabling instead of relying on
-   the userspace fb0 write, then check DSI again.
+The panel never executed commands sent with the stream stopped, even though
+the DSI acknowledged them. The vendor does not do that: its
+`DSI_CMD_VBLANK_SHORT` commands are queued while video is running and the
+controller inserts them at vblank
+(`tegra_dsi_start_host_cmd_v_blank_video()`), using `DSI_VIDEO_MODE_CONTROL`
+(which hboot leaves at `0x9`).
+
+Implemented in `tegra_dsi_host_transfer()`: while `dsi->video_pkt_mode` is set,
+the packet is written to `DSI_WR_DATA` with `DSI_VIDEO_MODE_CONTROL` enabled,
+two frames are allowed to pass, and the register is restored. No BTA is
+possible on this path. `tegra_dsi_encoder_enable()` sets the flag around
+`drm_panel_prepare()` and leaves the video stream running throughout -- the
+stop/start + host/LP sequence is gone.
+
+Result, confirmed twice on hardware:
+
+- `panel prep: accum_err=0`
+- **console text appears, then the init's white paint fills the panel**
+- both links `status=0` (streaming), `int_status=0`, DC `dispcmd=0x20`
+
+The strobing seen first is the freestanding init painting the framebuffer in
+64 KiB chunks; it settles to solid white.
+
+## Next steps
+
+1. **Backlight updates after streaming.** The panel driver currently latches
+   brightness and skips writes once streaming has begun (that was the old
+   workaround for `-110`). With `video_pkt_mode` in place those writes can be
+   injected too; enable the flag for `jdi_panel_bl_update_status()` whenever
+   the video stream is running and drop the skip.
+2. **Try the mainline-computed PHY timing again.** The bootloader's values are
+   currently forced. They are known-good, but the override should be removed
+   and re-tested now that the command path works.
+3. **Remove the DIAG instrumentation** once stable, or move the register dumps
+   behind debugfs. The window/DSI dumps are cheap but noisy.
+4. **Test with a real userspace** rather than the freestanding init: a normal
+   ramdisk + Android or postmarketOS, checking the framebuffer, console and
+   backlight.
+5. **Upstream shape.** The real fix is enabling the panel after the video
+   stream starts and delivering DCS with `DSI_VIDEO_MODE_CONTROL`; mainline's
+   current ordering cannot work for a panel that only accepts vblank-synced
+   commands.
 
 Keep `bootimg-repack.py` output wrapper-stripped for `fastboot boot` (see the
-section above) and always verify the `#<build>` line in the pulled log.
-
-## Next steps (in order)
-
-1. Implement vendor-style panel commands: stop the DC stream at a frame end,
-   send DCS (`0x11`, `0x53/0x55/0x35`, `0x51`, `0x29`), restart the stream.
-   This is the largest remaining behavioural difference.
-2. Re-check DSI PHY timing registers against the vendor's ps values.
-3. Establish the pixel clock the bootloader actually ran. Reading its registers
-   while it streams hangs the kernel (confirmed again this session — one boot
-   had to be recovered with Power + Volume Down). A safer route is a cold-boot
-   read before the DSI is streaming, or hardware probing.
-4. If the 500 MHz ceiling is the blocker, revisit `pll_d_params` for Tegra132
-   (vco_max) and the DSI clock parent in the DT.
+section below) and always verify the `#<build>` line in the pulled log.
 
 ## Working loop (unchanged)
 
