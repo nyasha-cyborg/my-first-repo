@@ -139,3 +139,37 @@ the panel.
 - The `-110` investigations above were resolved by reading the *shipped* kernel
   with REA rather than by guessing: `tegra_dsi_mipi_calibration_13x()` and the
   `clk72mhz` dependency were both found that way.
+
+## The last error: the DSI host never transmits
+
+Everything else probes. What remains is that the panel's first command never
+leaves the controller:
+
+    panel-jdi-lpm089a128a 54300000.dsi.0: sending generic data b0 04 failed: -110
+
+`tegra_dsi_transmit()` sets `DSI_TRIGGER_HOST` and polls until the bit clears.
+It never clears. Instrumenting the timeout path gave, on this board:
+
+    pad0=00000000 pad1=00000000 pad2=00077110 pad3=00003333 pad4=00000000
+    hostctl=00002003
+    power=00000001 ctrl=00000001 status=00000000 trigger=00000002 int=00000000
+
+Read: the host is enabled and powered, the PHY pad control is programmed the way
+`tegra_dsi_pad_calibrate()` programs it, there are no status errors -- and the
+trigger simply never completes.
+
+Two things were tried and both changed nothing, which is worth recording:
+
+- **Enabling `MIPI_CAL_CLKEN_OVR`** (done, kept -- it matches the shipped
+  kernel) did fix calibration, but not this.
+- **Moving `drm_panel_prepare()` after `tegra_dsi_configure()`**, on the theory
+  that the controller had to be programmed before commands could be sent. The
+  shipped kernel does `tegra_dsi_init_hw()` before sending panel commands, so
+  this looked right. It moved the failure earlier (8.9 s instead of 14.7 s) and
+  did not fix it. The change was reverted.
+
+The published register values are the starting point for the next attempt:
+compare them against what the shipped `tegra_dsi_init_hw()` leaves in the same
+registers. That function is in `~/Downloads/nexus9/kernel-analysis/`
+(`dsi-downstream.c`), and the shipped kernel can be searched with REA
+(`kernel-lte.elf`, `search_strings` for `tegra_dsi_init_hw`).
