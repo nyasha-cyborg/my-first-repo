@@ -1,6 +1,6 @@
 # WiFi — working state
 
-Last updated: 2026-10-18 23:35 · branch `usb-bringup`
+Last updated: 2026-10-19 00:05 · branch `usb-bringup`
 
 ## Status: fully working
 
@@ -10,6 +10,12 @@ udhcpc:          lease of 192.168.1.102 obtained from 192.168.1.71
 ping 8.8.8.8:    2/2, 35-52 ms
 wget example.com: 577 bytes, rc=0
 ```
+
+All of the above now happens **automatically** on boot (`init-auto.c`):
+20 s delay -> modules -> wait for wlan0 -> wpa_supplicant -> udhcpc with
+`/usr/share/udhcpc/default.script` -> route forced to 192.168.1.1. Verified
+from a cold boot with no manual steps: `ip route` shows
+`default via 192.168.1.1 dev wlan0` and `ping 8.8.8.8` succeeds.
 
 Two traps found on the way:
 
