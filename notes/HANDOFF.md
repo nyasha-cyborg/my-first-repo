@@ -78,9 +78,15 @@ Mitigations to try, in order:
 
 ## Prepared but untested
 
-- **Audio** (`notes/audio.md`): two I2S links — `rt5677` (headphones/mics)
-  and `tfa9895` (speakers) — needs a custom machine driver; DT written,
-  schema-checked, never run.
+- **Audio**: the machine drivers were already in the tree —
+  `nvidia,tegra-audio-rt5677` (headphones/mics) and
+  `nvidia,tegra-audio-tfa989x-flounder` (speakers, added by the port) — and
+  the DT sound nodes carry both compatibles. What was missing was the
+  **Tegra30 I2S/AHUB support in the kernel config**; it is now enabled
+  (`SND_SOC_TEGRA30_I2S`/`_AHUB` = m), and the audio modules are assembled
+  into `/tmp/audio-ramdisk.gz` (image `/tmp/n9audio-stripped.img`), loaded by
+  init when `/etc/audio` exists. Never run on hardware.
+  Note `rt5677-spi` is a separate module (the DSP interface).
 - **Bluetooth** (`notes/bluetooth.md`): DT written; `bcm4354.hcd` extracted
   from the vendor partition.
 - **Installed boot** (`notes/flash-plan.md`): everything so far runs via
@@ -89,8 +95,10 @@ Mitigations to try, in order:
 
 ## Test images and how they were built
 
-- Working image: `/tmp/n9auto14-stripped.img` (wrapper stripped with
-  `tail -c +257`), booted with `fastboot boot`.
+- Images (all wrapper-stripped with `tail -c +257`, booted with `fastboot boot`):
+  `n9auto14` (last verified working), `n9auto15`/`n9auto15pm`
+  (runtime-PM on/off), `n9console` (no WiFi auto-load), `n9audio` (audio
+  modules + `/etc/audio`).
 - Ramdisk: busybox-static (Alpine), `/sbin/wpa_supplicant` + libs
   (musl, libnl3, libcrypto/libssl, dbus-libs, pcslite),
   `/lib/modules/<release>/{rfkill,evdev,cfg80211,brcmutil,brcmfmac,brcmfmac-wcc}.ko`,
@@ -116,6 +124,9 @@ Mitigations to try, in order:
    reboot over poking `sdhci-tegra`.
 6. **Upstream.** The VBUS comparator fix and the `nvidia,only-1-8v` handling
    are genuine mainline fixes; both need review before sending.
-7. **MAC address.** The chip reports `00:90:4c:16:70:01`; the real board MAC
-   is in the vendor NVRAM (`flounder.wifimacaddr=B4:CE:F6:DF:17:D3` in the
-   kernel command line). Supply a proper NVRAM.
+7. **MAC address.** The chip reports `00:90:4c:16:70:01`. Init now applies
+   `flounder.wifimacaddr` from the kernel command line to `wlan0`
+   (`B4:CE:F6:DF:17:D3` on this unit); a proper vendor NVRAM would still be
+   better.
+8. **Read the DTB-partition record after the next reset** (sector 79872 of
+   `mmcblk0`, 32 KiB) — it holds the kernel log up to the stall.
