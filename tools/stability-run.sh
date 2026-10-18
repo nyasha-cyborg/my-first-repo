@@ -38,6 +38,15 @@ reboot_android() {
     fi
 }
 
+# Refuse to run at low charge: a flat pack both confounds stall results and
+# makes repeated boot cycles risky. Override with N9_MIN_CAP=<percent>.
+MIN_CAP=${N9_MIN_CAP:-40}
+
+battery_ok() {
+    cap=$(timeout 8 adb shell cat /sys/class/power_supply/battery/capacity 2>/dev/null | tr -d '\r')
+    [ -n "$cap" ] && [ "$cap" -ge "$MIN_CAP" ] 2>/dev/null
+}
+
 wait_android() {
     i=0
     while [ $i -lt 60 ]; do
@@ -54,6 +63,11 @@ for img in "$@"; do
         reboot_android
         sleep 10
         wait_android || { say "no android; giving up on $img"; continue; }
+    fi
+
+    if ! battery_ok; then
+        say "battery below ${MIN_CAP}% (or unreadable) - charge first, stopping"
+        exit 1
     fi
 
     adb reboot bootloader >/dev/null 2>&1
