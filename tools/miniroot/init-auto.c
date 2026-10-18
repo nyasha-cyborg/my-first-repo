@@ -172,6 +172,7 @@ void _start(void)
 {
 	static const char *mods[] = {
 		"/lib/modules/KVER/rfkill.ko",
+		"/lib/modules/KVER/evdev.ko",
 		"/lib/modules/KVER/cfg80211.ko",
 		"/lib/modules/KVER/brcmutil.ko",
 		"/lib/modules/KVER/brcmfmac.ko",
@@ -204,6 +205,17 @@ void _start(void)
 		}
 		sleep_ms(100);
 	}
+	/* Arm the hardware watchdog and never touch it again: the driver
+	 * pings it while the kernel is healthy, so a real hang resets the
+	 * tablet instead of needing a power cycle. */
+	{
+		long wfd = sc(SYS_openat, AT_FDCWD, (long)"/dev/watchdog",
+			      O_WRONLY, 0, 0);
+
+		say(wfd >= 0 ? "n9wifi: watchdog armed\n"
+			     : "n9wifi: no watchdog\n");
+	}
+
 	say("n9wifi: boot\n");
 
 	/* Loading brcmfmac before the SDIO host has settled wedges the
