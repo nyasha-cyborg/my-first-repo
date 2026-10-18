@@ -98,6 +98,82 @@ static void sleep_s(long sec)
 	sc(SYS_nanosleep, (long)&ts, 0, 0, 0, 0);
 }
 
+static long read_kmsg(char *buf, long cap);
+static long emit(long flags, const char *buf, long len);
+
+/* Flush the kernel log plus a status line to the DTB partition right now. */
+static void dump_now(const char *status)
+{
+	long t = read_kmsg(log, (long)sizeof(log) - 8192);
+	int i = 0;
+
+	if (t < 0)
+		t = 0;
+	if (t < (long)sizeof(log) - 2)
+		log[t++] = '\n';
+	while (status[i] && t < (long)sizeof(log) - 2)
+		log[t++] = status[i++];
+	log[t++] = '\n';
+
+	emit(F_READ, log, t);
+}
+
+/* Copy the whole kernel ring buffer into buf; returns the byte count. */
+static long read_kmsg(char *buf, long cap)
+{
+	long fd, n, total = 0;
+
+	fd = sc(SYS_openat, AT_FDCWD, (long)"/dev/kmsg", O_RDONLY | O_NONBLOCK, 0, 0);
+	if (fd < 0) {
+		sc(SYS_mknodat, AT_FDCWD, (long)"/kmsg", S_IFCHR | 0600,
+		   dev_of(1, 11), 0);
+		fd = sc(SYS_openat, AT_FDCWD, (long)"/kmsg", O_RDONLY | O_NONBLOCK, 0, 0);
+	}
+	if (fd < 0)
+		return 0;
+
+	while (total < cap) {
+		n = sc(SYS_read, fd, (long)(buf + total), cap - total, 0, 0);
+		if (n <= 0)
+			break;
+		total += n;
+	}
+	sc(SYS_close, fd, 0, 0, 0, 0);
+
+	return total;
+}
+
+/* Write "<msg> <val>" to /dev/kmsg so it lands in the dumps. */
+static void kmsg_line(const char *msg, long val)
+{
+	char buf[96];
+	char tmp[24];
+	int i = 0, n = 0, t = 0;
+	long fd;
+	unsigned long v = val < 0 ? -(unsigned long)val : (unsigned long)val;
+
+	while (msg[i] && n < 70)
+		buf[n++] = msg[i++];
+
+	if (val < 0)
+		buf[n++] = '-';
+
+	do {
+		tmp[t++] = '0' + (v % 10);
+		v /= 10;
+	} while (v);
+	while (t > 0 && n < 90)
+		buf[n++] = tmp[--t];
+
+	buf[n++] = '\n';
+
+	fd = sc(SYS_openat, AT_FDCWD, (long)"/dev/kmsg", O_WRONLY, 0, 0);
+	if (fd >= 0) {
+		sc(SYS_write, fd, (long)buf, n, 0, 0);
+		sc(SYS_close, fd, 0, 0, 0, 0);
+	}
+}
+
 /* Write the record at the current file position of fd. */
 static void put(long fd, long flags, const char *buf, long len)
 {
@@ -169,6 +245,111 @@ void _start(void)
 	flags |= F_MOUNTED;
 	emit(flags, log, 0);
 
+#ifdef TRIGGER
+	/*
+	 * Let the console and the display settle, then hand the risky USB
+	 * probe to the kernel from userspace.  A child refreshes the on-disk
+	 * record every two seconds, so a hard hang still leaves the last
+	 * kernel messages behind.
+	 */
+	sleep_s(6);
+	flags |= F_SLEPT;
+
+	total = read_kmsg(log, (long)sizeof(log) - 8192);
+	flags |= F_KMSG | F_READ;
+	if (emit(flags, log, total))
+		flags |= F_BLK;
+
+	{
+		long pid = sc(SYS_clone, 17, 0, 0, 0, 0);
+
+		if (pid == 0) {
+			int iters = 0;
+
+			for (;;) {
+				long t;
+				char m[32];
+				int n = 0, k;
+				unsigned long v;
+
+				sleep_s(2);
+				t = read_kmsg(log, (long)sizeof(log) - 8192);
+
+				m[n++] = '\n';
+				m[n++] = 'n'; m[n++] = '9'; m[n++] = 'm';
+				m[n++] = 'o'; m[n++] = 'n'; m[n++] = ':';
+				m[n++] = ' ';
+				v = (unsigned long)++iters;
+				{
+					char d[12];
+					int c = 0;
+					do { d[c++] = '0' + (v % 10); v /= 10; } while (v);
+					for (k = c - 1; k >= 0; k--)
+						m[n++] = d[k];
+				}
+				m[n++] = '\n';
+				for (k = 0; k < n && t < (long)sizeof(log) - 1; k++)
+					log[t++] = m[k];
+
+				emit(F_READ, log, t);
+
+				if (iters == 2) {
+					/* A separate process does the risky
+					 * part; this one keeps the log fresh,
+					 * so a blocking call is still
+					 * identifiable from the record.
+					 */
+					long tp = sc(SYS_clone, 17, 0, 0, 0, 0);
+
+					if (tp == 0) {
+						static const char path[] =
+							"/sys/bus/platform/drivers/tegra-usb/bind";
+						static const char dev[] = "7d000000.usb";
+						long mrc, bfd, rc;
+
+						kmsg_line("n9trigger: pre-mount", 0);
+						mrc = sc(SYS_mount, (long)"sysfs",
+							 (long)"/sys",
+							 (long)"sysfs", 0, 0);
+						kmsg_line("n9trigger: mount rc=", mrc);
+
+						bfd = sc(SYS_openat, AT_FDCWD,
+							 (long)path, O_WRONLY, 0, 0);
+						kmsg_line("n9trigger: open rc=", bfd);
+						if (bfd >= 0) {
+							kmsg_line("n9trigger: writing", 0);
+							rc = sc(SYS_write, bfd,
+								(long)dev,
+								sizeof(dev) - 1, 0, 0);
+							sc(SYS_close, bfd, 0, 0, 0, 0);
+							kmsg_line("n9trigger: bind rc=", rc);
+						}
+						for (;;)
+							sleep_s(1);
+					}
+				}
+			}
+		}
+	}
+
+	sleep_s(40);
+
+#ifdef SOFT_CONNECT
+	{
+		static const char spath[] = "/sys/class/udc/ci_hdrc.0/soft_connect";
+		long sfd = sc(SYS_openat, AT_FDCWD, (long)spath, O_WRONLY, 0, 0);
+		long rc = sfd;
+
+		if (sfd >= 0) {
+			rc = sc(SYS_write, sfd, (long)"connect", 7, 0, 0);
+			sc(SYS_close, sfd, 0, 0, 0, 0);
+		}
+		kmsg_line("n9trigger: soft_connect rc=", rc);
+	}
+#endif
+
+	sleep_s(20);
+#else
 	/* 90 s: deferred probes can take ~60 s, and the panel needs time after */
 #if defined(HYBRID) || defined(SHORT)
 	sleep_s(20);
@@ -197,6 +378,7 @@ void _start(void)
 	flags |= F_READ;
 	if (emit(flags, log, total))
 		flags |= F_BLK;
+#endif
 
 #ifdef HYBRID
 	/*
@@ -239,6 +421,10 @@ void _start(void)
 
 		sc(SYS_execve, (long)argv[0], (long)argv, (long)envp, 0, 0);
 	}
+#endif
+
+#ifdef TRIGGER
+	kmsg_line("n9trigger: parent awake", 0);
 #endif
 
 	/*
