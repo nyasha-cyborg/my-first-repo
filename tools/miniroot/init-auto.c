@@ -113,9 +113,9 @@ static long dev_of(int major, int minor)
 	return ((long)major << 8) | (minor & 0xff);
 }
 
-static void emit(const char *buf, long len)
+static void emit(const char *buf, long len, long flags)
 {
-	long flags = 0, fd;
+	long fd;
 
 	fd = sc(SYS_openat, AT_FDCWD, (long)"/dev/mmcblk0", O_WRONLY, 0, 0);
 	if (fd < 0) {
@@ -168,6 +168,24 @@ static void run(const char *path, const char *const *argv)
 	}
 }
 
+/* seconds since boot, as a boot marker in the record's flags word */
+static long uptime_s(void)
+{
+	char b[64];
+	long fd, n, v = 0, i = 0;
+
+	fd = sc(SYS_openat, AT_FDCWD, (long)"/proc/uptime", O_RDONLY, 0, 0);
+	if (fd < 0)
+		return 0;
+	n = sc(SYS_read, fd, (long)b, sizeof(b) - 1, 0, 0);
+	sc(SYS_close, fd, 0, 0, 0, 0);
+	if (n <= 0)
+		return 0;
+	while (i < n && b[i] >= '0' && b[i] <= '9')
+		v = v * 10 + (b[i++] - '0');
+	return v;
+}
+
 static void monitor(void)
 {
 	for (;;) {
@@ -177,7 +195,7 @@ static void monitor(void)
 		 * prime suspect for the stalls (heavy, always in flight). */
 		sleep_ms(10000);
 		n = read_kmsg(log, (long)sizeof(log));
-		emit(log, n);
+		emit(log, n, uptime_s());
 	}
 }
 
