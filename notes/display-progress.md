@@ -241,6 +241,34 @@ backlight writes (DCS 0x51) also go through the video path. Confirmed on
 hardware: kernel console text with a cursor, then full white at full
 brightness.
 
+## First userspace attempt: stock Android ramdisk (2026-10-18)
+
+Booting the working kernel with the stock LineageOS ramdisk gets as far as:
+
+    Freeing unused kernel memory: 896K
+    Run /init as init process
+    [drm] fb0: tegradrmfb frame buffer device
+
+The device then resets and boots the stock 3.10 kernel, with no kernel message
+from Android's init at all. To see the handover, `tools/miniroot/init.c` gained
+a `HYBRID` build:
+
+- it writes the usual record to the DTB partition,
+- forks a child that refreshes the record every 2 s,
+- then `execve()`s `/init.android` (the stock ramdisk's real init, renamed).
+
+The record confirms our kernel reached userspace and the display driver
+registered. Android's init produced no `init:` messages before the reset, so it
+either failed immediately or called `reboot()` on a mount failure.
+
+Also visible in that log: `tegra-xusb-padctl ... failed to setup XUSB ports:
+-517`, so mainline has no USB yet. That alone rules out a usable Android for
+now, independent of display.
+
+The hybrid ramdisk is built from `bootimg-build/ramdisk.gz`, with `init`
+renamed to `init.android`, `tools/miniroot/init.hybrid` installed as `/init`,
+and the tree repacked with `cpio -o -H newc --owner 0:0`.
+
 ## Next steps
 
 1. **Backlight updates after streaming.** The panel driver currently latches

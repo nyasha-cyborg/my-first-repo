@@ -47,6 +47,8 @@
 #define SYS_exit      93
 #define SYS_nanosleep 101
 #define SYS_reboot    142
+#define SYS_clone     220
+#define SYS_execve    221
 
 #define AT_FDCWD    (-100)
 #define O_RDONLY    0
@@ -168,7 +170,11 @@ void _start(void)
 	emit(flags, log, 0);
 
 	/* 90 s: deferred probes can take ~60 s, and the panel needs time after */
+#ifdef HYBRID
+	sleep_s(20);
+#else
 	sleep_s(90);
+#endif
 	flags |= F_SLEPT;
 
 	fd = sc(SYS_openat, AT_FDCWD, (long)"/dev/kmsg", O_RDONLY | O_NONBLOCK, 0, 0);
@@ -191,6 +197,49 @@ void _start(void)
 	flags |= F_READ;
 	if (emit(flags, log, total))
 		flags |= F_BLK;
+
+#ifdef HYBRID
+	/*
+	 * Hybrid ramdisk: hand PID 1 over to Android's real init after the
+	 * record is on disk, so the early userspace failures show up in the
+	 * log instead of only a reboot into the stock kernel.
+	 */
+	{
+		static const char *const argv[] = { "/init.android", (void *)0 };
+		static const char *const envp[] = { "PATH=/sbin:/system/bin",
+						    (void *)0 };
+		long pid = sc(SYS_clone, 17, 0, 0, 0, 0);
+
+		if (pid == 0) {
+			/*
+			 * Child: keep refreshing the record until the system
+			 * resets, so whatever Android's init says just before
+			 * the reboot survives.
+			 */
+			for (;;) {
+				long fd2, n2, tot2 = 0;
+
+				sleep_s(2);
+				fd2 = sc(SYS_openat, AT_FDCWD, (long)"/dev/kmsg",
+					 O_RDONLY | O_NONBLOCK, 0, 0);
+				if (fd2 < 0)
+					continue;
+				while (tot2 < (long)sizeof(log) - 8192) {
+					n2 = sc(SYS_read, fd2,
+						(long)(log + tot2),
+						sizeof(log) - tot2 - 1, 0, 0);
+					if (n2 <= 0)
+						break;
+					tot2 += n2;
+				}
+				sc(SYS_close, fd2, 0, 0, 0, 0);
+				emit(F_READ, log, tot2);
+			}
+		}
+
+		sc(SYS_execve, (long)argv[0], (long)argv, (long)envp, 0, 0);
+	}
+#endif
 
 	/*
 	 * Paint the DRM framebuffer solid white. If the DSI video stream is
