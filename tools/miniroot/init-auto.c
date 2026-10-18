@@ -199,10 +199,23 @@ void _start(void)
 	};
 	int i, seen = 0;
 
+	/* Arm the hardware watchdog first, before anything that can hang:
+	 * the driver pings it while the kernel is healthy, so a real hang
+	 * resets the tablet instead of needing a power cycle. */
+	{
+		long wfd = sc(SYS_openat, AT_FDCWD, (long)"/dev/watchdog",
+			      O_WRONLY, 0, 0);
+
+		(void)wfd;
+	}
+
 	sc(SYS_mount, (long)"devtmpfs", (long)"/dev", (long)"devtmpfs", 0, 0);
 	sc(SYS_mount, (long)"proc", (long)"/proc", (long)"proc", 0, 0);
 	sc(SYS_mount, (long)"sysfs", (long)"/sys", (long)"sysfs", 0, 0);
 	sleep_ms(300);
+
+	/* devtmpfs may not have been auto-mounted before the first attempt */
+	(void)sc(SYS_openat, AT_FDCWD, (long)"/dev/watchdog", O_WRONLY, 0, 0);
 
 	/* Rolling record for post-mortem analysis of the remaining no-USB
 	 * hangs: a child refreshes the DTB-partition record every 2 s. */
@@ -221,17 +234,6 @@ void _start(void)
 		}
 		sleep_ms(100);
 	}
-	/* Arm the hardware watchdog and never touch it again: the driver
-	 * pings it while the kernel is healthy, so a real hang resets the
-	 * tablet instead of needing a power cycle. */
-	{
-		long wfd = sc(SYS_openat, AT_FDCWD, (long)"/dev/watchdog",
-			      O_WRONLY, 0, 0);
-
-		say(wfd >= 0 ? "n9wifi: watchdog armed\n"
-			     : "n9wifi: no watchdog\n");
-	}
-
 	say("n9wifi: boot\n");
 
 	/* Loading brcmfmac before the SDIO host has settled wedges the
