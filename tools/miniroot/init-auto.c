@@ -179,7 +179,7 @@ static void monitor(void)
 	}
 }
 
-void _start(void)
+static void wifi_bringup(void)
 {
 	static const char *mods[] = {
 		"/lib/modules/KVER/rfkill.ko",
@@ -192,63 +192,23 @@ void _start(void)
 		"/sbin/wpa_supplicant", "-B", "-i", "wlan0",
 		"-c", "/etc/wpa_supplicant.conf", "-D", "nl80211", 0,
 	};
-	static const char *sh_argv[] = { "sh", "-i", 0 };
 	static const char *udhcpc_argv[] = {
 		"/bin/busybox", "udhcpc", "-i", "wlan0", "-q", "-n", "-t", "6",
 		"-s", "/usr/share/udhcpc/default.script", 0,
 	};
 	int i, seen = 0;
 
-	/* Arm the hardware watchdog first, before anything that can hang:
-	 * the driver pings it while the kernel is healthy, so a real hang
-	 * resets the tablet instead of needing a power cycle. */
-	{
-		long wfd = sc(SYS_openat, AT_FDCWD, (long)"/dev/watchdog",
-			      O_WRONLY, 0, 0);
-
-		(void)wfd;
-	}
-
-	sc(SYS_mount, (long)"devtmpfs", (long)"/dev", (long)"devtmpfs", 0, 0);
-	sc(SYS_mount, (long)"proc", (long)"/proc", (long)"proc", 0, 0);
-	sc(SYS_mount, (long)"sysfs", (long)"/sys", (long)"sysfs", 0, 0);
-	sleep_ms(300);
-
-	/* devtmpfs may not have been auto-mounted before the first attempt */
-	(void)sc(SYS_openat, AT_FDCWD, (long)"/dev/watchdog", O_WRONLY, 0, 0);
-
-	/* Rolling record for post-mortem analysis of the remaining no-USB
-	 * hangs: a child refreshes the DTB-partition record every 2 s. */
-	if (sc(SYS_clone, 17, 0, 0, 0, 0) == 0)
-		monitor();
-
-	/* send all output to the gadget as soon as it exists */
-	for (i = 0; i < 50; i++) {
-		long fd = sc(SYS_openat, AT_FDCWD, (long)"/dev/ttyGS0", O_RDWR, 0, 0);
-
-		if (fd >= 0) {
-			sc(SYS_dup3, fd, 0, 0, 0, 0);
-			sc(SYS_dup3, fd, 1, 0, 0, 0);
-			sc(SYS_dup3, fd, 2, 0, 0, 0);
-			break;
-		}
-		sleep_ms(100);
-	}
-	say("n9wifi: boot\n");
-
 	/* Loading brcmfmac before the SDIO host has settled wedges the
-	 * machine a few seconds in. A delay makes the same sequence reliable;
-	 * loading by hand a minute after boot always worked. */
+	 * machine a few seconds in; a delay makes it reliable. */
 	sleep_ms(20000);
 
 	for (i = 0; i < (int)(sizeof(mods) / sizeof(mods[0])); i++)
 		load(mods[i]);
-	say("n9wifi: modules loaded\n");
 
-	/* wait up to 10 s for the SDIO card to expose wlan0 */
-	for (i = 0; i < 100; i++) {
+	for (i = 0; i < 200; i++) {
 		long fd = sc(SYS_openat, AT_FDCWD, (long)"/sys/class/net/wlan0",
 			     O_RDONLY, 0, 0);
+
 		if (fd >= 0) {
 			sc(SYS_close, fd, 0, 0, 0, 0);
 			seen = 1;
@@ -257,41 +217,68 @@ void _start(void)
 		sleep_ms(100);
 	}
 	if (!seen) {
-		say("n9wifi: NO CARDOUT (sdio did not enumerate)\n");
-	} else {
-		say("n9wifi: wlan0 present, starting supplicant\n");
-		run("/sbin/wpa_supplicant", wpa_argv);
-		/* give WPA the best part of a minute */
-		sleep_ms(45000);
-		say("n9wifi: running dhcp\n");
-		run("/bin/busybox", udhcpc_argv);
-		sleep_ms(8000);
-		/* The DHCP server (the Pi) advertises itself as the router;
-		 * the real gateway is the main router. */
-		{
-			static const char *rt[] = { "busybox", "ip", "route",
-				"replace", "default", "via", "192.168.1.1",
-				"dev", "wlan0", 0 };
-
-			run("/bin/busybox", rt);
-		}
-		sleep_ms(2000);
-		say("n9wifi: dhcp done\n");
+		say("n9wifi: NO CARDOUT\n");
+		return;
 	}
+	say("n9wifi: wlan0 present\n");
+	run("/sbin/wpa_supplicant", wpa_argv);
+	sleep_ms(45000);
+	run("/bin/busybox", udhcpc_argv);
+	sleep_ms(8000);
+	{
+		static const char *rt[] = { "busybox", "ip", "route",
+			"replace", "default", "via", "192.168.1.1",
+			"dev", "wlan0", 0 };
 
-	/* leave a shell for a human, so nothing is lost if it all worked */
-	for (i = 0; i < 300; i++) {
-		long fd = sc(SYS_openat, AT_FDCWD, (long)"/dev/ttyGS0", O_RDWR, 0, 0);
+		run("/bin/busybox", rt);
+	}
+	say("n9wifi: done\n");
+}
 
-		if (fd >= 0) {
-			sc(SYS_dup3, fd, 0, 0, 0, 0);
-			sc(SYS_dup3, fd, 1, 0, 0, 0);
-			sc(SYS_dup3, fd, 2, 0, 0, 0);
-			say("\nn9wifi: shell\n");
-			sc(SYS_execve, (long)"/bin/sh", (long)sh_argv, 0, 0, 0);
-		}
+void _start(void)
+{
+	static const char *sh_argv[] = { "sh", "-i", 0 };
+	long fd = -1;
+	int i;
+
+	sc(SYS_mount, (long)"devtmpfs", (long)"/dev", (long)"devtmpfs", 0, 0);
+	sc(SYS_mount, (long)"proc", (long)"/proc", (long)"proc", 0, 0);
+	sc(SYS_mount, (long)"sysfs", (long)"/sys", (long)"sysfs", 0, 0);
+	sleep_ms(300);
+
+	/* Arm the hardware watchdog first: the driver pings it while the
+	 * kernel is healthy, so a real hang resets the tablet instead of
+	 * needing a power cycle. */
+	(void)sc(SYS_openat, AT_FDCWD, (long)"/dev/watchdog", O_WRONLY, 0, 0);
+
+	/* A rolling record so a stall leaves the last messages behind. */
+	if (sc(SYS_clone, 17, 0, 0, 0, 0) == 0)
+		monitor();
+
+	/* give the console a face as soon as the gadget exists */
+	for (i = 0; i < 50; i++) {
+		fd = sc(SYS_openat, AT_FDCWD, (long)"/dev/ttyGS0", O_RDWR, 0, 0);
+		if (fd >= 0)
+			break;
 		sleep_ms(100);
 	}
+	if (fd >= 0) {
+		sc(SYS_dup3, fd, 0, 0, 0, 0);
+		sc(SYS_dup3, fd, 1, 0, 0, 0);
+		sc(SYS_dup3, fd, 2, 0, 0, 0);
+	}
+
+	/* WiFi runs in its own process: a blocking probe must never take the
+	 * console away again. */
+	if (sc(SYS_clone, 17, 0, 0, 0, 0) == 0) {
+		wifi_bringup();
+		for (;;)
+			sleep_ms(1000);
+	}
+
+	say("\nn9wifi: shell\n");
+	sc(SYS_execve, (long)"/bin/sh", (long)sh_argv, 0, 0, 0);
+	say("n9wifi: exec failed\n");
 	for (;;)
 		sleep_ms(1000);
 }
