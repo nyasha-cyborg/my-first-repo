@@ -149,3 +149,37 @@ Nothing in this repository has ever run on this hardware. The boot gate is the
 one claim with strong evidence behind it; the panel driver has never bound to a
 panel. Treat Step 3 as the experiment and Step 4 as the follow-up, not as
 things known to work.
+
+## Installed-boot design (prepared 2026-10-19, not run)
+
+Goal: boot Linux from flash so `fastboot boot` and a host are no longer
+needed.
+
+Artifacts ready on this machine:
+
+| File | What |
+|---|---|
+| `/tmp/n9root.ext4` | 256 MB ext4, Alpine 3.24 aarch64 minirootfs + `/lib/modules/<release>` (21 modules) + brcm firmware |
+| `/tmp/n9auto17-stripped.img` | current kernel + initramfs (wrapper stripped) |
+| `~/Downloads/nexus9/boot-backup-lineage16.img` | stock boot, to restore |
+
+Two obstacles:
+
+1. **Mainline does not see the partitions.** The tablet's partition table is
+   not at LBA1 (`gpt_sector=69631` in the bootloader cmdline) and Android has
+   a bespoke parser for it. Until that is solved, `root=/dev/mmcblk0pXX`
+   cannot work.
+   Options
+   a) teach the kernel/initramfs to find the GPT at sector 69631;
+   b) keep the rootfs as a raw ext4 image at a fixed sector and loop-mount it
+      from the initramfs (`losetup -o`, needs CONFIG_BLK_DEV_LOOP=y);
+   c) flash the ext4 image to `cache` and still loop-mount it by offset.
+2. **Android must survive.** `boot` is one-shot and restorable from the
+   backup; `cache` is expendable (Android recreates it). `system`,
+   `vendor`, `userdata` must not be touched.
+
+Proposed sequence once the user approves flashing:
+- `fastboot flash boot n9auto17.img` (wrapped image, *not* the stripped one)
+- `fastboot flash cache n9root.ext4`
+- boot, initramfs loop-mounts the cache offset and `switch_root`s.
+- rollback: `fastboot flash boot boot-backup-lineage16.img`.
