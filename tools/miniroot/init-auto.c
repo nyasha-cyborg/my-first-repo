@@ -221,6 +221,16 @@ static void wifi_bringup(void)
 		return;
 	}
 	say("n9wifi: wlan0 present\n");
+	/* The chip comes up with a placeholder MAC; hboot passes the real
+	 * one on the kernel command line. */
+	{
+		static const char *mac[] = { "busybox", "sh", "-c",
+			"M=$(busybox sed -n 's/.*flounder.wifimacaddr=\\([^ ]*\\).*/\\1/p' /proc/cmdline); "
+			"[ -n \"$M\" ] && busybox ip link set wlan0 address $M",
+			0 };
+
+		run("/bin/busybox", mac);
+	}
 	run("/sbin/wpa_supplicant", wpa_argv);
 	sleep_ms(45000);
 	run("/bin/busybox", udhcpc_argv);
