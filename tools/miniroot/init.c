@@ -425,6 +425,21 @@ void _start(void)
 
 #ifdef TRIGGER
 	kmsg_line("n9trigger: parent awake", 0);
+
+	/* Release the USB controller before rebooting; leaving it running in
+	 * device mode wedges the bootloader's USB stack on the next boot.
+	 */
+	{
+		static const char upath[] =
+			"/sys/bus/platform/drivers/tegra-usb/unbind";
+		static const char dev[] = "7d000000.usb";
+		long ufd = sc(SYS_openat, AT_FDCWD, (long)upath, O_WRONLY, 0, 0);
+
+		if (ufd >= 0) {
+			sc(SYS_write, ufd, (long)dev, sizeof(dev) - 1, 0, 0);
+			sc(SYS_close, ufd, 0, 0, 0, 0);
+		}
+	}
 #endif
 
 	/*
