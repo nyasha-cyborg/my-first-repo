@@ -255,6 +255,18 @@ void _start(void)
 	if (sc(SYS_clone, 17, 0, 0, 0, 0) == 0)
 		monitor();
 
+	/* Optional: disable runtime PM everywhere. Suspect for the idle
+	 * stalls; enabled by the presence of /etc/no-runtime-pm. */
+	if (sc(SYS_openat, AT_FDCWD, (long)"/etc/no-runtime-pm", O_RDONLY,
+	       0, 0) >= 0) {
+		static const char *pm[] = { "busybox", "sh", "-c",
+			"for f in $(busybox find /sys/devices -path '*/power/control' 2>/dev/null); do echo on > $f 2>/dev/null; done",
+			0 };
+
+		run("/bin/busybox", pm);
+		say("n9wifi: runtime pm disabled\n");
+	}
+
 	/* give the console a face as soon as the gadget exists */
 	for (i = 0; i < 50; i++) {
 		fd = sc(SYS_openat, AT_FDCWD, (long)"/dev/ttyGS0", O_RDWR, 0, 0);
