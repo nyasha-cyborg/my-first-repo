@@ -1,6 +1,6 @@
 # WiFi — working state
 
-Last updated: 2026-10-19 00:05 · branch `usb-bringup`
+Last updated: 2026-10-19 05:15 · branch `usb-bringup`
 
 ## Status: fully working
 
@@ -107,6 +107,12 @@ the ordering matters.
 - The wpa_supplicant config is built into the test ramdisk only. It holds the
   SSID and a PSK derived from the user's passphrase, is never committed and
   never written to the notes.
+
+## What is still open
+
+- Audio: the I2S/AHUB stack is now enabled in the config and the machine
+  drivers are in-tree; see HANDOFF.md. Nothing run yet.
+- The SDIO/MMC stability problem (HANDOFF.md) is not solved; WiFi itself is fine.
 
 ## Next actions
 

@@ -1,6 +1,7 @@
 # USB device mode — working state
 
-Last updated: 2026-10-18 22:30 · branch `usb-bringup` · **solved, uncommitted**
+Last updated: 2026-10-19 05:15 · branch `usb-bringup` · **solved, committed
+`677ffc61f`**
 
 ## Status: solved
 
@@ -112,10 +113,21 @@ symlinks exist (the ramdisk only ships `bin/sh`).
 Verified: `uname -a` reports 6.19.0-htc-flounder aarch64, uid=0, the tablet
 stays up (no wedge) with the gadget connected.
 
+## Two more traps in this area
+
+- **Serial line settings.** Without `stty -F /dev/ttyACM0 115200 raw -echo`
+  (and matching settings on socat/pyserial) every byte arrives mangled and
+  the shell prints `sh: /: Permission denied` forever. Repeated
+  `cat`/`printf` opens also toggle DTR and make it worse; use pyserial or
+  socat holding one connection.
+- **The diagnostic reset timer.** `ci_hdrc_tegra.c` used to arm an 8 s PMC
+  reset unconditionally; slow boots were reset mid-boot and looked like
+  intermittent hangs. Gated behind `n9.hangreset` (`65429d8f7`).
+
 ## Next actions
 
-1. Commit the console harness; it replaces the record hack for day-to-day work.
-2. Next feature: WiFi, then touch, then audio — check whether the drivers are
-   modules that need to be in the ramdisk/rootfs.
-3. Optional: wire the VBUS override to a DT property instead of a SoC flag and
-   send the patch upstream.
+1. Nothing outstanding for USB itself; both directions work.
+2. Wire the VBUS override to a DT property instead of a SoC flag before
+   sending it upstream (the `nvidia,only-1-8v` handling in `sdhci-tegra` is
+   the other upstream candidate).
+3. The remaining stability problem is not USB-specific — see HANDOFF.md.
