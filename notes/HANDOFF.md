@@ -66,6 +66,8 @@ Mode B looks like *userspace stuck in an uninterruptible syscall holding a
 lock that the tty write path also needs*, not a dead CPU: the watchdog's
 ping work still runs, so the kernel is alive. Recovery needs a power cycle.
 It appeared after WiFi bring-up and also within a minute of a plain boot.
+Prime suspect: the rolling record's raw eMMC write, which was in flight every
+2 s. The record now writes every 10 s; `/etc/no-record` disables it entirely.
 
 Mitigations to try, in order:
 1. `/etc/no-runtime-pm` in the ramdisk makes init set every
