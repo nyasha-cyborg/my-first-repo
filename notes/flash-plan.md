@@ -178,8 +178,16 @@ Two obstacles:
    backup; `cache` is expendable (Android recreates it). `system`,
    `vendor`, `userdata` must not be touched.
 
+Partition facts (verified earlier, see Step 0): boot is `LNX` =
+`mmcblk0p16`, 32 MiB; a 15.8 MiB image fits. The rootfs target (cache) offset
+is not recorded yet — get it from Android with
+`readlink -f /dev/block/platform/sdhci-tegra.3/by-name/cache` and
+`cat /sys/class/block/mmcblk0pNN/start`, then confirm the size.
+
 Proposed sequence once the user approves flashing:
 - `fastboot flash boot n9auto17.img` (wrapped image, *not* the stripped one)
 - `fastboot flash cache n9root.ext4`
-- boot, initramfs loop-mounts the cache offset and `switch_root`s.
-- rollback: `fastboot flash boot boot-backup-lineage16.img`.
+- boot; the initramfs loop-mounts the ext4 at the cache offset and
+  `switch_root`s into it.
+- rollback: `fastboot flash boot boot-backup-lineage16.img` (sha256
+  `b26351cb…`), a path that has been exercised once.
