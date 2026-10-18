@@ -171,10 +171,10 @@ static void run(const char *path, const char *const *argv)
 void _start(void)
 {
 	static const char *mods[] = {
-		"/lib/modules/6.19.0-htc-flounder-g677ffc61fe7a/rfkill.ko",
-		"/lib/modules/6.19.0-htc-flounder-g677ffc61fe7a/cfg80211.ko",
-		"/lib/modules/6.19.0-htc-flounder-g677ffc61fe7a/brcmutil.ko",
-		"/lib/modules/6.19.0-htc-flounder-g677ffc61fe7a/brcmfmac.ko",
+		"/lib/modules/KVER/rfkill.ko",
+		"/lib/modules/KVER/cfg80211.ko",
+		"/lib/modules/KVER/brcmutil.ko",
+		"/lib/modules/KVER/brcmfmac.ko",
 	};
 	static const char *wpa_argv[] = {
 		"/sbin/wpa_supplicant", "-B", "-i", "wlan0",
@@ -182,7 +182,8 @@ void _start(void)
 	};
 	static const char *sh_argv[] = { "sh", "-i", 0 };
 	static const char *udhcpc_argv[] = {
-		"/bin/busybox", "udhcpc", "-i", "wlan0", "-q", "-n", "-t", "6", 0,
+		"/bin/busybox", "udhcpc", "-i", "wlan0", "-q", "-n", "-t", "6",
+		"-s", "/usr/share/udhcpc/default.script", 0,
 	};
 	int i, seen = 0;
 
@@ -204,6 +205,11 @@ void _start(void)
 		sleep_ms(100);
 	}
 	say("n9wifi: boot\n");
+
+	/* Loading brcmfmac before the SDIO host has settled wedges the
+	 * machine a few seconds in. A delay makes the same sequence reliable;
+	 * loading by hand a minute after boot always worked. */
+	sleep_ms(20000);
 
 	for (i = 0; i < (int)(sizeof(mods) / sizeof(mods[0])); i++)
 		load(mods[i]);
@@ -229,7 +235,17 @@ void _start(void)
 		sleep_ms(45000);
 		say("n9wifi: running dhcp\n");
 		run("/bin/busybox", udhcpc_argv);
-		sleep_ms(20000);
+		sleep_ms(8000);
+		/* The DHCP server (the Pi) advertises itself as the router;
+		 * the real gateway is the main router. */
+		{
+			static const char *rt[] = { "busybox", "ip", "route",
+				"replace", "default", "via", "192.168.1.1",
+				"dev", "wlan0", 0 };
+
+			run("/bin/busybox", rt);
+		}
+		sleep_ms(2000);
 		say("n9wifi: dhcp done\n");
 	}
 

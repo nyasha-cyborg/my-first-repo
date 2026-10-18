@@ -2,19 +2,24 @@
 
 Last updated: 2026-10-18 23:35 · branch `usb-bringup`
 
-## Status: working (association + DHCP + DNS proven)
+## Status: fully working
 
 ```
 wpa_cli status:  ssid=Hotshot-38F0  freq=2437  key_mgmt=WPA2-PSK  wpa_state=COMPLETED
 udhcpc:          lease of 192.168.1.102 obtained from 192.168.1.71
-ping gateway:    2/2, 25-41 ms
-nslookup:        example.com resolves via the router
+ping 8.8.8.8:    2/2, 35-52 ms
+wget example.com: 577 bytes, rc=0
 ```
 
-Not confirmed: outbound HTTP/TCP from the tablet. `ping 1.1.1.1` and a
-`wget http://example.com` both stalled (the ping is 100% loss, the wget hung
-and had to be abandoned). DNS works, so UDP to the gateway is fine. Treat
-"internet reachable" as unproven; the driver and association are not in doubt.
+Two traps found on the way:
+
+1. **The DHCP server is the Pi (`192.168.1.71`) but the router is
+   `192.168.1.1`.** The lease hands out `.71` as the gateway; using it gives
+   LAN-only connectivity (gateway ping and DNS work, nothing on the WAN).
+   Set the default route explicitly to `192.168.1.1`.
+2. **udhcpc does not configure the interface**: the ramdisk has no
+   `/usr/share/udhcpc/default.script`. Apply the lease by hand or add the
+   script.
 
 ## Hardware / driver
 
@@ -26,6 +31,9 @@ and had to be abandoned). DNS works, so UDP to the gateway is fine. Treat
   copy), nvram `brcmfmac4354-sdio.nvidia,p2371-2180.txt` (copied to
   `brcmfmac4354-sdio.txt`; it is not the flounder-specific NVRAM, but the
   chip comes up and associates).
+- **Module paths must carry the exact `UTS_RELEASE`**, including `-dirty`.
+  A stale hardcoded path makes every `insmod` fail with `-ENOENT` while the
+  card is perfectly enumerated; check the `brcmfmac.ko rc=` lines in dmesg.
 - **`brcmfmac-wcc.ko` is required.** `brcmfmac` calls `request_module()` for
   it during attach; without it: `brcmf_fwvid_request_module: mod=wcc: failed`
   and `brcmf_attach failed`. It depends on `brcmfmac`, so it must be found by
@@ -46,6 +54,11 @@ to bind to. Mainline `sdhci-tegra` **ignores the vendor's `nvidia,only-1-8v`
 property**, so the host starts at 3.3V on a 1.8V-only part. When it succeeds
 (`ls /sys/class/net` -> `wlan0`, `/sys/bus/sdio/devices` -> `mmc1:0001:1..3`)
 everything downstream works.
+
+`sdhci-tegra` now honours the vendor's `nvidia,only-1-8v` by starting such
+hosts at 1.8V (this kernel tree). Whether that alone fixed enumeration is
+unproven: the card has also come up on boots without it. Do not trust the
+"3.3V switch failed" line as the cause either; it appears on working boots.
 
 Do **not** unbind/rebind `sdhci-tegra` to force a rescan: that call blocked
 inside the kernel and took the console and the machine down with it.
@@ -74,8 +87,8 @@ inside the kernel and took the console and the machine down with it.
 
 ## Next actions
 
-1. Make the card enumerate reliably: teach `sdhci-tegra` about
-   `nvidia,only-1-8v` (or start the host at 1.8V for this node).
-2. Add `/usr/share/udhcpc/default.script` so leases are applied.
-3. Confirm outbound traffic (the gateway ping and DNS work; HTTP did not).
-4. Then touch, audio, and the installed-boot path.
+1. Add `/usr/share/udhcpc/default.script` and set the right gateway so the
+   automatic path reaches the internet without hand-holding.
+2. Real MAC address: the chip reports `00:90:4c:16:70:01`, which is not the
+   board MAC. The NVRAM in use is the NVIDIA p2371 one, not flounder's.
+3. Then touch, audio, and the installed-boot path.
