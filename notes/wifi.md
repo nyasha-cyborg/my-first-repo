@@ -69,6 +69,18 @@ unproven: the card has also come up on boots without it. Do not trust the
 Do **not** unbind/rebind `sdhci-tegra` to force a rescan: that call blocked
 inside the kernel and took the console and the machine down with it.
 
+## The "7-second hang" was our own reset timer
+
+`ci_hdrc_tegra.c` armed a PMC reset 8 s after `core_initcall` to recover
+from wedged probes. It checked `system_state >= SYSTEM_RUNNING` only when it
+fired, so any boot whose userspace took longer than 8 s to start was reset
+mid-boot: the gadget enumerated, vanished ~7 s later and Android came up.
+That is the intermittent "hang" seen throughout this session. The timer is
+now armed only with `n9.hangreset` on the command line.
+
+A separate, rarer failure remains: sometimes no USB appears at all and the
+tablet needs a power cycle.
+
 ## Serial console (the reliable workbench)
 
 - udev rule makes `/dev/ttyACM0` 0666 on every enumeration:
