@@ -344,6 +344,31 @@ Next options, in order:
 Note: the short (20 s) init variant used for faster cycles appears to wedge
 after painting, so future quick tests should stay at the 90 s dump.
 
+### External references found later (2026-10-18)
+
+- The pmOS wiki page (`wiki.nura.eco`, raw via
+  `index.php?title=...&action=raw` because Anubis blocks normal fetches)
+  lists `usbnet = N`, `otg = Y`, `screen = P`, and notes **USB port is
+  EHCI1, id pin is PW2** -- which matches the ChipIdea controller we are
+  using.
+- A mainline branch exists at `github.com/TuxThePenguin0/linux`, branch
+  `device/htc-flounder`. Its flounder DTS uses the same USB node:
+  `nvidia,tegra124-udc`, `dr_mode = "otg"`, both extcon providers and
+  `vbus-supply`.
+- The maintainer's blog (`yuka.dev/blog-2026-02-21-nexus-9.html`) describes
+  rebasing onto 6.19 and reaching X11 via `/dev/fb0`; device-mode USB is
+  broken there too and no panel/DSI work is described. So the display fix in
+  this repository is new ground, and USB is unsolved upstream as well.
+
+### USB: current stopping point
+
+With `extcon` removed the deferred probe clears and the controller starts.
+From that point the machine sometimes wedges -- including before the init
+dump -- both with and without a built-in `g_serial` gadget. That is a hang in
+the USB bring-up itself, not in the DT dependencies. The next step needs the
+debug UART on the test pads (or another console channel): RAM boots plus
+button resets cannot resolve it efficiently.
+
 ## Next steps
 
 1. **Backlight updates after streaming.** The panel driver currently latches
