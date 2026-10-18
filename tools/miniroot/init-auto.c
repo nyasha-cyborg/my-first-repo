@@ -173,7 +173,9 @@ static void monitor(void)
 	for (;;) {
 		long n;
 
-		sleep_ms(2000);
+		/* 10 s rather than 2: the frequent raw eMMC writes are the
+		 * prime suspect for the stalls (heavy, always in flight). */
+		sleep_ms(10000);
 		n = read_kmsg(log, (long)sizeof(log));
 		emit(log, n);
 	}
