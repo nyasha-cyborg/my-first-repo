@@ -170,7 +170,7 @@ void _start(void)
 	emit(flags, log, 0);
 
 	/* 90 s: deferred probes can take ~60 s, and the panel needs time after */
-#ifdef HYBRID
+#if defined(HYBRID) || defined(SHORT)
 	sleep_s(20);
 #else
 	sleep_s(90);

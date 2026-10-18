@@ -317,6 +317,33 @@ Config additions for the static test image (`arch/arm64/configs/flounder_defconf
 
 USB work is on branch `usb-bringup`, separate from the display PR series.
 
+### The extcon property is the remaining deferral trigger
+
+With all four dependency fixes in place the controller still returned `-517`.
+Removing `extcon = <&palmas_usb>, <&extcon_usb_otg>` from `usb@7d000000`
+**removed the deferred-probe message entirely** — the controller gets past
+`ci_hdrc_add_device()`. With the normal 90 s init the run completed and the
+display painted white.
+
+But the system then wedges, and not consistently: one run with that DT
+completed, the next (with an added early `dev_info`) hung before the log dump.
+That looks like the USB controller itself (OTG/role switching, charging or an
+interrupt storm) wedging the machine once it actually comes up, rather than
+anything in the diagnostics.
+
+Next options, in order:
+
+1. Try `dr_mode = "host"` and `dr_mode = "peripheral"` with `extcon` removed,
+   to avoid the OTG/role machinery that appears to hang.
+2. Fix the palmas extcon provider properly instead of dropping it: confirm the
+   `ti,palmas-usb-vid` child device is created by the palmas MFD and that its
+   extcon device registers, then re-add the property.
+3. Get the debug UART attached; every remaining question here is much cheaper
+   with a serial console than with 4-minute RAM boots and button resets.
+
+Note: the short (20 s) init variant used for faster cycles appears to wedge
+after painting, so future quick tests should stay at the 90 s dump.
+
 ## Next steps
 
 1. **Backlight updates after streaming.** The panel driver currently latches
