@@ -110,6 +110,10 @@ Mitigations to try, in order:
   PSK; never commit it, never serve the ramdisk directory over the network).
 - Harnesses: `tools/miniroot/init-auto.c` (this image),
   `init-live.c`, `init-wifi.c`, `udhcpc-default.sh`, `tools/watch-n9.sh`.
+- **Artifacts are persisted** ( /tmp is tmpfs and dies with a laptop
+  reboot) in `~/Downloads/nexus9/bootimg-build/n9-mainline/`:
+  `n9auto17`, `n9bare`, `n9console`, `n9auto15pm`, `n9audio` (stripped
+  images), the ramdisks, `n9root.ext4`, and the compiled inits.
 - Boot success with `fastboot boot` is ~50%; hboot silently falls back to
   Android. Detect a real kernel start by the `0525:a4a7` gadget appearing.
 
