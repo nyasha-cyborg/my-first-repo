@@ -294,6 +294,29 @@ The legacy `nvidia,tegra124-udc` at `usb@7d000000` (ChipIdea) is the path
 flounder's padctl uses (`usb2-0` function `"snps"`). The xusb host at
 `usb@70090000` is still disabled in the flounder tree.
 
+### Further USB work (same session)
+
+- The charger does probe (`probe ok`, IRQ 72), and `tegra_dsi`'s diagnostics
+  showed `phy_init=0` before the controller add, so the PHY is fine.
+- `ci_hdrc_add_device()` still returns `-EPROBE_DEFER`; `ci_get_platdata()`
+  looks up the `vbus` regulator and two extcon devices.
+- Fixed two more candidate causes:
+  - the charger's vbus regulator is registered against the charger node, not
+    the `usb-otg-vbus` child, because the regulator core no longer resolves
+    `desc->of_match`; the driver now sets `cfg.of_node` explicitly;
+  - `CONFIG_EXTCON_PALMAS` was `=m`, so the palmas USB extcon provider never
+    registered. It is now built in.
+- After both, the controller still reports `-517`. The next diagnostic is to
+  print the return values of the `reg_vbus`, `ext_vbus` and `ext_id` lookups
+  in `ci_get_platdata()` in one run; a previous attempt did not reach the
+  init dump before the tablet was reset, so it still needs capturing.
+
+Config additions for the static test image (`arch/arm64/configs/flounder_defconfig`):
+`CONFIG_CHARGER_BQ24190=y`, `CONFIG_USB_TEGRA_XUDC=y`,
+`CONFIG_EXTCON_PALMAS=y`.
+
+USB work is on branch `usb-bringup`, separate from the display PR series.
+
 ## Next steps
 
 1. **Backlight updates after streaming.** The panel driver currently latches
