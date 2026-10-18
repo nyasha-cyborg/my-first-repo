@@ -41,12 +41,13 @@ last:  6,444,23167961,-;brcmfmac: brcmf_c_process_txcap_blob: no txcap_blob avai
 Interpretation:
 - init sleeps 20 s before WiFi; module load starts at 22.9 s. The monitor emits
   every 10 s, so the record containing a 23.17 s line was written at ~32.7 s.
-- **No kernel message after 23.17 s.** brcmfmac never printed its usual post-
-  preinit lines (`brcmf_add_if`, `wlan0`, association). The probe was already
-  stuck by 23.2 s.
-- The machine still ran the monitor at ~32.7 s, so the stall came in
-  (32.7 s, 42.7 s) — after the last eMMC write, which is why the eMMC-write
-  hypothesis cannot be excluded on timing alone.
+- No *info-level* message after 23.17 s, but brcmfmac's remaining attach
+  messages are debug-level, so this does **not** prove the probe was stuck.
+  Treat 23.17 s as the last logged activity, not the stall point.
+- The record containing that line was written by the ~32.7 s emit, so the
+  machine was alive at 32.7 s and dead before the ~42.7 s emit. That window
+  brackets the *next* record write — consistent with the original eMMC-write
+  suspect.
 - No `hung task`, lockdep or mmc error was recorded before the silence.
 
 Also relevant from this record: `mmc1: Switching to 3.3V signalling voltage
@@ -61,9 +62,11 @@ SDR104 SDIO card` at 1.60 s; both mmc hosts came up.
 08:30:26 shell unresponsive after 15s
 ```
 Gadget stays enumerated (`0525:a4a7`), `/dev/ttyACM0` exists, but manual
-probes with `stty ... raw -echo` are silent for minutes; the watchdog does not
-reset it. This is mode B, and **WiFi/brcmfmac was never loaded**, so the SDIO
-probe cannot be the necessary cause. The raw eMMC record write returns as the
+probes with `stty ... raw -echo` are silent. This is mode B, and
+**WiFi/brcmfmac was never loaded**, so the SDIO probe cannot be the necessary
+cause. Recovery was not observed directly this time — by 08:45 the tablet was
+back in Android, but a human power cycle cannot be ruled out, so the
+120 s-watchdog question stays open for this boot. The raw eMMC record write returns as the
 leading suspect. Earlier in the same session the same image ran >80 s with a
 working shell (the earlier console boot answered a manual probe >80 s in), so
 the stall is intermittent.
