@@ -299,6 +299,40 @@ void _start(void)
 			sleep_ms(1000);
 	}
 
+	/* Optional audio stack (flag file /etc/audio). */
+	if (sc(SYS_openat, AT_FDCWD, (long)"/etc/audio", O_RDONLY, 0, 0) >= 0 &&
+	    sc(SYS_clone, 17, 0, 0, 0, 0) == 0) {
+		static const char *top[] = {
+			"tegra30-ahub", "tegra30-i2s", "rt5677",
+			"rt5677-spi", "tfa989x", "tegra-machine",
+		};
+		static char name[32];
+		int k;
+
+		sleep_ms(25000);
+		for (k = 0; k < (int)(sizeof(top) / sizeof(top[0])); k++) {
+			static const char *a[4];
+			int j = 0, m = 0;
+
+			a[j++] = "busybox";
+			a[j++] = "modprobe";
+			while (top[k][m] && m < 28) {
+				name[m] = top[k][m];
+				m++;
+			}
+			name[m++] = '.';
+			name[m++] = 'k';
+			name[m++] = 'o';
+			name[m] = 0;
+			a[j++] = name;
+			a[j] = 0;
+			run("/bin/busybox", a);
+		}
+		say("n9audio: modules requested\n");
+		for (;;)
+			sleep_ms(1000);
+	}
+
 	say("\nn9wifi: shell\n");
 	sc(SYS_execve, (long)"/bin/sh", (long)sh_argv, 0, 0, 0);
 	say("n9wifi: exec failed\n");
