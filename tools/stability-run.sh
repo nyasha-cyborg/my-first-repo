@@ -21,7 +21,21 @@ alive() {
 }
 
 shell_ok() {
+    # The gadget keeps stale line settings across reboots; without raw mode the
+    # probe turns into an echo/"Permission denied" loop and reads as a stall.
+    [ -c /dev/ttyACM0 ] && stty -F /dev/ttyACM0 115200 raw -echo 2>/dev/null
     timeout 12 $PY $SH 'echo PROBE_OK' 2>/dev/null | grep -q PROBE_OK
+}
+
+# Leave a booted test image and come back to stock Android. The serial shell of
+# our ramdisk has reboot -f; adb is not running in it.
+reboot_android() {
+    if timeout 4 adb devices 2>/dev/null | grep -q "HT4C3WV00112"; then
+        adb reboot >/dev/null 2>&1
+    elif [ -c /dev/ttyACM0 ]; then
+        stty -F /dev/ttyACM0 115200 raw -echo 2>/dev/null
+        timeout 8 $PY $SH 'reboot -f' >/dev/null 2>&1
+    fi
 }
 
 wait_android() {
@@ -35,7 +49,12 @@ wait_android() {
 
 for img in "$@"; do
     say "=== $img"
-    wait_android || { say "no android; waiting"; sleep 60; wait_android || { say "giving up on $img"; continue; }; }
+    if ! wait_android; then
+        say "not in android; rebooting to it"
+        reboot_android
+        sleep 10
+        wait_android || { say "no android; giving up on $img"; continue; }
+    fi
 
     adb reboot bootloader >/dev/null 2>&1
     i=0
@@ -53,10 +72,18 @@ for img in "$@"; do
     done
     [ $up -eq 1 ] || { say "no gadget (bootloader ignored it?)"; sleep 30; continue; }
 
-    t=0
+    sleep 5                     # let init reach the shell / settle the tty
+    t=0; fails=0
     while [ $t -lt 600 ]; do
         if ! alive; then say "USB dropped after ${t}s"; break; fi
-        if ! shell_ok; then say "shell unresponsive after ${t}s"; break; fi
+        if shell_ok; then
+            fails=0
+        else
+            # one lost probe is not a stall: the gadget drops bytes while a
+            # module loads; require two consecutive failures.
+            fails=$((fails+1))
+            if [ $fails -ge 2 ]; then say "shell unresponsive after ${t}s"; break; fi
+        fi
         sleep 15; t=$((t+15))
     done
     [ $t -ge 600 ] && say "STABLE for 10 min: $img"
