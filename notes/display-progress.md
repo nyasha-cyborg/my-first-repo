@@ -269,6 +269,31 @@ The hybrid ramdisk is built from `bootimg-build/ramdisk.gz`, with `init`
 renamed to `init.android`, `tools/miniroot/init.hybrid` installed as `/init`,
 and the tree repacked with `cpio -o -H newc --owner 0:0`.
 
+## USB bring-up attempt (2026-10-18)
+
+USB is needed before any userspace work can be driven over adb. Findings:
+
+1. `tegra-xusb-padctl ... failed to setup XUSB ports: -517` was a missing
+   supplier: the charger that creates `usb-otg-vbus` was built as a **module**
+   (`CONFIG_CHARGER_BQ24190=m`) and the test image has no module loader.
+   Building it in (`=y`, same for `CONFIG_USB_TEGRA_XUDC`) removed the padctl
+   error.
+2. The controller node `usb@7d000000` then still deferred:
+   `tegra-usb: failed to add HDRC device` (`-EPROBE_DEFER` from
+   `ci_hdrc_add_device` via the missing vbus regulator).
+3. The charger was not probing because its DT interrupt used
+   `<TEGRA_GPIO(J, 0) GPIO_ACTIVE_HIGH>`: `GPIO_ACTIVE_HIGH` is 0, not a valid
+   IRQ trigger type, and the GIC warns `HW irq 118 has invalid type` while
+   registering i2c clients. Changed to `IRQ_TYPE_EDGE_FALLING`; the built DTB
+   now carries `<0x48 0x02>`.
+4. The warning still appears in the next boot and the HDRC probe still defers,
+   so the charger is still not reaching a successful probe. The next step is
+   to instrument `bq24190_probe()` to see whether it runs and what it returns.
+
+The legacy `nvidia,tegra124-udc` at `usb@7d000000` (ChipIdea) is the path
+flounder's padctl uses (`usb2-0` function `"snps"`). The xusb host at
+`usb@70090000` is still disabled in the flounder tree.
+
 ## Next steps
 
 1. **Backlight updates after streaming.** The panel driver currently latches
