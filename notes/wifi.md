@@ -78,12 +78,13 @@ mid-boot: the gadget enumerated, vanished ~7 s later and Android came up.
 That is the intermittent "hang" seen throughout this session. The timer is
 now armed only with `n9.hangreset` on the command line.
 
-A separate failure remains: sometimes the kernel stalls a few seconds in
-with USB still enumerated but silent, and the tablet needs a power cycle.
-`CONFIG_TEGRA_WATCHDOG=y` is now in and init opens `/dev/watchdog` as its
-first action; in the first test the watchdog did not fire because the init
-had hung before reaching the open. Whether it fires for this failure once
-armed early is still unverified.
+A separate failure remains: the kernel sometimes stalls with USB still
+enumerated but silent. **The watchdog now recovers it.** `CONFIG_TEGRA_WATCHDOG=y`
+and init opens `/dev/watchdog` before anything else; a stall was observed at
+00:33 and the tablet reset itself to Android ~2 minutes later, with
+`ro.boot.bootreason = watchdog`. No power cycle was needed.
+Caveat: the earlier non-firing test had the open *after* the risky steps, so
+the ordering matters.
 
 ## Serial console (the reliable workbench)
 
