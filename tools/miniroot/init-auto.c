@@ -168,6 +168,17 @@ static void run(const char *path, const char *const *argv)
 	}
 }
 
+static void monitor(void)
+{
+	for (;;) {
+		long n;
+
+		sleep_ms(2000);
+		n = read_kmsg(log, (long)sizeof(log));
+		emit(log, n);
+	}
+}
+
 void _start(void)
 {
 	static const char *mods[] = {
@@ -192,6 +203,11 @@ void _start(void)
 	sc(SYS_mount, (long)"proc", (long)"/proc", (long)"proc", 0, 0);
 	sc(SYS_mount, (long)"sysfs", (long)"/sys", (long)"sysfs", 0, 0);
 	sleep_ms(300);
+
+	/* Rolling record for post-mortem analysis of the remaining no-USB
+	 * hangs: a child refreshes the DTB-partition record every 2 s. */
+	if (sc(SYS_clone, 17, 0, 0, 0, 0) == 0)
+		monitor();
 
 	/* send all output to the gadget as soon as it exists */
 	for (i = 0; i < 50; i++) {
