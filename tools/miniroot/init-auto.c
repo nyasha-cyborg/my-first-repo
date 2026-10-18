@@ -282,7 +282,8 @@ void _start(void)
 
 	/* WiFi runs in its own process: a blocking probe must never take the
 	 * console away again. */
-	if (sc(SYS_clone, 17, 0, 0, 0, 0) == 0) {
+	if (sc(SYS_openat, AT_FDCWD, (long)"/etc/no-wifi", O_RDONLY, 0, 0) < 0 &&
+	    sc(SYS_clone, 17, 0, 0, 0, 0) == 0) {
 		wifi_bringup();
 		for (;;)
 			sleep_ms(1000);
