@@ -77,9 +77,45 @@ them (hypothesis 6).
 - Reading the host's brief full-speed `-71` device as ours: it is Android's
   own boot gadget and appears on boots where hboot ignored our image.
 
+## Serial console (working, use this instead of the record hack)
+
+`tools/miniroot/init-shell.c` mounts devtmpfs/proc/sys, waits for
+`/dev/ttyGS0`, and execs a busybox shell on it. Ramdisk build:
+
+```sh
+# static aarch64 busybox (Alpine)
+curl -O https://dl-cdn.alpinelinux.org/alpine/latest-stable/main/aarch64/busybox-static-1.37.0-r31.apk
+tar -xzf busybox-static-1.37.0-r31.apk       # -> bin/busybox.static
+
+clang --target=aarch64-linux-gnu -fuse-ld=lld -nostdlib -static -O2 \
+      -ffreestanding -fno-builtin -fno-stack-protector \
+      -o init tools/miniroot/init-shell.c
+
+mkdir -p rd/bin rd/dev rd/proc rd/sys rd/tmp
+cp init rd/init; cp bin/busybox.static rd/bin/busybox
+ln -s busybox rd/bin/sh
+(cd rd && find . | cpio -o -H newc | gzip -9 > ../shell-ramdisk.gz)
+```
+
+Boot it with `--ramdisk shell-ramdisk.gz` and **no** `n9.trigger`, so the
+controller probes normally. On the host:
+
+```sh
+sudo chmod 666 /dev/ttyACM0
+(printf '\n'; sleep 0.5; printf 'uname -a\n'; sleep 2) | \
+    socat - /dev/ttyACM0,raw,echo=0,crnl
+```
+
+First shell session: run `/bin/busybox --install -s /bin` once so applet
+symlinks exist (the ramdisk only ships `bin/sh`).
+
+Verified: `uname -a` reports 6.19.0-htc-flounder aarch64, uid=0, the tablet
+stays up (no wedge) with the gadget connected.
+
 ## Next actions
 
-1. Commit the fix, then verify from a normal boot (not just the trigger path).
-2. Replace the record hack with the serial console now that USB works.
-3. Optional: wire the override to a DT property rather than a SoC flag, and
+1. Commit the console harness; it replaces the record hack for day-to-day work.
+2. Next feature: WiFi, then touch, then audio — check whether the drivers are
+   modules that need to be in the ramdisk/rootfs.
+3. Optional: wire the VBUS override to a DT property instead of a SoC flag and
    send the patch upstream.
