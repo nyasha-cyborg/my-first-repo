@@ -53,6 +53,29 @@ snapshotted to `configs/flounder_defconfig`.
    probe.** Init waits 20 s and runs WiFi in a child process so the console
    survives either way.
 
+## The remaining stability problem (important)
+
+Two different stalls have been seen:
+
+| Mode | Symptom | Watchdog |
+|---|---|---|
+| A | whole machine dies; USB disappears | **fires** (verified: Android `ro.boot.bootreason=watchdog`) |
+| B | USB stays enumerated, gadget silent, no shell; WiFi also unreachable | does **not** fire |
+
+Mode B looks like *userspace stuck in an uninterruptible syscall holding a
+lock that the tty write path also needs*, not a dead CPU: the watchdog's
+ping work still runs, so the kernel is alive. Recovery needs a power cycle.
+It appeared after WiFi bring-up and also within a minute of a plain boot.
+
+Mitigations to try, in order:
+1. `/etc/no-runtime-pm` in the ramdisk makes init set every
+   `power/control` to `on` (images `n9auto15-stripped.img` and
+   `n9auto15pm-stripped.img` are built from the same init, PM-off variant
+   via that flag file).
+2. Do not auto-load brcmfmac: keep the console usable and load WiFi by hand.
+3. Read the rolling DTB-partition record after the next reset — it holds the
+   kernel log up to the stall and will name the blocked path.
+
 ## Prepared but untested
 
 - **Audio** (`notes/audio.md`): two I2S links — `rt5677` (headphones/mics)
