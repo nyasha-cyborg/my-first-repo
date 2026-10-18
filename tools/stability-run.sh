@@ -81,7 +81,7 @@ for img in "$@"; do
 
     i=0; up=0
     while [ $i -lt 30 ]; do
-        alive && { up=1; break; }
+        alive && { up=1; say "gadget after $((i*2))s"; break; }
         sleep 2; i=$((i+1))
     done
     [ $up -eq 1 ] || { say "no gadget (bootloader ignored it?)"; sleep 30; continue; }

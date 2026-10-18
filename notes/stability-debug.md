@@ -87,6 +87,32 @@ Do not run boot/flash tests until the pack is back above ~40 % on a wall
 charger. Charge state is only visible from Android; the test kernel exports no
 battery class.
 
+### Bare test was a console-attach race, not a stall (12:27)
+
+```
+12:27:49 === n9bare        # /etc/no-record + /etc/no-wifi
+12:28:03 booted, waiting for gadget
+12:28:54 shell unresponsive after 15s
+```
+Manual probes are silent, but the gadget appeared late: the timestamps imply
+~20 s after `fastboot boot`. `init-auto.c` waited only **5 s** for
+`/dev/ttyGS0`; when the gadget misses that window, the shell inherits
+`console=tty0` and the serial stays silent while the machine is healthy. So
+`n9bare` is **not evidence** for or against the record hypothesis yet.
+
+Fix: `init-auto.c` now waits up to 60 s for `ttyGS0`, and `stability-run.sh`
+logs how long the gadget took. Rebuilt as
+`~/Downloads/nexus9/bootimg-build/n9-mainline/n9bare-tty60-stripped.img`
+(kernel region reused from the split bare image, ramdisk repacked with the new
+init).
+
+Watchdog note: the earlier auto-boot record contains
+`tegra-wdt 60005000.timer: initialized (heartbeat = 120 sec, nowayout = 0)`,
+so the driver probes. The console-waiting bare boot still did not reset after
+several minutes; either init never reached the `open("/dev/watchdog")` or the
+open/arm does not actually fire in this state. Needs checking once a shell is
+reachable (`cat /sys/class/watchdog/*/state` is not built: no WATCHDOG_SYSFS).
+
 ### Harness trap found in the first bisection attempt
 
 ```
@@ -121,3 +147,18 @@ image itself ran for 5+ min with a working shell before that reboot.
      PM); test `n9auto15pm` next.
 3. Run the remaining sequence with `tools/stability-run.sh` (probe fixed in
    `7a32ef8`): `bare → auto15pm → auto18`.
+
+## Rebuild recipe (for the fixed image)
+
+```
+clang --target=aarch64-linux-gnu -nostdlib -static -O2 -fuse-ld=lld \
+      -o init-new tools/miniroot/init-auto.c
+# replace ./init inside an extracted ramdisk, then:
+(cd ramdisk-dir && find . -print0 | cpio --null -o -H newc --owner=0:0 --quiet) \
+      | gzip -9 > new-ramdisk.gz
+python3 tools/bootimg-split.py old-stripped.img out/     # kernel + ramdisk
+python3 tools/bootimg-repack.py --stock old-stripped.img \
+      --image out/kernel --ramdisk new-ramdisk.gz -o new-stripped.img
+```
+`--stock` may itself be a wrapper-stripped image; the tool warns and writes a
+bare `ANDROID!` image, which is what `fastboot boot` wants.

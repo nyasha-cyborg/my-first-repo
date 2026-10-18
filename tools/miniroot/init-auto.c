@@ -299,8 +299,11 @@ void _start(void)
 		say("n9wifi: runtime pm disabled\n");
 	}
 
-	/* give the console a face as soon as the gadget exists */
-	for (i = 0; i < 50; i++) {
+	/* Give the console a face as soon as the gadget exists. Wait up to 60 s:
+	 * hboot has been seen to enumerate the gadget ~20 s after the kernel
+	 * starts, and a 5 s window left the shell attached to tty0 with no way
+	 * to tell that apart from a stall. */
+	for (i = 0; i < 600; i++) {
 		fd = sc(SYS_openat, AT_FDCWD, (long)"/dev/ttyGS0", O_RDWR, 0, 0);
 		if (fd >= 0)
 			break;
