@@ -113,6 +113,25 @@ several minutes; either init never reached the `open("/dev/watchdog")` or the
 open/arm does not actually fire in this state. Needs checking once a shell is
 reachable (`cat /sys/class/watchdog/*/state` is not built: no WATCHDOG_SYSFS).
 
+### Fixed bare image (60 s tty wait) still silent (12:40)
+
+```
+12:40:48 === n9bare-tty60
+12:41:02 booted, waiting for gadget
+12:41:08 gadget after 6s          # well inside the 60 s window
+12:41:52 shell unresponsive after 15s
+```
+Host journal confirms the same boot: fastboot at 12:41:00, gadget 0525:a4a7
+enumerated 12:41:06, `ttyACM0` created. Manual probes stay silent; `stty -a`
+on `ttyACM0` round-trips (rc=0), so the gadget's kernel control path answers
+but no userspace bytes arrive or are echoed.
+
+Ramdisk verified: the image really carries the new 7472-byte init, `/bin/sh`
+→ busybox exists, `/etc/no-record` and `/etc/no-wifi` present. So this is
+either a genuine early stall (before the shell at ~6 s) or a dead userspace
+console path. Next discriminator is the physical screen: `console=tty0`
+should show the kernel log and, if init ran, `n9wifi: shell` + a `/ #` prompt.
+
 ### Harness trap found in the first bisection attempt
 
 ```
