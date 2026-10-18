@@ -261,8 +261,10 @@ void _start(void)
 	 * needing a power cycle. */
 	(void)sc(SYS_openat, AT_FDCWD, (long)"/dev/watchdog", O_WRONLY, 0, 0);
 
-	/* A rolling record so a stall leaves the last messages behind. */
-	if (sc(SYS_clone, 17, 0, 0, 0, 0) == 0)
+	/* A rolling record so a stall leaves the last messages behind.
+	 * Disabled by /etc/no-record for stall bisection. */
+	if (sc(SYS_openat, AT_FDCWD, (long)"/etc/no-record", O_RDONLY, 0, 0) < 0 &&
+	    sc(SYS_clone, 17, 0, 0, 0, 0) == 0)
 		monitor();
 
 	/* Optional: disable runtime PM everywhere. Suspect for the idle
