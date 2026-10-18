@@ -23,6 +23,7 @@ Last updated: 2026-10-19 08:30 · branch `nexus9` · tip 9fca799 (+ untracked CL
 | 2 | brcmfmac/SDIO probe wedges the system | `n9console` boots with `/etc/no-wifi` | stalled anyway → not *required* | dead as necessary cause |
 | 3 | MMC/SDIO runtime PM | `n9auto15pm` (runtime PM off) | not run | open |
 | 4 | eMMC writeback after the emit | timing cannot separate from (1) yet | — | open |
+| 5 | Battery undervoltage / brownout (6 %, 3.5 V under load) | charge to >40 % and repeat the same images | not run | **open — confound** |
 
 ## Evidence (trimmed)
 
@@ -67,6 +68,22 @@ leading suspect. Earlier in the same session the same image ran >80 s with a
 working shell (the earlier console boot answered a manual probe >80 s in), so
 the stall is intermittent.
 
+### Battery is nearly flat — a confound for every stall result
+
+Measured in Android at 08:45 after the power cycle:
+```
+USB powered: true      status: 2 (charging)
+capacity:    6–7 %      voltage_now: 3.49–3.70 V
+current_now: -2.41 A (boot spike) -> +0.16..+0.26 A (screen off, asleep)
+```
+The host port supplies only ~0.26 A net; the screen was already off and the
+device asleep. At this level the pack is at ~3.5 V under load and a boot drains
+faster than USB can replenish, so **brownout or undervoltage is a plausible
+alternative cause of mode B**, and every recent stall result is confounded.
+Do not run boot/flash tests until the pack is back above ~40 % on a wall
+charger. Charge state is only visible from Android; the test kernel exports no
+battery class.
+
 ### Harness trap found in the first bisection attempt
 
 ```
@@ -91,9 +108,9 @@ image itself ran for 5+ min with a working shell before that reboot.
   hard-coded 0, so those records cannot prove freshness.
 
 ## Next actions
-1. Power cycle the tablet (mode B does not recover itself; watchdog does not
-   fire). Android then gives charge state with
-   `adb shell dumpsys battery`.
+1. **Charge the tablet on a wall charger to >40 % before any further boot
+   tests** — the 6 % measurement makes every stall result unreliable.
+   `adb shell dumpsys battery` from Android is the only check.
 2. Boot `n9bare` (record OFF, WiFi OFF) and let it run 10+ min:
    - stable → the record/eMMC write is the cause → replace the rolling record
      with an in-RAM ring plus one flush on panic.
