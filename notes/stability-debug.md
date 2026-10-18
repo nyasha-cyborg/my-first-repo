@@ -19,10 +19,10 @@ Last updated: 2026-10-19 08:30 · branch `nexus9` · tip 9fca799 (+ untracked CL
 ## Current hypotheses
 | # | Hypothesis | Test | Result | Status |
 |---|------------|------|--------|--------|
-| 1 | Raw eMMC record write (every 10 s) stalls the machine | `n9console` (record on, WiFi off) vs `n9bare` (both off) | not run | open |
-| 2 | brcmfmac/SDIO probe wedges the system at ~23 s | record shows last kmsg at 23.17 s = firmware preinit | see Evidence | investigating |
+| 1 | Raw eMMC record write (every 10 s) stalls the machine | `n9console` (record on, WiFi off) | **stalled in <50 s** — record path still live | **leading** |
+| 2 | brcmfmac/SDIO probe wedges the system | `n9console` boots with `/etc/no-wifi` | stalled anyway → not *required* | dead as necessary cause |
 | 3 | MMC/SDIO runtime PM | `n9auto15pm` (runtime PM off) | not run | open |
-| 4 | eMMC writeback after the 32.7 s emit | timing cannot separate from (1) yet | — | open |
+| 4 | eMMC writeback after the emit | timing cannot separate from (1) yet | — | open |
 
 ## Evidence (trimmed)
 
@@ -52,6 +52,21 @@ Also relevant from this record: `mmc1: Switching to 3.3V signalling voltage
 failed` at 1.09 s (also appears on working boots); `mmc1: new UHS-I speed
 SDR104 SDIO card` at 1.60 s; both mmc hosts came up.
 
+### Mode B reproduced without WiFi (2026-10-19 08:29–08:31)
+
+```
+08:29:22 === n9console            # /etc/no-wifi, record monitor ON
+08:29:36 booted, waiting for gadget
+08:30:26 shell unresponsive after 15s
+```
+Gadget stays enumerated (`0525:a4a7`), `/dev/ttyACM0` exists, but manual
+probes with `stty ... raw -echo` are silent for minutes; the watchdog does not
+reset it. This is mode B, and **WiFi/brcmfmac was never loaded**, so the SDIO
+probe cannot be the necessary cause. The raw eMMC record write returns as the
+leading suspect. Earlier in the same session the same image ran >80 s with a
+working shell (the earlier console boot answered a manual probe >80 s in), so
+the stall is intermittent.
+
 ### Harness trap found in the first bisection attempt
 
 ```
@@ -76,9 +91,13 @@ image itself ran for 5+ min with a working shell before that reboot.
   hard-coded 0, so those records cannot prove freshness.
 
 ## Next actions
-1. Bisect with `tools/stability-run.sh n9console n9bare n9auto15pm n9auto18`
-   (decides hypothesis 1 vs 2/3). Watch `/tmp/stability.log`.
-2. If `n9console` is stable and `n9bare` stable: daemonize the record only for
-   bisection, then narrow brcmfmac (probe with WiFi off vs delayed load).
-3. If `n9console` stalls: the raw eMMC write is implicated; replace the
-   rolling record with an in-RAM ring plus a single panic-time flush.
+1. Power cycle the tablet (mode B does not recover itself; watchdog does not
+   fire). Android then gives charge state with
+   `adb shell dumpsys battery`.
+2. Boot `n9bare` (record OFF, WiFi OFF) and let it run 10+ min:
+   - stable → the record/eMMC write is the cause → replace the rolling record
+     with an in-RAM ring plus one flush on panic.
+   - stalls → the cause is common to bare (watchdog arm, mounts, MMC runtime
+     PM); test `n9auto15pm` next.
+3. Run the remaining sequence with `tools/stability-run.sh` (probe fixed in
+   `7a32ef8`): `bare → auto15pm → auto18`.
