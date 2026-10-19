@@ -82,6 +82,25 @@ release_image() {
     say "stop-ping set; waiting for the watchdog reset"
 }
 
+# After a self-reset, copy the rolling record off eMMC while Android is up.
+# adb root restarts adbd, so retry the transfer a few times.
+pull_record() {
+    out=/tmp/n9record-$(date +%H%M%S).bin
+    i=0
+    while [ $i -lt 6 ]; do
+        timeout 10 adb root >/dev/null 2>&1
+        sleep 2
+        timeout 25 adb exec-out "dd if=/dev/block/mmcblk0 bs=512 skip=79872 count=64 2>/dev/null" > "$out" 2>/dev/null
+        [ "$(stat -c %s "$out" 2>/dev/null || echo 0)" -ge 32768 ] && {
+            say "record saved: $out"
+            return 0
+        }
+        sleep 3; i=$((i+1))
+    done
+    say "record pull failed"
+    return 1
+}
+
 for img in "$@"; do
     say "=== $img"
     if ! wait_android; then
@@ -113,9 +132,9 @@ for img in "$@"; do
     [ $up -eq 1 ] || { say "no gadget (bootloader ignored it?)"; sleep 30; continue; }
 
     sleep 5                     # let init reach the shell / settle the tty
-    t=0; fails=0; wifi_logged=""; wifi_logged2=""
+    t=0; fails=0; stalled=0; wifi_logged=""; wifi_logged2=""
     while [ $t -lt $DURATION ]; do
-        if ! alive; then say "USB dropped after ${t}s"; break; fi
+        if ! alive; then say "USB dropped after ${t}s"; stalled=1; break; fi
         if shell_ok; then
             fails=0
             # Log the WiFi address at ~60 s and ~300 s: a later stall can be
@@ -139,6 +158,7 @@ for img in "$@"; do
             fails=$((fails+1))
             if [ $fails -ge 2 ]; then
                 say "shell unresponsive after ${t}s"
+                stalled=1
                 say "serial capture (last lines):"
                 sed 's/^/  | /' "$PROBE_LOG" | tail -40 | tee -a "$LOG"
                 break
@@ -157,5 +177,11 @@ for img in "$@"; do
         exit 1
     fi
     say "android is back"
+    if [ "$stalled" -eq 1 ]; then
+        if pull_record; then
+            rr=$(dirname "$0")/read-record.py
+            [ -f "$rr" ] && python3 -I "$rr" "$out" 40 >> "$LOG" 2>&1
+        fi
+    fi
 done
 say "done"
