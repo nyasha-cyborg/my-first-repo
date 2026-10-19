@@ -113,17 +113,24 @@ for img in "$@"; do
     [ $up -eq 1 ] || { say "no gadget (bootloader ignored it?)"; sleep 30; continue; }
 
     sleep 5                     # let init reach the shell / settle the tty
-    t=0; fails=0; wifi_logged=""
+    t=0; fails=0; wifi_logged=""; wifi_logged2=""
     while [ $t -lt $DURATION ]; do
         if ! alive; then say "USB dropped after ${t}s"; break; fi
         if shell_ok; then
             fails=0
-            # Once WiFi should be up, log its address: a later stall can then
-            # be probed on the network, independently of the USB console.
-            if [ "$t" -ge 30 ] && [ -z "$wifi_logged" ]; then
+            # Log the WiFi address at ~60 s and ~300 s: a later stall can be
+            # probed on the network, and the two samples show whether the
+            # SDIO card actually came up in this boot.
+            if [ "$t" -ge 60 ] && [ -z "$wifi_logged" ]; then
                 wifi_logged=1
                 addr=$(timeout 12 $PY $SH '/bin/busybox ip -4 addr show wlan0 2>&1' 2>/dev/null)
-                say "wlan0 address:"
+                say "wlan0 at ${t}s:"
+                printf '%s\n' "$addr" | sed 's/^/  | /' | tee -a "$LOG"
+            fi
+            if [ "$t" -ge 300 ] && [ -z "$wifi_logged2" ]; then
+                wifi_logged2=1
+                addr=$(timeout 12 $PY $SH '/bin/busybox ip -4 addr show wlan0 2>&1' 2>/dev/null)
+                say "wlan0 at ${t}s:"
                 printf '%s\n' "$addr" | sed 's/^/  | /' | tee -a "$LOG"
             fi
         else

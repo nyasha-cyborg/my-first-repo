@@ -19,7 +19,7 @@ Last updated: 2026-10-19 13:00 · branch `nexus9` · tip `57b8686`
 ## Current hypotheses
 | # | Hypothesis | Test | Result | Status |
 |---|------------|------|--------|--------|
-| 1 | Raw eMMC record write (every 10 s) stalls the machine | `n9console` stalled once; `n9wifi-rec` ran 10 min then **stalled at ~30 min**, 78 % start | still suspects; record-off 30-min soak pending | **leading** |
+| 1 | Raw eMMC record write (every 10 s) stalls the machine | record-on stalled at ~30 min; **record-off stable 30 min** (same kernel/WiFi) | strong signal | **confirmed as leading** |
 | 2 | brcmfmac/SDIO probe wedges the system | `n9console` boots with `/etc/no-wifi` | stalled anyway → not *required* | dead as necessary cause |
 | 3 | MMC/SDIO runtime PM | `n9auto15pm` (runtime PM off) | not run | open |
 | 4 | eMMC writeback after the emit | timing cannot separate from (1) yet | — | open |
@@ -269,6 +269,27 @@ prints `n9wifi: watchdog opened` / `... FAILED` on the serial. The harness
 also logs the wlan0 address so a stalled box can be pinged on the network if
 the shell is silent. `192.168.1.102` did not answer during this stall, but
 that address may not be the current lease.
+
+### Record-off survives 30 minutes; record-on swallowed ~30 min (15:38)
+
+```
+14:56:29 gadget after 6s
+15:38:05 STABLE for 30 min: n9wifi-norec   # /etc/no-record, WiFi enabled
+15:38:11 stop-ping set
+15:40:   USB gone, Android 18d1:4ee7 back
+```
+The same kernel and WiFi configuration without `/etc/no-record` stalls at
+about the same point the record-off run completed. The rolling raw eMMC write
+is the strongest candidate; it is only a bring-up diagnostic and is not part
+of the production/installed-boot path, so it can simply be left off.
+
+Caveat to close: at the 1-minute probe `wlan0` did not exist in this run
+(possible SDIO enumeration failure), so the two runs differ in wireless load
+as well as the record. The harness now logs `wlan0` at ~60 s and ~300 s to
+confirm parity before calling the hypothesis settled.
+
+The `/stop-ping` -> watchdog-reset path worked end to end for the first time:
+no power cycle was used to leave this image.
 
 ### Separate bug: reboot from the test kernel hangs (13:05)
 
