@@ -160,3 +160,85 @@ matches BT_REG_ON.
 Not yet tested: no boot has loaded the modules with this DT. The open question
 is whether the UART advertises flow control (the pinmux has uart3 cts/rts) and
 whether `hci_uart` binds the serdev child without `max-speed` set.
+
+## Mainline attempts, all silent (2026-10-20)
+
+Test images, all with the vendor `BCM4354.hcd` and `bluetooth`/`btbcm`/
+`hci_uart`/`ecdh_generic`/`ecc` modules:
+
+| Image | DT / config | Result |
+|---|---|---|
+| `n9bt` | GPIOs only | `command 0x0c03 tx timeout` |
+| `n9bt2` | + `ecc.ko` (busybox modprobe needs manual order) | same |
+| `n9bt3` | + LPO `clk32k_in`, host-wakeup interrupt | `command 0x1001 tx timeout` |
+| `n9bt4` | + `uart-has-rtscts` | unchanged |
+
+What is verified on hardware in every case:
+
+- `hci_uart_bcm` binds the right controller: `serial0-0` resolves to
+  `/serial@70006200/bluetooth`, i.e. uartc, matching `bt_vendor.conf`'s
+  `ttyTHS2`.
+- GPIOs are driven: gpio-137 `shutdown` out hi, gpio-241 `device-wakeup` out
+  hi, gpio-166 `host-wakeup` in hi.
+- uart3 pads are muxed to `uartc` (CTS/RXD input with pull-up, RTS/TXD output).
+- The module is powered: with `brcmfmac` loaded the WiFi side enumerates and
+  loads its firmware, so the shared BCM4354 die has power.
+- The 8250_of driver deasserts the UART CAR reset and enables the clock.
+
+Ruled out as the sole cause: REG_ON polarity (downstream rfkill sets the GPIO
+to 1 for "enabled", same as `hci_bcm`), LPO clock presence in DT, flow control
+on/off, and a short power-up delay (driver already waits 100–120 ms).
+
+Known mainline fixes for this exact signature already present in this tree:
+`btbcm`'s 100 ms module-reset delay and the `hci_h4` registered-bit check.
+Next discriminators: whether Android itself can bring the chip up (hardware
+vs mainline), then the PMIC 32 kHz clock output (`palmas-clk32kg`) instead of
+the fixed-clock placeholder.
+
+Note: two of the boots hit the intermittent early stall (watchdog reset) —
+unrelated to BT, but it costs a cycle each time.
+
+## Android's own logs, and the real numbers (2026-10-20)
+
+Android's Bluetooth stack works on this tablet (`state: ON`, MAC
+`D4:0B:1A:16:DC:F3`). Its logcat names everything the mainline path was
+missing:
+
+```
+bt_userial_vendor: userial vendor open: opening /dev/ttyTHS2
+bt_hwcfg: bt vendor lib: set UART baud 3000000
+bt_hwcfg: Chipset BCM4350C0
+bt_hwcfg: Found patchfile: /vendor/firmware//bcm4350c0.hcd
+bt_hwcfg: bt vendor lib: set UART baud 115200
+bt_hwcfg: Settlement delay -- 100 ms
+bt_hwcfg: bt vendor lib: set UART baud 3000000
+```
+
+So: the module is a **BCM4350C0**, its ROM answers at **3 Mbaud** (not 115200),
+and the firmware is **bcm4350c0.hcd** (the vendor dir has it; `bcm4354.hcd` is
+the HTC board-named variant). Android also deliberately power-cycles REG_ON
+("BT_VND_PWR_ON now forces power-off first").
+
+Mainline fixes attempted and their state:
+
+- DT: uartc switched to `nvidia,tegra124-hsuart`/`tegra30-hsuart` with
+  `serialN` aliases (without aliases serial-tegra fails with `alias id -19`);
+  `nvidia,adjust-baud-rates` added, which makes `uartc` clock land on exactly
+  48 MHz (16 x 3 M) for 3 Mbaud.
+- `hci_bcm`: tty path now takes init speed from the tty; the BCM proto
+  `init_speed` set to 3000000 for this port.
+- Chip power/wake provided as an always-on fixed regulator (PR1) and a
+  gpio-hog (PEE1) because the tty path has no serdev device to drive them.
+- Firmware staged as `/lib/firmware/brcm/BCM.hcd` (btbcm's fallback name; its
+  UART subversion table has no BCM4350C0 entry).
+
+Tooling: `hciattach-min` (freestanding, in the test ramdisk) opens the tty,
+sets the speed, puts it in `N_HCI` and selects HCI_UART_BCM. Note
+`HCIUARTSETPROTO` takes the value, not a pointer.
+
+**Status:** HCI `0x0c03`/`0x1001` still time out at 115200 and at 3 Mbaud, with
+and without CRTSCTS, on cold and warm (Android-powered) chips. Host side is
+verified: right UART (serdev of_node = `/serial@70006200`), IRQ 56 firing,
+48 MHz clock, correct pads. Next probes: pulse REG_ON from userspace via the
+GPIO chardev (Android's "power-off first"), and check whether the chip answers
+only after that explicit off->on cycle.
