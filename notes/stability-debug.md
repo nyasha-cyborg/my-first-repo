@@ -1,6 +1,6 @@
 # Stability (mode-B stall) — working state
 
-Last updated: 2026-10-19 13:00 · branch `nexus9` · tip `57b8686`
+Last updated: 2026-10-19 22:30 · branch `nexus9`
 
 ## Symptom
 - Expected: auto image boots, shell answers, WiFi comes up, machine stays alive.
@@ -22,7 +22,7 @@ Last updated: 2026-10-19 13:00 · branch `nexus9` · tip `57b8686`
 | 1 | Raw eMMC record write (every 10 s) stalls the machine | record-on stable 30 min twice; record-off stalled once | no correlation | dead |
 | 7 | USB gadget console path wedges; the machine keeps running | 17:29 stall **self-reset at ~141 s** after the reordered open → pinger stopped → userspace blocked | real system stall | dead |
 | 8 | brcmfmac/SDIO probe at the 20 s-delayed module load | 17:29 stall had module loads failing (`-ENOENT`) and no card; 18:16 soak had modules load but card absent | not necessary | dead |
-| 9 | Unknown early stall in the `init-auto` path (6–11 s, userspace blocked) | the stall precedes the 26 s WiFi load; minimal `init-ping` image has not stalled yet (one 10-min run) | needs repeated minimal-image runs | **open** |
+| 9 | Unknown early stall in the `init-auto` path (6–11 s, userspace blocked) | the stall precedes the 26 s WiFi load; minimal `init-ping` image has not stalled yet (one 10-min run) | **one 30-min marker run stable at 62–73 %**; still intermittent, needs samples | **open (weakened)** |
 | 2 | brcmfmac/SDIO probe wedges the system | `n9console` boots with `/etc/no-wifi` | stalled anyway → not *required* | dead as necessary cause |
 | 3 | MMC/SDIO runtime PM | `n9auto15pm` (runtime PM off) | not run | open |
 | 4 | eMMC writeback after the emit | timing cannot separate from (1) yet | — | open |
@@ -399,6 +399,32 @@ early stall usually left no record. `monitor()` now writes every **2 s for the
 first minute**, then every 10 s. New images:
 `n9wifi-rec-early-stripped.img`, `n9wifi-norec-early-stripped.img`.
 
+### Marker soak: 30 min stable, no stall to localise (21:45–22:29)
+
+```
+21:45:19 booted, waiting for gadget
+21:45:25 gadget after 6s
+21:47:05 wlan0 at 60s:   can't find device wlan0    # SDIO card absent
+21:52:41 wlan0 at 300s:  can't find device wlan0
+22:27:07 STABLE for 30 min: n9wifi-rec-mark
+22:29:28 android is back                            # /stop-ping -> WDT reset
+```
+Started at 73 %, ended 62 %. The image arms the watchdog, pings from
+userspace, records every 2 s for the first minute with `n9st:` stage markers,
+and writes `n9hb:` heartbeats. No stall occurred, so there is no marker to
+read; the run only bounds the rate. Wall time was ~38 min because each 15 s
+probe adds ~4 s of Python/serial overhead.
+
+`/stop-ping` → 120 s WDT → Android worked with no power cycle.
+
+### Decision: proceed on features, keep the watchdog workaround (22:30)
+
+The stall is intermittent, mitigated (armed WDT + pinger), and not a
+prerequisite for the port. Do not spend more cycles soaking to root-cause it;
+carry `RuntimeWatchdogSec=120` into the installed system. Revisit only if the
+stall becomes frequent. Scope is display, WiFi, touch, audio, Bluetooth —
+camera and sensors are explicitly out for now.
+
 ### Separate bug: reboot from the test kernel hangs (13:05)
 
 On the minimal-shell image (stable 10 min, shell answering):
@@ -449,17 +475,14 @@ image itself ran for 5+ min with a working shell before that reboot.
   hard-coded 0, so those records cannot prove freshness.
 
 ## Next actions
-1. **When charged above 60 %**, boot `n9wifi-rec-mark-stripped.img` for
-   30 min. If it stalls, the auto-captured record will show the last
-   `n9st:` marker (mounted / tty / hb forked / wd opened / wifi forked /
-   exec sh) and the `n9hb:` counter, localising the hang to one init step.
-2. Then run the minimal `n9ping2` image for 30 min, twice. It has no record,
-   no WiFi, no heartbeat. If it ever stalls, the stall is kernel-level and
-   init-independent; if it never does, the `init-auto` path is implicated.
-2. Keep `N9_REQUIRE_WLAN=1` for WiFi tests so only boots with an enumerated
-   card are evaluated.
-3. Separately: make SDIO enumeration reliable (`nvidia,only-1-8v`); the card
-   still fails to appear on many boots, which blocks all WiFi work.
+1. Move to feature bring-up on the current kernel (fastboot boot, no flash):
+   audio (`rt5677` + `tfa989x` + AHUB), then touch, then Bluetooth.
+2. Keep the watchdog/pinger + `/stop-ping` harness for every test image.
+3. Later, installed boot: pmOS flounder rootfs + this 6.19 kernel,
+   `RuntimeWatchdogSec=120`; flashing only with explicit approval.
+4. If a stall reappears, the marker image is ready and will localise it.
+5. Open driver issue, not blocking install: SDIO enumeration is unreliable;
+   keep `N9_REQUIRE_WLAN=1` for WiFi tests.
 
 ## Rebuild recipe (for the fixed image)
 
