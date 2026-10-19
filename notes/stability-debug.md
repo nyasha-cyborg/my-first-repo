@@ -389,6 +389,13 @@ this rules WiFi/SDIO **out as a necessary cause** of the stall.
 State at 18:20: battery 37 %, below the 40 % guard — hardware tests paused to
 charge. Everything is in Android.
 
+### Instrumentation for the early window (18:25)
+
+The stall happens at 6–11 s but the record used to write every 10 s, so an
+early stall usually left no record. `monitor()` now writes every **2 s for the
+first minute**, then every 10 s. New images:
+`n9wifi-rec-early-stripped.img`, `n9wifi-norec-early-stripped.img`.
+
 ### Separate bug: reboot from the test kernel hangs (13:05)
 
 On the minimal-shell image (stable 10 min, shell answering):

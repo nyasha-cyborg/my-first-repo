@@ -66,6 +66,19 @@ hosts at 1.8V (this kernel tree). Whether that alone fixed enumeration is
 unproven: the card has also come up on boots without it. Do not trust the
 "3.3V switch failed" line as the cause either; it appears on working boots.
 
+### The 3.3V line is expected (2026-10-19)
+
+`mmc_power_up()` -> `mmc_set_initial_signal_voltage()` deliberately tries
+**3.3 V, then 1.8 V, then 1.2 V** (`drivers/mmc/core/core.c`). On a 1.8 V-only
+host the 3.3 V call always fails and prints
+`mmcX: Switching to 3.3V signalling voltage failed`; the 1.8 V call follows.
+So that line alone proves nothing — what matters is whether the **1.8 V
+fallback succeeds** and whether the card answers after it.
+
+The probe-time `ios.signal_voltage = 1.8` from the driver is overwritten by
+that sequence. Instrumentation worth adding next: log the return value of the
+1.8 V switch and the time between pwrseq release and the first CMD5/CMD0.
+
 Do **not** unbind/rebind `sdhci-tegra` to force a rescan: that call blocked
 inside the kernel and took the console and the machine down with it.
 

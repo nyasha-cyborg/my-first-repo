@@ -188,12 +188,20 @@ static long uptime_s(void)
 
 static void monitor(void)
 {
+	long early = 0;
+
 	for (;;) {
 		long n;
 
-		/* 10 s rather than 2: the frequent raw eMMC writes are the
-		 * prime suspect for the stalls (heavy, always in flight). */
-		sleep_ms(10000);
+		/* Write every 2 s for the first minute so a stall in the
+		 * 6-11 s window still leaves a record, then back off to 10 s.
+		 * The eMMC write is not a stall cause (see stability-debug.md). */
+		if (early < 60000) {
+			sleep_ms(2000);
+			early += 2000;
+		} else {
+			sleep_ms(10000);
+		}
 		n = read_kmsg(log, (long)sizeof(log));
 		emit(log, n, uptime_s());
 	}
