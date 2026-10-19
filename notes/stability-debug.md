@@ -160,6 +160,24 @@ Whether 12:43 was a panel state left by the preceding stall or a driver
 difference is unrecorded — do not use the screen as a liveness signal without
 checking it per boot.
 
+### Watchdog-open image goes silent (13:19)
+
+```
+13:20:07 booted, waiting for gadget
+13:20:13 gadget after 6s
+13:20:57 shell unresponsive after 15s
+```
+`n9wdtest` = the minimal init plus `open("/dev/watchdog")` after the tty is
+attached, with `n9shell: connected / opening watchdog / opened` printed on the
+serial. It is silent, like `n9bare` (also opens the watchdog), while the
+minimal image without the open is stable. Strong correlation: **opening the
+watchdog is the trigger**.
+
+The script's probes had already drained the buffered boot lines, so the last
+message was lost. `stability-run.sh` now accumulates every probe's output in
+`/tmp/n9-probe.log` and prints the tail when a stall is declared. Confirmation
+run needs a power cycle (the reboot path hangs, below).
+
 ### Separate bug: reboot from the test kernel hangs (13:05)
 
 On the minimal-shell image (stable 10 min, shell answering):

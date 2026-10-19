@@ -13,6 +13,8 @@
 PY=/tmp/ser/bin/python
 SH=/tmp/n9sh.py
 LOG=/tmp/stability.log
+PROBE_LOG=/tmp/n9-probe.log
+: > "$PROBE_LOG"
 
 say() { printf '%s %s\n' "$(date '+%H:%M:%S')" "$*" | tee -a "$LOG"; }
 
@@ -24,7 +26,9 @@ shell_ok() {
     # The gadget keeps stale line settings across reboots; without raw mode the
     # probe turns into an echo/"Permission denied" loop and reads as a stall.
     [ -c /dev/ttyACM0 ] && stty -F /dev/ttyACM0 115200 raw -echo 2>/dev/null
-    timeout 12 $PY $SH 'echo PROBE_OK' 2>/dev/null | grep -q PROBE_OK
+    out=$(timeout 12 $PY $SH 'echo PROBE_OK' 2>/dev/null)
+    [ -n "$out" ] && printf '%s\n' "$out" >> "$PROBE_LOG"
+    printf '%s' "$out" | grep -q PROBE_OK
 }
 
 # Leave a booted test image and come back to stock Android. The serial shell of
@@ -97,7 +101,12 @@ for img in "$@"; do
             # one lost probe is not a stall: the gadget drops bytes while a
             # module loads; require two consecutive failures.
             fails=$((fails+1))
-            if [ $fails -ge 2 ]; then say "shell unresponsive after ${t}s"; break; fi
+            if [ $fails -ge 2 ]; then
+                say "shell unresponsive after ${t}s"
+                say "serial capture (last lines):"
+                sed 's/^/  | /' "$PROBE_LOG" | tail -40 | tee -a "$LOG"
+                break
+            fi
         fi
         sleep 15; t=$((t+15))
     done
