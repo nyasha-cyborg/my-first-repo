@@ -386,8 +386,11 @@ WiFi stack was never exercised; the machine stayed up for 30 minutes. Combined
 with the 17:29 stall (modules failed with `-ENOENT`, so no WiFi probe either),
 this rules WiFi/SDIO **out as a necessary cause** of the stall.
 
-State at 18:20: battery 37 %, below the 40 % guard — hardware tests paused to
-charge. Everything is in Android.
+State at 20:03: battery 46 % and charging slowly on the host's 500 mA port;
+still below the 60 % needed for a long run. Hardware tests paused; the tablet
+is idle in Android. The prepared next image is `n9wifi-rec-mark-stripped.img`
+(record every 2 s for the first minute + `n9st:` stage markers), which will
+localise a stall to the exact init step.
 
 ### Instrumentation for the early window (18:25)
 
@@ -446,11 +449,13 @@ image itself ran for 5+ min with a working shell before that reboot.
   hard-coded 0, so those records cannot prove freshness.
 
 ## Next actions
-1. **When charged above 60 %**, run the minimal `n9ping2` image for 30 min,
-   twice. It has no record, no WiFi, no heartbeat. If it ever stalls, the
-   stall is kernel-level and init-independent; if it never does, the
-   `init-auto` path is implicated and the remaining additions can be added
-   one at a time (WiFi fork → audio check → env-less shell exec).
+1. **When charged above 60 %**, boot `n9wifi-rec-mark-stripped.img` for
+   30 min. If it stalls, the auto-captured record will show the last
+   `n9st:` marker (mounted / tty / hb forked / wd opened / wifi forked /
+   exec sh) and the `n9hb:` counter, localising the hang to one init step.
+2. Then run the minimal `n9ping2` image for 30 min, twice. It has no record,
+   no WiFi, no heartbeat. If it ever stalls, the stall is kernel-level and
+   init-independent; if it never does, the `init-auto` path is implicated.
 2. Keep `N9_REQUIRE_WLAN=1` for WiFi tests so only boots with an enumerated
    card are evaluated.
 3. Separately: make SDIO enumeration reliable (`nvidia,only-1-8v`); the card
