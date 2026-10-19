@@ -499,3 +499,39 @@ Fixed in `init-auto.c`: audio modules now load by plain name, core first, and
 `tfa989x` is left out of the automatic sequence until its probe behaviour is
 understood. Next: rebuild, verify `/proc/asound/cards` and the `rt5677 1-002d`
 bind in dmesg, then exercise the tfa989x probe by hand with a timeout.
+
+## Root cause found: the codec supply gates (2026-10-19 23:00)
+
+`rt5677 1-002d: Device with ID register 0x0 is not rt5677` was **not** an I2C
+problem. The downstream machine driver's power sequence
+(`tegra_rt5677.c`, board file `board-flounder.c`) enables, in order:
+
+1. `gpio_ldo1_en` **PK0** — V_IO_1V8
+2. palmas **LDO2** — V_AUD_1V2 (`vdd_audio`, already modelled)
+3. `gpio_int_mic_en` **PV3** — V_AUD_1V8
+4. `gpio_reset` **PX4** — released last
+
+Our DT carried only LDO2 and reset, so the codec's I/O rail never came up and
+the ID register read 0. Modelling PK0 and PV3 as `regulator-fixed` rails with
+`regulator-always-on` (in `tegra132-flounder.dts`) fixed it: the driver now
+binds with no ID error, and with `snd-soc-tegra30-i2s` loaded the card
+appears:
+
+```
+ 0 [G9             ]: tegra - Google Nexus 9
+  2: [ 0- 0]: digital audio playback
+  3: [ 0- 0]: digital audio capture
+  4: [ 0]   : control
+```
+
+Two build/init traps found on the way:
+
+- `run()` forks without waiting, so the init's modprobe loop raced the
+  dependency chain (`rt5677-spi` before `snd-soc-core`, `tegra30-i2s` skipped
+  entirely). Now a single sequential `busybox sh -c` loop.
+- A `make` without `ARCH=arm64` ran oldconfig and clobbered the build
+  `.config` (Tegra unset). Recovered exactly with
+  `scripts/extract-ikconfig arch/arm64/boot/Image`.
+
+Not yet done: audible playback (no `aplay` in the ramdisk), and the tfa989x
+speaker amps still unloaded pending the probe-hang investigation.

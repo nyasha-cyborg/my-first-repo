@@ -429,36 +429,19 @@ void _start(void)
 	/* Optional audio stack (flag file /etc/audio). */
 	if (sc(SYS_openat, AT_FDCWD, (long)"/etc/audio", O_RDONLY, 0, 0) >= 0 &&
 	    sc(SYS_clone, 17, 0, 0, 0, 0) == 0) {
-		/* Plain module names on purpose: passing "foo.ko" makes busybox
-		 * modprobe load the file verbatim and skip modules.dep, so the
-		 * snd/snd-pcm prerequisites never load and snd-soc-core fails
-		 * with "Unknown symbol snd_pcm_...". tfa989x is deliberately
-		 * absent: its probe hung the console. */
-		static const char *top[] = {
-			"snd", "snd-pcm", "snd-soc-core",
-			"snd-soc-tegra30-ahub", "snd-soc-tegra30-i2s",
-			"snd-soc-rt5677", "snd-soc-rt5677-spi",
-			"snd-soc-tegra-machine",
-		};
-		static char name[32];
-		int k;
+		/* Sequential, in one shell: run() forks without waiting, so a
+		 * modprobe loop races the dependency chain (rt5677-spi loaded
+		 * before snd-soc-core, tegra30-i2s was skipped entirely).
+		 * Plain names so busybox modprobe reads modules.dep; "foo.ko"
+		 * bypasses it. tfa989x stays out: its probe hung the console. */
+		static const char *load[] = { "busybox", "sh", "-c",
+			"for m in snd snd-pcm snd-soc-core snd-soc-tegra30-ahub "
+			"snd-soc-tegra30-i2s snd-soc-rt5677 snd-soc-rt5677-spi "
+			"snd-soc-tegra-machine; do modprobe $m; done; "
+			"cat /proc/asound/cards", 0 };
 
 		sleep_ms(25000);
-		for (k = 0; k < (int)(sizeof(top) / sizeof(top[0])); k++) {
-			static const char *a[4];
-			int j = 0, m = 0;
-
-			a[j++] = "busybox";
-			a[j++] = "modprobe";
-			while (top[k][m] && m < 31) {
-				name[m] = top[k][m];
-				m++;
-			}
-			name[m] = 0;
-			a[j++] = name;
-			a[j] = 0;
-			run("/bin/busybox", a);
-		}
+		run("/bin/busybox", load);
 		say("n9audio: modules requested\n");
 		for (;;)
 			sleep_ms(1000);
