@@ -202,6 +202,30 @@ system pings every 20 s; if userspace is blocked the pings stop and the box
 resets after 120 s. If only the tty path dies while userspace runs, the
 machine stays up — that difference is itself evidence.
 
+### Record-free images are stable; the decisive comparison is ready
+
+```
+n9ping (minimal + armed/pinged watchdog): 13:28:21 -> 13:42:13 STABLE 10 min
+n9shell (minimal, no watchdog):          12:45:54 -> 12:59:47 STABLE 10 min
+```
+No record-enabled image has yet completed a 10-minute run; every observed
+stall so far was on an image with the recording monitor. To test that directly
+with no power cycles, all images now arm the watchdog and ping it from
+userspace every 20 s; `touch /stop-ping` (sent by the harness) stops the ping
+and lets the hardware reset the box back to Android.
+
+Built and ready in `~/Downloads/nexus9/bootimg-build/n9-mainline/`:
+| Image | Record | WiFi |
+|---|---|---|
+| `n9wifi-rec-stripped.img` | on | on |
+| `n9wifi-norec-stripped.img` | off | on |
+| `n9console-ping-stripped.img` | on | off |
+| `n9bare-ping-stripped.img` | off | off |
+| `n9ping2-stripped.img` | off | off (shell only) |
+
+Next: alternate `wifi-rec` and `wifi-norec` for several rounds. A stall only
+in the record-on image settles hypothesis 1.
+
 ### Separate bug: reboot from the test kernel hangs (13:05)
 
 On the minimal-shell image (stable 10 min, shell answering):

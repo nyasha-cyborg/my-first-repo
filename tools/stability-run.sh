@@ -61,6 +61,25 @@ wait_android() {
     return 1
 }
 
+# A shorter wait used after a stall or a finished test: the watchdog needs up
+# to 120 s from the last keepalive to reset the tablet.
+wait_android_short() {
+    i=0
+    while [ $i -lt 34 ]; do
+        timeout 4 adb devices 2>/dev/null | grep -q "HT4C3WV00112" && return 0
+        sleep 5; i=$((i+1))
+    done
+    return 1
+}
+
+# End a healthy test: /stop-ping makes the userspace keepalive stop, so the
+# armed watchdog resets the tablet back to Android with no power cycle.
+release_image() {
+    [ -c /dev/ttyACM0 ] && stty -F /dev/ttyACM0 115200 raw -echo 2>/dev/null
+    timeout 8 $PY $SH 'touch /stop-ping' >/dev/null 2>&1
+    say "stop-ping set; waiting for the watchdog reset"
+}
+
 for img in "$@"; do
     say "=== $img"
     if ! wait_android; then
@@ -110,6 +129,16 @@ for img in "$@"; do
         fi
         sleep 15; t=$((t+15))
     done
-    [ $t -ge 600 ] && say "STABLE for 10 min: $img"
+    if [ $t -ge 600 ]; then
+        say "STABLE for 10 min: $img"
+        release_image
+    fi
+    # Either the watchdog was released or a stall was detected. Both end with
+    # a self-reset when userspace is blocked; otherwise a human must intervene.
+    if ! wait_android_short; then
+        say "no android after ~170 s; power cycle needed, stopping"
+        exit 1
+    fi
+    say "android is back"
 done
 say "done"

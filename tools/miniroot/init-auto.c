@@ -210,8 +210,14 @@ static void watchdog_ping_loop(long fd)
 
 	for (;;) {
 		sleep_ms(20000);
+		/* /stop-ping: the harness asked the test to end; drop the magic
+		 * keepalive so the hardware resets us back to Android. */
+		if (sc(SYS_openat, AT_FDCWD, (long)"/stop-ping", O_RDONLY, 0, 0) >= 0)
+			break;
 		sc(SYS_write, fd, (long)&b, 1, 0, 0);
 	}
+	for (;;)
+		sleep_ms(60000);
 }
 
 static void wifi_bringup(void)
