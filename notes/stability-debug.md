@@ -20,7 +20,8 @@ Last updated: 2026-10-19 13:00 · branch `nexus9` · tip `57b8686`
 | # | Hypothesis | Test | Result | Status |
 |---|------------|------|--------|--------|
 | 1 | Raw eMMC record write (every 10 s) stalls the machine | record-on stable 30 min twice; record-off stalled once | no correlation | dead |
-| 7 | USB gadget console path wedges; the machine keeps running | no reset after a stall in an image whose WDT/pinger is proven armed | likely, needs display heartbeat | **leading** |
+| 7 | USB gadget console path wedges; the machine keeps running | 17:29 stall **self-reset at ~141 s** after the reordered open → pinger stopped → userspace blocked | real system stall | dead |
+| 8 | brcmfmac/SDIO probe at the 20 s-delayed module load | stalls happen just before/at ~26 s in WiFi images; every stable 30-min run had `wlan0` absent; no-WiFi minimal images stable | strong correlation | **leading** |
 | 2 | brcmfmac/SDIO probe wedges the system | `n9console` boots with `/etc/no-wifi` | stalled anyway → not *required* | dead as necessary cause |
 | 3 | MMC/SDIO runtime PM | `n9auto15pm` (runtime PM off) | not run | open |
 | 4 | eMMC writeback after the emit | timing cannot separate from (1) yet | — | open |
@@ -315,6 +316,31 @@ open/probe pattern; the kernel and userspace continue.
 To confirm independently of USB, init-auto now forks a heartbeat child that
 writes `HB <hex counter>` to `/dev/tty0` every 5 s. The panel works, so a
 changing counter during a "stall" proves the machine is alive.
+
+### Watchdog now armed reliably; stall is real and self-recovers (17:29)
+
+```
+17:29:48 gadget after 6s
+17:30:32 shell unresponsive after 15s
+17:32:53 android is back          # ~141 s later, no power cycle
+```
+Moving the watchdog open **after** `ttyGS0` exists made the arm reliable: the
+pinger stopped when userspace blocked, the WDT fired ~120 s later, and Android
+returned by itself. The earlier no-reset cases used the old ordering (open
+before the tty), which evidently did not arm.
+
+So mode B is a genuine system stall, not a USB-console-only failure.
+
+The timing is the new lead: the gadget is up at 6 s, the first probe at ~11 s
+and the next at ~26 s both fail. init starts the WiFi child at ~6 s, which
+sleeps 20 s and then loads the modules at ~26 s. Every completed 30-minute run
+had `wlan0` absent (the SDIO card did not enumerate); the early stalls line up
+with boots where it did. This is exactly the trap recorded in `wifi.md`:
+brcmfmac attachment can wedge the machine, and running it in a child protects
+the console only when the stall is task-local.
+
+Next control: a no-WiFi auto image with the same watchdog/pinger/heartbeat,
+run until it either completes 30 minutes or stalls.
 
 ### Separate bug: reboot from the test kernel hangs (13:05)
 
