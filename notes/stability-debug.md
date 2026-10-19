@@ -160,6 +160,29 @@ Whether 12:43 was a panel state left by the preceding stall or a driver
 difference is unrecorded — do not use the screen as a liveness signal without
 checking it per boot.
 
+### Separate bug: reboot from the test kernel hangs (13:05)
+
+On the minimal-shell image (stable 10 min, shell answering):
+
+```
+~ # /bin/busybox reboot -f
+~ # echo PING            <- echoed by the tty, NOT executed (no output)
+~ # cat /proc/sys/kernel/sysrq; echo b > /proc/sysrq-trigger
+                         <- also echoed, no output, no reboot
+```
+The gadget stays enumerated, so this is not a power loss. After `reboot -f`
+the shell stops executing; later input is still echoed by the ttyGS0 line
+discipline. `busybox --list` could not be checked because that first command
+was the one that hung.
+
+Consequences:
+- The harness cannot leave a test image by software; every stalled or
+  rebooted test currently needs a physical power cycle. `stability-run.sh`
+  now calls `/bin/busybox reboot -f` (instead of bare `reboot`, which is not
+  on PATH in the minimal ramdisk), but that path hangs too.
+- Investigate `kernel_restart()` on this kernel (PMC reset, driver shutdown,
+  DSI/DC stop). This may share a root cause with mode B.
+
 ### Harness trap found in the first bisection attempt
 
 ```
