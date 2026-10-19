@@ -47,6 +47,7 @@ reboot_android() {
 # makes repeated boot cycles risky. Override with N9_MIN_CAP=<percent>.
 MIN_CAP=${N9_MIN_CAP:-40}
 DURATION=${N9_DURATION:-600}    # probe window per image, seconds
+REQUIRE_WLAN=${N9_REQUIRE_WLAN:-0}  # 1 = release+retry boots without SDIO
 
 battery_ok() {
     cap=$(timeout 8 adb shell cat /sys/class/power_supply/battery/capacity 2>/dev/null | tr -d '\r')
@@ -132,7 +133,7 @@ for img in "$@"; do
     [ $up -eq 1 ] || { say "no gadget (bootloader ignored it?)"; sleep 30; continue; }
 
     sleep 5                     # let init reach the shell / settle the tty
-    t=0; fails=0; stalled=0; wifi_logged=""; wifi_logged2=""
+    t=0; fails=0; stalled=0; skip=0; wifi_logged=""; wifi_logged2=""
     while [ $t -lt $DURATION ]; do
         if ! alive; then say "USB dropped after ${t}s"; stalled=1; break; fi
         if shell_ok; then
@@ -145,6 +146,12 @@ for img in "$@"; do
                 addr=$(timeout 12 $PY $SH '/bin/busybox ip -4 addr show wlan0 2>&1' 2>/dev/null)
                 say "wlan0 at ${t}s:"
                 printf '%s\n' "$addr" | sed 's/^/  | /' | tee -a "$LOG"
+                if [ "$REQUIRE_WLAN" = 1 ] &&
+                   printf '%s' "$addr" | grep -q "can't find device"; then
+                    say "no SDIO card this boot; releasing and retrying"
+                    skip=1
+                    break
+                fi
             fi
             if [ "$t" -ge 300 ] && [ -z "$wifi_logged2" ]; then
                 wifi_logged2=1
@@ -168,6 +175,8 @@ for img in "$@"; do
     done
     if [ $t -ge $DURATION ]; then
         say "STABLE for $((DURATION / 60)) min: $img"
+        release_image
+    elif [ "$skip" -eq 1 ]; then
         release_image
     fi
     # Either the watchdog was released or a stall was detected. Both end with
