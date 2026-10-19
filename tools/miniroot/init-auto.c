@@ -63,6 +63,27 @@ static void say(const char *s)
 	sc(SYS_write, 1, (long)s, n, 0, 0);
 }
 
+/* One log record per stage, so a stalled boot's record shows the last step
+ * the init reached without needing the serial console. */
+static void mark(const char *s)
+{
+	char b[64];
+	const char *p = "<6>n9st: ";
+	long i = 0, fd;
+
+	while (*p && i < 60)
+		b[i++] = *p++;
+	while (*s && i < 62)
+		b[i++] = *s++;
+	b[i++] = '\n';
+
+	fd = sc(SYS_openat, AT_FDCWD, (long)"/dev/kmsg", O_WRONLY, 0, 0);
+	if (fd >= 0) {
+		sc(SYS_write, fd, (long)b, i, 0, 0);
+		sc(SYS_close, fd, 0, 0, 0, 0);
+	}
+}
+
 static char kbuf[128];
 
 static void kmsg(const char *tag, long v)
@@ -335,6 +356,7 @@ void _start(void)
 	sc(SYS_mount, (long)"proc", (long)"/proc", (long)"proc", 0, 0);
 	sc(SYS_mount, (long)"sysfs", (long)"/sys", (long)"sysfs", 0, 0);
 	sleep_ms(300);
+	mark("mounted");
 
 	/* A rolling record so a stall leaves the last messages behind.
 	 * Disabled by /etc/no-record for stall bisection. */
@@ -369,11 +391,13 @@ void _start(void)
 		sc(SYS_dup3, fd, 1, 0, 0, 0);
 		sc(SYS_dup3, fd, 2, 0, 0, 0);
 	}
+	mark(fd >= 0 ? "tty" : "no tty");
 
 	/* Independent display heartbeat: proves userspace is alive even when the
 	 * USB serial console has gone silent. */
 	if (sc(SYS_clone, 17, 0, 0, 0, 0) == 0)
 		heartbeat_loop();
+	mark("hb forked");
 
 	/* Arm the hardware watchdog once the console can report the result. The
 	 * driver does not ping on its own; a child does, so the timeout only
@@ -383,10 +407,12 @@ void _start(void)
 			      O_WRONLY, 0, 0);
 
 		if (wfd >= 0) {
+			mark("wd opened");
 			say("n9wifi: watchdog opened\n");
 			if (sc(SYS_clone, 17, 0, 0, 0, 0) == 0)
 				watchdog_ping_loop(wfd);
 		} else {
+			mark("wd failed");
 			say("n9wifi: watchdog open FAILED\n");
 		}
 	}
@@ -434,6 +460,7 @@ void _start(void)
 			sleep_ms(1000);
 	}
 
+	mark("exec sh");
 	say("\nn9wifi: shell\n");
 	sc(SYS_execve, (long)"/bin/sh", (long)sh_argv, 0, 0, 0);
 	say("n9wifi: exec failed\n");
