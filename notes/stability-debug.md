@@ -19,11 +19,11 @@ Last updated: 2026-10-19 13:00 · branch `nexus9` · tip `57b8686`
 ## Current hypotheses
 | # | Hypothesis | Test | Result | Status |
 |---|------------|------|--------|--------|
-| 1 | Raw eMMC record write (every 10 s) stalls the machine | `n9console` (record on, WiFi off) | **stalled in <50 s** — record path still live | **leading** |
+| 1 | Raw eMMC record write (every 10 s) stalls the machine | `n9console` stalled once; `n9wifi-rec` then ran **stable 10 min** at 78 % charge | not deterministic | open, weakened |
 | 2 | brcmfmac/SDIO probe wedges the system | `n9console` boots with `/etc/no-wifi` | stalled anyway → not *required* | dead as necessary cause |
 | 3 | MMC/SDIO runtime PM | `n9auto15pm` (runtime PM off) | not run | open |
 | 4 | eMMC writeback after the emit | timing cannot separate from (1) yet | — | open |
-| 5 | Battery undervoltage / brownout (6 %, 3.5 V under load) | charged to 87 % and repeated | no stall on the minimal image | confound removed |
+| 5 | Battery undervoltage / brownout | 6–7 % at 08:45; the 00:35 and 08:29 stalls both happened in that low-charge window; every run above 78 % has been stable | suspicious correlation | **leading** |
 | 6 | Something `init-auto` adds on top of a plain shell (watchdog open, record write, WiFi, runtime-PM sweep) | minimal shell stable 10 min; `bare` silent; `n9wdtest` (= minimal + watchdog open) silent once, **alive the next run** | not deterministic | open — needs repeated runs |
 
 ## Evidence (trimmed)
@@ -225,6 +225,29 @@ Built and ready in `~/Downloads/nexus9/bootimg-build/n9-mainline/`:
 
 Next: alternate `wifi-rec` and `wifi-norec` for several rounds. A stall only
 in the record-on image settles hypothesis 1.
+
+### Record-on image is stable at healthy charge (13:48–14:02)
+
+```
+13:48:48 gadget after 6s
+14:02:40 STABLE for 10 min: n9wifi-rec   # record ON, WiFi ON, pinger
+14:02:46 stop-ping set; waiting for the watchdog reset
+14:05:37 no android after ~170 s; power cycle needed
+```
+Two conclusions:
+
+1. The rolling eMMC record is **not deterministically fatal**. The earlier
+   record-enabled stalls (00:35 auto, 08:29 console) both fell inside the
+   window where the pack was nearly flat (6–7 % measured at 08:45). Every run
+   at 78 % or above has been stable. Battery/undervoltage is now the leading
+   explanation, with the record unproven.
+2. The release path failed because `touch` is not on PATH in the ramdisk
+   (no applet symlinks). `release_image` now calls `/bin/busybox touch`.
+   The tablet was recovered by `killall init` (busybox) — the pinger died and
+   the watchdog reset it, still with no power cycle.
+
+Next: long soak at healthy charge (`N9_DURATION=1800`) to see whether the
+intermittent stall appears at all when the pack is full.
 
 ### Separate bug: reboot from the test kernel hangs (13:05)
 

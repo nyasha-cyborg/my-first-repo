@@ -46,6 +46,7 @@ reboot_android() {
 # Refuse to run at low charge: a flat pack both confounds stall results and
 # makes repeated boot cycles risky. Override with N9_MIN_CAP=<percent>.
 MIN_CAP=${N9_MIN_CAP:-40}
+DURATION=${N9_DURATION:-600}    # probe window per image, seconds
 
 battery_ok() {
     cap=$(timeout 8 adb shell cat /sys/class/power_supply/battery/capacity 2>/dev/null | tr -d '\r')
@@ -76,7 +77,8 @@ wait_android_short() {
 # armed watchdog resets the tablet back to Android with no power cycle.
 release_image() {
     [ -c /dev/ttyACM0 ] && stty -F /dev/ttyACM0 115200 raw -echo 2>/dev/null
-    timeout 8 $PY $SH 'touch /stop-ping' >/dev/null 2>&1
+    # The ramdisks have no applet symlinks; call busybox itself.
+    timeout 8 $PY $SH '/bin/busybox touch /stop-ping' >/dev/null 2>&1
     say "stop-ping set; waiting for the watchdog reset"
 }
 
@@ -112,7 +114,7 @@ for img in "$@"; do
 
     sleep 5                     # let init reach the shell / settle the tty
     t=0; fails=0
-    while [ $t -lt 600 ]; do
+    while [ $t -lt $DURATION ]; do
         if ! alive; then say "USB dropped after ${t}s"; break; fi
         if shell_ok; then
             fails=0
@@ -129,8 +131,8 @@ for img in "$@"; do
         fi
         sleep 15; t=$((t+15))
     done
-    if [ $t -ge 600 ]; then
-        say "STABLE for 10 min: $img"
+    if [ $t -ge $DURATION ]; then
+        say "STABLE for $((DURATION / 60)) min: $img"
         release_image
     fi
     # Either the watchdog was released or a stall was detected. Both end with
