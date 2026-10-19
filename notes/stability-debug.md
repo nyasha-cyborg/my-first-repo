@@ -21,7 +21,8 @@ Last updated: 2026-10-19 13:00 · branch `nexus9` · tip `57b8686`
 |---|------------|------|--------|--------|
 | 1 | Raw eMMC record write (every 10 s) stalls the machine | record-on stable 30 min twice; record-off stalled once | no correlation | dead |
 | 7 | USB gadget console path wedges; the machine keeps running | 17:29 stall **self-reset at ~141 s** after the reordered open → pinger stopped → userspace blocked | real system stall | dead |
-| 8 | brcmfmac/SDIO probe at the 20 s-delayed module load | stalls happen just before/at ~26 s in WiFi images; every stable 30-min run had `wlan0` absent; no-WiFi minimal images stable | strong correlation | **leading** |
+| 8 | brcmfmac/SDIO probe at the 20 s-delayed module load | 17:29 stall had module loads failing (`-ENOENT`) and no card; 18:16 soak had modules load but card absent | not necessary | dead |
+| 9 | Unknown early stall in the `init-auto` path (6–11 s, userspace blocked) | the stall precedes the 26 s WiFi load; minimal `init-ping` image has not stalled yet (one 10-min run) | needs repeated minimal-image runs | **open** |
 | 2 | brcmfmac/SDIO probe wedges the system | `n9console` boots with `/etc/no-wifi` | stalled anyway → not *required* | dead as necessary cause |
 | 3 | MMC/SDIO runtime PM | `n9auto15pm` (runtime PM off) | not run | open |
 | 4 | eMMC writeback after the emit | timing cannot separate from (1) yet | — | open |
@@ -370,6 +371,24 @@ to `/dev/kmsg`, to rule out the console/DC path.
 New images with working module paths: `n9wifi-rec-real-stripped.img`,
 `n9wifi-norec-real-stripped.img`. The rec image runs now.
 
+### 30-min soak with working module paths: stable (18:16)
+
+```
+17:35:11 gadget after 6s
+17:37:11 wlan0 at 75s:  can't find device wlan0   # SDIO card absent this boot
+17:42:28 wlan0 at 300s: can't find device wlan0
+18:16:52 STABLE for 30 min
+18:16:58 stop-ping set
+18:19:14 android is back                           # watchdog reset
+```
+brcmfmac loaded (`rc=00000000`) but the SDIO card did not enumerate, so the
+WiFi stack was never exercised; the machine stayed up for 30 minutes. Combined
+with the 17:29 stall (modules failed with `-ENOENT`, so no WiFi probe either),
+this rules WiFi/SDIO **out as a necessary cause** of the stall.
+
+State at 18:20: battery 37 %, below the 40 % guard — hardware tests paused to
+charge. Everything is in Android.
+
 ### Separate bug: reboot from the test kernel hangs (13:05)
 
 On the minimal-shell image (stable 10 min, shell answering):
@@ -420,15 +439,15 @@ image itself ran for 5+ min with a working shell before that reboot.
   hard-coded 0, so those records cannot prove freshness.
 
 ## Next actions
-1. Read the `n9wdtest` result (running since 13:00):
-   - shell appears, then dies when the watchdog opens → watchdog open is the
-     trigger; inspect `tegra_wdt_start` / WDT reset path.
-   - shell never appears, no "opening watchdog" line → the hang is before the
-     open (ramdisk/init difference), not the watchdog.
-   - stable 10 min → the watchdog is innocent; next add only the record write,
-     then only the WiFi child.
-2. Once the minimal delta is isolated, fix it and re-run `auto18` for 10 min.
-3. Then re-test `auto15pm` (runtime PM off) only if WiFi is implicated.
+1. **When charged above 60 %**, run the minimal `n9ping2` image for 30 min,
+   twice. It has no record, no WiFi, no heartbeat. If it ever stalls, the
+   stall is kernel-level and init-independent; if it never does, the
+   `init-auto` path is implicated and the remaining additions can be added
+   one at a time (WiFi fork → audio check → env-less shell exec).
+2. Keep `N9_REQUIRE_WLAN=1` for WiFi tests so only boots with an enumerated
+   card are evaluated.
+3. Separately: make SDIO enumeration reliable (`nvidia,only-1-8v`); the card
+   still fails to appear on many boots, which blocks all WiFi work.
 
 ## Rebuild recipe (for the fixed image)
 
