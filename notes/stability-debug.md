@@ -425,6 +425,21 @@ carry `RuntimeWatchdogSec=120` into the installed system. Revisit only if the
 stall becomes frequent. Scope is display, WiFi, touch, audio, Bluetooth —
 camera and sensors are explicitly out for now.
 
+### The stall hit the first audio boot before init's first record write (22:31)
+
+The first boot of `n9audio-bind-stripped.img` was silent (gadget enumerated, no
+shell) and **no watchdog reset followed** (~5 min). After the power cycle the
+record was unchanged from the 21:45 soak: `flags=2617 s`, 523 `n9hb` lines, all
+five `n9st:` markers at 4.0 s (`mounted`, `tty`, `hb forked`, `wd opened`,
+`exec sh`). So the audio boot never wrote a record at all — the stall landed
+before the monitor's first 2 s emit, i.e. **< ~6 s from kernel start, before
+the watchdog open**, which is why nothing reset it. The retry boot was healthy,
+so this was the intermittent stall, not the image.
+
+This also gives the first positive marker data: a healthy init completes every
+stage within **4.0 s** of kernel start; heartbeats then ran the full 2617 s of
+the soak.
+
 ### Separate bug: reboot from the test kernel hangs (13:05)
 
 On the minimal-shell image (stable 10 min, shell answering):

@@ -429,9 +429,16 @@ void _start(void)
 	/* Optional audio stack (flag file /etc/audio). */
 	if (sc(SYS_openat, AT_FDCWD, (long)"/etc/audio", O_RDONLY, 0, 0) >= 0 &&
 	    sc(SYS_clone, 17, 0, 0, 0, 0) == 0) {
+		/* Plain module names on purpose: passing "foo.ko" makes busybox
+		 * modprobe load the file verbatim and skip modules.dep, so the
+		 * snd/snd-pcm prerequisites never load and snd-soc-core fails
+		 * with "Unknown symbol snd_pcm_...". tfa989x is deliberately
+		 * absent: its probe hung the console. */
 		static const char *top[] = {
-			"tegra30-ahub", "tegra30-i2s", "rt5677",
-			"rt5677-spi", "tfa989x", "tegra-machine",
+			"snd", "snd-pcm", "snd-soc-core",
+			"snd-soc-tegra30-ahub", "snd-soc-tegra30-i2s",
+			"snd-soc-rt5677", "snd-soc-rt5677-spi",
+			"snd-soc-tegra-machine",
 		};
 		static char name[32];
 		int k;
@@ -443,13 +450,10 @@ void _start(void)
 
 			a[j++] = "busybox";
 			a[j++] = "modprobe";
-			while (top[k][m] && m < 28) {
+			while (top[k][m] && m < 31) {
 				name[m] = top[k][m];
 				m++;
 			}
-			name[m++] = '.';
-			name[m++] = 'k';
-			name[m++] = 'o';
 			name[m] = 0;
 			a[j++] = name;
 			a[j] = 0;

@@ -1,5 +1,8 @@
 # Audio bring-up for flounder
 
+> **Hardware status (2026-10-19):** first test boots done. Modules load, but no
+> card has registered yet. See “First hardware test” at the end of this note.
+
 Surveyed 2026-10-17. What the hardware is wired like, what mainline already has,
 and the two findings that change the shape of the job.
 
@@ -465,3 +468,34 @@ register writes are not reachable by following its strings.
 - `dtbs` builds clean, but three pre-existing warnings appear from the port's own
   DT, not from this change: `usb@7d000000` / `usb@7d004000` / `usb@7d008000`
   each share a unit address with their `usb-phy@` sibling.
+
+## First hardware test (2026-10-19)
+
+Image `n9audio-bind-stripped.img`: current `init-auto.c` with `/etc/audio`,
+`/etc/no-wifi`, kernel `#116` (`6.19.0-htc-flounder-g65429d8f78f5`).
+
+- **Boot 1 stalled.** Mode B (gadget enumerated, serial silent, no watchdog
+  reset). The rolling record was untouched from the previous soak, so init
+  never reached its first write — the stall landed before ~6 s. Power cycle
+  needed. Boot 2 was healthy, so this was the known intermittent stall, not
+  the image (see `stability-debug.md`).
+- **The auto module load was broken — init passed `.ko` names.** Busybox
+  `modprobe snd-soc-tegra30-ahub.ko` loads the file verbatim and skips
+  `modules.dep`, so `snd`, `snd-pcm` and friends never loaded; `snd-soc-core`
+  then failed with `Unknown symbol snd_pcm_lib_ioctl` (and ~30 more).
+  Symptom: only `snd_soc_tegra30_ahub` in `/proc/modules`, no
+  `/proc/asound/cards` at all.
+- **Plain names work.** Manually, all returned rc=0:
+  `snd`, `snd-pcm`, `snd-soc-core`, `snd-soc-tegra30-i2s`,
+  `snd-soc-rt5677`. So dependencies are fine when modprobe sees names.
+- **`modprobe snd-soc-tfa989x` hung the console.** The shell blocked in the
+  modprobe and never returned; typed input was still echoed by the tty, and
+  the userspace watchdog pinger kept running (no reset in 2.5 min), so this
+  is a task-local hang, not a machine stall. Recovery needs a power cycle.
+  Nothing has yet checked whether the codec probe or the shared `spk_ldo`
+  regulator is the blocker.
+
+Fixed in `init-auto.c`: audio modules now load by plain name, core first, and
+`tfa989x` is left out of the automatic sequence until its probe behaviour is
+understood. Next: rebuild, verify `/proc/asound/cards` and the `rt5677 1-002d`
+bind in dmesg, then exercise the tfa989x probe by hand with a timeout.
