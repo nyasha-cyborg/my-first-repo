@@ -34,7 +34,8 @@ reboot_android() {
         adb reboot >/dev/null 2>&1
     elif [ -c /dev/ttyACM0 ]; then
         stty -F /dev/ttyACM0 115200 raw -echo 2>/dev/null
-        timeout 8 $PY $SH 'reboot -f' >/dev/null 2>&1
+        # The test ramdisks may not have applet symlinks; call busybox itself.
+        timeout 8 $PY $SH '/bin/busybox reboot -f; reboot -f' >/dev/null 2>&1
     fi
 }
 

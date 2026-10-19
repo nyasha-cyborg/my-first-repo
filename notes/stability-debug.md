@@ -128,9 +128,11 @@ on `ttyACM0` round-trips (rc=0), so the gadget's kernel control path answers
 but no userspace bytes arrive or are echoed.
 
 Ramdisk verified: the image really carries the new 7472-byte init, `/bin/sh`
-→ busybox exists, `/etc/no-record` and `/etc/no-wifi` present. The screen check
-was uninformative (panel never lit, see above). The minimal-shell result below
-is the useful discriminator: same kernel and gadget, plain init works.
+→ busybox exists, `/etc/no-record` and `/etc/no-wifi` present. That boot's
+screen was black, but the panel is known to work (see the display correction
+below), so the screen is unexplained rather than ignorable. The minimal-shell
+result below is the useful discriminator: same kernel and gadget, plain init
+works.
 
 ### Minimal shell is stable for 10 minutes (12:45–12:59)
 
@@ -149,9 +151,14 @@ stall must come from something `init-auto` does beyond this minimal set.
 with `n9shell: opening watchdog / opened` written to the serial console so a
 hang there is visible.
 
-The black screen reported at 12:43 is expected: `display-progress.md` says the
-panel was never actually lit (GET_POWER_MODE stays 0), so `console=tty0` shows
-nothing and cannot be used as a liveness signal.
+Display correction: the panel does work. The final section of
+`display-progress.md` ("It works: inject panel commands into the running video
+stream") confirms console text and the white paint on hardware. So the black
+screen at 12:43 was a real observation, not the normal state; by 13:02 the
+minimal-shell image shows a console with a blinking cursor on the panel.
+Whether 12:43 was a panel state left by the preceding stall or a driver
+difference is unrecorded — do not use the screen as a liveness signal without
+checking it per boot.
 
 ### Harness trap found in the first bisection attempt
 
