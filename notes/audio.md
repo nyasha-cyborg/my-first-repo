@@ -535,3 +535,6 @@ Two build/init traps found on the way:
 
 Not yet done: audible playback (no `aplay` in the ramdisk), and the tfa989x
 speaker amps still unloaded pending the probe-hang investigation.
+
+The automatic path is verified on `n9audio4-stripped.img`: after the sequential
+load fix, the `G9` card registers with no manual commands.

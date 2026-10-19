@@ -121,3 +121,42 @@ The way to find out is a node without the pins and see whether `btbcm` brings
 the controller up.
 
 None of this has been started, and none of it has run on hardware.
+
+## What pmOS did (checked 2026-10-19)
+
+**Nothing.** Their DTS leaves `serial@70006200` `status = "disabled"` and has no
+`bluetooth` node; only the `uartc` pinmux group exists. Their kernel config does
+enable `BT`, `BT_HCIUART` (H4, BCM) and `BT_BCM`, but with the UART disabled
+there is nothing for it to bind. So pmOS is not a source here; the downstream
+board file remains the only one.
+
+## Control pins, from downstream (2026-10-19)
+
+`board-flounder.c` registers a `bluedroid_pm` device with these GPIOs:
+
+| Downstream resource | GPIO | Mainline property |
+|---|---|---|
+| `shutdown_gpio` (BT_REG_ON) | **PR1** | `shutdown-gpios` (1 = powered) |
+| `gpio_ext_wake` (BT_WAKE) | **PEE1** | `device-wakeup-gpios` |
+| `gpio_host_wake` (HOST_WAKE) | **PU6** | `host-wakeup-gpios` |
+
+`tegra-asoc`/machine data is irrelevant here; this is the Android bluedroid
+power driver. Mainline `hci_bcm.c` handles the same three properties, and
+`bcm_gpio_set_shutdown()` treats `shutdown-gpios` as a power *enable* — which
+matches BT_REG_ON.
+
+## What is now in the tree (2026-10-19)
+
+- `patches/flounder-bluetooth.patch` applied: `serial@70006200` enabled with a
+  `brcm,bcm43540-bt` child (serdev; matches `bcm4354_device_data`).
+- Child gained `shutdown-gpios` (PR1), `device-wakeup-gpios` (PEE1) and
+  `host-wakeup-gpios` (PU6).
+- Firmware: `~/Downloads/nexus9/vendor-firmware/bcm4354.hcd` (identified as
+  `BCM4354 37.4MHz WLBGA HTC T1-0192`) is installed in the test ramdisk as
+  `/lib/firmware/brcm/BCM4354.hcd`.
+- Test image `n9bt-stripped.img` adds `bluetooth.ko`, `hci_uart.ko`,
+  `btbcm.ko`, `ecdh_generic.ko`, `rfkill.ko` and the firmware.
+
+Not yet tested: no boot has loaded the modules with this DT. The open question
+is whether the UART advertises flow control (the pinmux has uart3 cts/rts) and
+whether `hci_uart` binds the serdev child without `max-speed` set.
