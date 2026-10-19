@@ -113,11 +113,19 @@ for img in "$@"; do
     [ $up -eq 1 ] || { say "no gadget (bootloader ignored it?)"; sleep 30; continue; }
 
     sleep 5                     # let init reach the shell / settle the tty
-    t=0; fails=0
+    t=0; fails=0; wifi_logged=""
     while [ $t -lt $DURATION ]; do
         if ! alive; then say "USB dropped after ${t}s"; break; fi
         if shell_ok; then
             fails=0
+            # Once WiFi should be up, log its address: a later stall can then
+            # be probed on the network, independently of the USB console.
+            if [ "$t" -ge 30 ] && [ -z "$wifi_logged" ]; then
+                wifi_logged=1
+                addr=$(timeout 12 $PY $SH '/bin/busybox ip -4 addr show wlan0 2>&1' 2>/dev/null)
+                say "wlan0 address:"
+                printf '%s\n' "$addr" | sed 's/^/  | /' | tee -a "$LOG"
+            fi
         else
             # one lost probe is not a stall: the gadget drops bytes while a
             # module loads; require two consecutive failures.

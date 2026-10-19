@@ -297,16 +297,6 @@ void _start(void)
 	sc(SYS_mount, (long)"sysfs", (long)"/sys", (long)"sysfs", 0, 0);
 	sleep_ms(300);
 
-	/* Arm the hardware watchdog first: a real hang then resets the tablet
-	 * instead of needing a power cycle. The driver does not ping on its
-	 * own; a child does, so the timeout only fires when userspace stops. */
-	{
-		long wfd = sc(SYS_openat, AT_FDCWD, (long)"/dev/watchdog",
-			      O_WRONLY, 0, 0);
-		if (wfd >= 0 && sc(SYS_clone, 17, 0, 0, 0, 0) == 0)
-			watchdog_ping_loop(wfd);
-	}
-
 	/* A rolling record so a stall leaves the last messages behind.
 	 * Disabled by /etc/no-record for stall bisection. */
 	if (sc(SYS_openat, AT_FDCWD, (long)"/etc/no-record", O_RDONLY, 0, 0) < 0 &&
@@ -339,6 +329,22 @@ void _start(void)
 		sc(SYS_dup3, fd, 0, 0, 0, 0);
 		sc(SYS_dup3, fd, 1, 0, 0, 0);
 		sc(SYS_dup3, fd, 2, 0, 0, 0);
+	}
+
+	/* Arm the hardware watchdog once the console can report the result. The
+	 * driver does not ping on its own; a child does, so the timeout only
+	 * fires when userspace stops. */
+	{
+		long wfd = sc(SYS_openat, AT_FDCWD, (long)"/dev/watchdog",
+			      O_WRONLY, 0, 0);
+
+		if (wfd >= 0) {
+			say("n9wifi: watchdog opened\n");
+			if (sc(SYS_clone, 17, 0, 0, 0, 0) == 0)
+				watchdog_ping_loop(wfd);
+		} else {
+			say("n9wifi: watchdog open FAILED\n");
+		}
 	}
 
 	/* WiFi runs in its own process: a blocking probe must never take the

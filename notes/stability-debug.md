@@ -19,11 +19,11 @@ Last updated: 2026-10-19 13:00 · branch `nexus9` · tip `57b8686`
 ## Current hypotheses
 | # | Hypothesis | Test | Result | Status |
 |---|------------|------|--------|--------|
-| 1 | Raw eMMC record write (every 10 s) stalls the machine | `n9console` stalled once; `n9wifi-rec` then ran **stable 10 min** at 78 % charge | not deterministic | open, weakened |
+| 1 | Raw eMMC record write (every 10 s) stalls the machine | `n9console` stalled once; `n9wifi-rec` ran 10 min then **stalled at ~30 min**, 78 % start | still suspects; record-off 30-min soak pending | **leading** |
 | 2 | brcmfmac/SDIO probe wedges the system | `n9console` boots with `/etc/no-wifi` | stalled anyway → not *required* | dead as necessary cause |
 | 3 | MMC/SDIO runtime PM | `n9auto15pm` (runtime PM off) | not run | open |
 | 4 | eMMC writeback after the emit | timing cannot separate from (1) yet | — | open |
-| 5 | Battery undervoltage / brownout | 6–7 % at 08:45; the 00:35 and 08:29 stalls both happened in that low-charge window; every run above 78 % has been stable | suspicious correlation | **leading** |
+| 5 | Battery undervoltage / brownout | 6–7 % at 08:45; the 00:35 and 08:29 stalls both fell in that window | but the 14:38 stall happened at 78 % start | weakened |
 | 6 | Something `init-auto` adds on top of a plain shell (watchdog open, record write, WiFi, runtime-PM sweep) | minimal shell stable 10 min; `bare` silent; `n9wdtest` (= minimal + watchdog open) silent once, **alive the next run** | not deterministic | open — needs repeated runs |
 
 ## Evidence (trimmed)
@@ -248,6 +248,27 @@ Two conclusions:
 
 Next: long soak at healthy charge (`N9_DURATION=1800`) to see whether the
 intermittent stall appears at all when the pack is full.
+
+### Stall at healthy charge in the 30-min soak (14:38)
+
+```
+14:09:24 gadget after 6s
+14:38:34 shell unresponsive after 15s     # ~30 min in, started at 78 %
+14:38:34 serial capture (last lines):     # empty
+14:41:25 no android after ~170 s; power cycle needed
+```
+This is a real intermittent stall at healthy charge, so the low battery is
+not the whole story. The absence of a watchdog reset has two readings:
+- userspace (including the pinger) was still running and only the USB/tty
+  path died, so the WDT never expired; or
+- the watchdog was never armed in init-auto.
+
+init-auto armed the watchdog before the tty existed, so it could not report
+the result. It now opens the watchdog **after** the console is attached and
+prints `n9wifi: watchdog opened` / `... FAILED` on the serial. The harness
+also logs the wlan0 address so a stalled box can be pinged on the network if
+the shell is silent. `192.168.1.102` did not answer during this stall, but
+that address may not be the current lease.
 
 ### Separate bug: reboot from the test kernel hangs (13:05)
 
