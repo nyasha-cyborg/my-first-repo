@@ -342,6 +342,34 @@ the console only when the stall is task-local.
 Next control: a no-WiFi auto image with the same watchdog/pinger/heartbeat,
 run until it either completes 30 minutes or stalls.
 
+### Build trap: the rebuilt inits never loaded WiFi modules (found 17:33)
+
+The record from the stable run ends its module lines with:
+```
+n9wifi: /lib/modules/KVER/rfkill.ko rc=fffffffe
+... brcmfmac.ko rc=fffffffe                     # -ENOENT, literal "KVER"
+```
+`init-auto.c` contains `/lib/modules/KVER/...` placeholders; the original
+build substituted the kernel release, but the ad-hoc rebuilds in this session
+did not. So **every WiFi-enabled image rebuilt today ran without modules** —
+`wlan0` was absent for that reason, not SDIO enumeration. The stalls still
+happened, so WiFi is not necessary; but the WiFi/SDIO hypothesis has not
+actually been tested yet.
+
+Fix for future builds:
+```
+sed "s|/lib/modules/KVER/|/lib/modules/$(kernelrelease)/|g" init-auto.c
+```
+(caught by the `/bin/busybox` applet trap too: always check the `rc=` lines in
+the record before trusting a WiFi result).
+
+Also: the two "USB dropped after 0 s" fast resets appeared only after the
+display-heartbeat build. The heartbeat no longer writes to `/dev/tty0`, only
+to `/dev/kmsg`, to rule out the console/DC path.
+
+New images with working module paths: `n9wifi-rec-real-stripped.img`,
+`n9wifi-norec-real-stripped.img`. The rec image runs now.
+
 ### Separate bug: reboot from the test kernel hangs (13:05)
 
 On the minimal-shell image (stable 10 min, shell answering):

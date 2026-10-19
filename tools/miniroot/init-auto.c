@@ -205,23 +205,14 @@ static void monitor(void)
 static void heartbeat_loop(void)
 {
 	static const char hex[] = "0123456789abcdef";
-	long fd = sc(SYS_openat, AT_FDCWD, (long)"/dev/tty0", O_WRONLY, 0, 0);
 	long kfd = sc(SYS_openat, AT_FDCWD, (long)"/dev/kmsg", O_WRONLY, 0, 0);
 	long n = 0;
-	char b[24], k[32];
+	char k[32];
 
+	/* kmsg only: writing to the framebuffer console early may itself be
+	 * disturbing the DC/DSI bring-up. The record can read these markers. */
 	for (;;) {
-		/* b = "HB " + 6 hex digits + "\n"; k = "<6>n9hb: " + same */
-		long i = 0, j = 16, m = 0, j2 = 16;
-
-		b[i++] = 'H';
-		b[i++] = 'B';
-		b[i++] = ' ';
-		while (j >= 0) {
-			b[i++] = hex[(n >> j) & 0xf];
-			j -= 4;
-		}
-		b[i++] = '\n';
+		long m = 0, j2 = 16;
 
 		k[m++] = '<'; k[m++] = '6'; k[m++] = '>';
 		k[m++] = 'n'; k[m++] = '9'; k[m++] = 'h'; k[m++] = 'b';
@@ -232,8 +223,6 @@ static void heartbeat_loop(void)
 		}
 		k[m++] = '\n';
 
-		if (fd >= 0)
-			sc(SYS_write, fd, (long)b, i, 0, 0);
 		if (kfd >= 0)
 			sc(SYS_write, kfd, (long)k, m, 0, 0);
 		n++;
