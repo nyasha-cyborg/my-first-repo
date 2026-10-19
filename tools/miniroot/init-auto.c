@@ -199,6 +199,21 @@ static void monitor(void)
 	}
 }
 
+/* Keep the armed watchdog alive from userspace. A healthy system pings every
+ * 20 s; if userspace is stuck the pings stop and the hardware resets the
+ * tablet after the 120 s timeout, so a stalled test recovers without a human
+ * power cycle. If only the tty path is dead while userspace still runs, the
+ * machine stays up - that distinction is itself useful. */
+static void watchdog_ping_loop(long fd)
+{
+	static const char b = 0;
+
+	for (;;) {
+		sleep_ms(20000);
+		sc(SYS_write, fd, (long)&b, 1, 0, 0);
+	}
+}
+
 static void wifi_bringup(void)
 {
 	static const char *mods[] = {
@@ -276,10 +291,15 @@ void _start(void)
 	sc(SYS_mount, (long)"sysfs", (long)"/sys", (long)"sysfs", 0, 0);
 	sleep_ms(300);
 
-	/* Arm the hardware watchdog first: the driver pings it while the
-	 * kernel is healthy, so a real hang resets the tablet instead of
-	 * needing a power cycle. */
-	(void)sc(SYS_openat, AT_FDCWD, (long)"/dev/watchdog", O_WRONLY, 0, 0);
+	/* Arm the hardware watchdog first: a real hang then resets the tablet
+	 * instead of needing a power cycle. The driver does not ping on its
+	 * own; a child does, so the timeout only fires when userspace stops. */
+	{
+		long wfd = sc(SYS_openat, AT_FDCWD, (long)"/dev/watchdog",
+			      O_WRONLY, 0, 0);
+		if (wfd >= 0 && sc(SYS_clone, 17, 0, 0, 0, 0) == 0)
+			watchdog_ping_loop(wfd);
+	}
 
 	/* A rolling record so a stall leaves the last messages behind.
 	 * Disabled by /etc/no-record for stall bisection. */

@@ -24,7 +24,7 @@ Last updated: 2026-10-19 13:00 · branch `nexus9` · tip `57b8686`
 | 3 | MMC/SDIO runtime PM | `n9auto15pm` (runtime PM off) | not run | open |
 | 4 | eMMC writeback after the emit | timing cannot separate from (1) yet | — | open |
 | 5 | Battery undervoltage / brownout (6 %, 3.5 V under load) | charged to 87 % and repeated | no stall on the minimal image | confound removed |
-| 6 | Something `init-auto` adds on top of a plain shell (watchdog open, record write, WiFi, runtime-PM sweep) | minimal shell = mounts + tty wait + sh: **stable 10 min**; `bare` (= +watchdog open) silent | watchdog-open test running | **leading** |
+| 6 | Something `init-auto` adds on top of a plain shell (watchdog open, record write, WiFi, runtime-PM sweep) | minimal shell stable 10 min; `bare` silent; `n9wdtest` (= minimal + watchdog open) silent once, **alive the next run** | not deterministic | open — needs repeated runs |
 
 ## Evidence (trimmed)
 
@@ -177,6 +177,30 @@ The script's probes had already drained the buffered boot lines, so the last
 message was lost. `stability-run.sh` now accumulates every probe's output in
 `/tmp/n9-probe.log` and prints the tail when a stall is declared. Confirmation
 run needs a power cycle (the reboot path hangs, below).
+
+### Watchdog reset works; automation is possible (13:24–13:27)
+
+The same `n9wdtest` image that was silent at 13:19 ran normally at 13:24:
+```
+13:24:51 gadget after 6s
+/probe log: ~ # echo PROBE_OK -> PROBE_OK   (shell alive)
+13:27:00 USB dropped after 90s             (nothing pings the armed WDT)
+13:27:   Android 18d1:4ee7 back, adb HT4C3WV00112
+```
+So the watchdog arm/reset path **does work from the userspace open**, Android
+recovers by itself, and no power cycle is needed in that case. The 13:19
+silence was an intermittent stall, not a deterministic effect of the open.
+
+This contradicts the handoff's "watchdog does not fire in mode B". Either those
+boots never armed it (older init / the open came after the stall), or the
+stall blocks the reset path itself. Deliberate test: arm it and never ping
+(done above), then arm + ping from userspace and watch a stall.
+
+Consequence for iteration: images now arm the watchdog and ping it from a
+dedicated child (`init-auto.c`, plus the new `n9ping` test init). A healthy
+system pings every 20 s; if userspace is blocked the pings stop and the box
+resets after 120 s. If only the tty path dies while userspace runs, the
+machine stays up — that difference is itself evidence.
 
 ### Separate bug: reboot from the test kernel hangs (13:05)
 
