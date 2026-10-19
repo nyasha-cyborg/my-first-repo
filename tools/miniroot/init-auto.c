@@ -199,6 +199,37 @@ static void monitor(void)
 	}
 }
 
+/* Independent liveness channel: print a counter to the framebuffer console
+ * every 5 s. If the USB serial dies while this keeps ticking, userspace is
+ * still running and the stall is in the gadget path, not the machine. */
+static void heartbeat_loop(void)
+{
+	static const char hex[] = "0123456789abcdef";
+	long fd = sc(SYS_openat, AT_FDCWD, (long)"/dev/tty0", O_WRONLY, 0, 0);
+	long n = 0;
+	char b[24];
+
+	if (fd < 0)
+		for (;;)
+			sleep_ms(60000);
+	for (;;) {
+		/* b = "HB " + 6 hex digits + "\n" */
+		long i = 0, j = 16;
+
+		b[i++] = 'H';
+		b[i++] = 'B';
+		b[i++] = ' ';
+		while (j >= 0) {
+			b[i++] = hex[(n >> j) & 0xf];
+			j -= 4;
+		}
+		b[i++] = '\n';
+		sc(SYS_write, fd, (long)b, i, 0, 0);
+		n++;
+		sleep_ms(5000);
+	}
+}
+
 /* Keep the armed watchdog alive from userspace. A healthy system pings every
  * 20 s; if userspace is stuck the pings stop and the hardware resets the
  * tablet after the 120 s timeout, so a stalled test recovers without a human
@@ -330,6 +361,11 @@ void _start(void)
 		sc(SYS_dup3, fd, 1, 0, 0, 0);
 		sc(SYS_dup3, fd, 2, 0, 0, 0);
 	}
+
+	/* Independent display heartbeat: proves userspace is alive even when the
+	 * USB serial console has gone silent. */
+	if (sc(SYS_clone, 17, 0, 0, 0, 0) == 0)
+		heartbeat_loop();
 
 	/* Arm the hardware watchdog once the console can report the result. The
 	 * driver does not ping on its own; a child does, so the timeout only

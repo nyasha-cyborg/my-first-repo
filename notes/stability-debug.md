@@ -19,7 +19,8 @@ Last updated: 2026-10-19 13:00 · branch `nexus9` · tip `57b8686`
 ## Current hypotheses
 | # | Hypothesis | Test | Result | Status |
 |---|------------|------|--------|--------|
-| 1 | Raw eMMC record write (every 10 s) stalls the machine | record-on stalled at ~30 min; **record-off stable 30 min** (same kernel/WiFi) | strong signal | **confirmed as leading** |
+| 1 | Raw eMMC record write (every 10 s) stalls the machine | record-on stable 30 min twice; record-off stalled once | no correlation | dead |
+| 7 | USB gadget console path wedges; the machine keeps running | no reset after a stall in an image whose WDT/pinger is proven armed | likely, needs display heartbeat | **leading** |
 | 2 | brcmfmac/SDIO probe wedges the system | `n9console` boots with `/etc/no-wifi` | stalled anyway → not *required* | dead as necessary cause |
 | 3 | MMC/SDIO runtime PM | `n9auto15pm` (runtime PM off) | not run | open |
 | 4 | eMMC writeback after the emit | timing cannot separate from (1) yet | — | open |
@@ -290,6 +291,30 @@ confirm parity before calling the hypothesis settled.
 
 The `/stop-ping` -> watchdog-reset path worked end to end for the first time:
 no power cycle was used to leave this image.
+
+### Paired 30-minute runs contradict the record theory (16:37–17:26)
+
+```
+16:37 n9wifi-rec   -> 17:19:42 STABLE for 30 min   (record ON, second time)
+17:19 stop-ping    -> 17:22:04 android is back      (watchdog reset)
+17:22 n9wifi-norec -> 17:23:08 shell unresponsive   (record OFF!)
+17:25:58 no android after ~170 s
+```
+The record write is not the cause. Worse for the "system stall" reading: the
+norec image was silent, but no watchdog reset happened in 170 s, even though
+the **same init** had just proven that `/stop-ping` stops the keepalive and the
+WDT resets the box. If the WDT was armed (very likely), the only way it does
+not fire is that the pinger was still running: **userspace was alive and only
+the USB console path died**. The earlier mode-B observations (WiFi also
+unreachable) are compatible if the SDIO card simply failed to enumerate, which
+happens intermittently.
+
+Working hypothesis now: u_serial / chipidea gadget TX/RX wedges on the host's
+open/probe pattern; the kernel and userspace continue.
+
+To confirm independently of USB, init-auto now forks a heartbeat child that
+writes `HB <hex counter>` to `/dev/tty0` every 5 s. The panel works, so a
+changing counter during a "stall" proves the machine is alive.
 
 ### Separate bug: reboot from the test kernel hangs (13:05)
 
