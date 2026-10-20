@@ -1,0 +1,124 @@
+From 80e28b1bf7c74eca3577760606187bfaf6506a55 Mon Sep 17 00:00:00 2001
+From: nyasha <nmushambi@proton.me>
+Date: Wed, 21 Oct 2026 00:27:39 +1300
+Subject: [PATCH 2/3] Bluetooth: hci_bcm: power the flounder chip before serdev
+ opens the port (WIP)
+
+- serdev opens the UART before bcm_open powers the chip; the port then
+  sees the unpowered chip's TX low through boot and only the first reply
+  ever gets through. Powering at probe (before hci_uart opens the port)
+  lets Reset, Read Local Version, chip id, features, name and the whole
+  firmware download succeed under serdev (n9bt75)
+- power-on reordered to boot the chip with BT_WAKE deasserted, assert it
+  500 ms later (Android/btwake order)
+- WIP/test only: n9dbg trace (quiet during fc4c patch records); 1 s
+  post-Reset settle in btbcm still in place
+
+Co-Authored-By: Claude Code <noreply@anthropic.com>
+---
+ drivers/bluetooth/hci_bcm.c | 48 +++++++++++++++++++++++++++++++------
+ 1 file changed, 41 insertions(+), 7 deletions(-)
+
+diff --git a/drivers/bluetooth/hci_bcm.c b/drivers/bluetooth/hci_bcm.c
+index 0c98bec2d..110a302e3 100644
+--- a/drivers/bluetooth/hci_bcm.c
++++ b/drivers/bluetooth/hci_bcm.c
+@@ -277,14 +277,26 @@ static int bcm_gpio_set_power(struct bcm_device *dev, bool powered)
+ 			goto err_lpo_clk_disable;
+ 	}
+ 
++	/* n9dbg: flounder test. btwake (which works) powers the chip with
++	 * BT_WAKE deasserted and asserts it ~500 ms after boot; upstream
++	 * asserts it together with REG_ON. Reproduce btwake's order. */
++	if (powered)
++		dev->set_device_wakeup(dev, false);
++
+ 	err = dev->set_shutdown(dev, powered);
+ 	if (err)
+ 		goto err_txco_clk_disable;
+ 
++	if (powered)
++		msleep(500);
++
+ 	err = dev->set_device_wakeup(dev, powered);
+ 	if (err)
+ 		goto err_revert_shutdown;
+ 
++	if (powered)
++		msleep(50);
++
+ 	if (!powered && dev->res_enabled) {
+ 		clk_disable_unprepare(dev->txco_clk);
+ 		clk_disable_unprepare(dev->lpo_clk);
+@@ -298,8 +310,7 @@ static int bcm_gpio_set_power(struct bcm_device *dev, bool powered)
+ 	}
+ 
+ 	/* wait for device to power on and come out of reset */
+-	/* n9dbg: flounder needs longer than 100 ms; test value, tune later */
+-	msleep(500);
++	usleep_range(100000, 120000);
+ 
+ 	dev->res_enabled = powered;
+ 
+@@ -691,14 +702,20 @@ static const struct h4_recv_pkt bcm_recv_pkts[] = {
+ 	{ BCM_RECV_TYPE52,  .recv = hci_recv_diag  },
+ };
+ 
++/* n9dbg: quiet while patch records (fc4c) are in flight, so the boot
++ * record keeps what happens after Launch RAM instead of ~800 ack lines. */
++static bool n9dbg_quiet;
++static unsigned int n9dbg_records;
++
+ static int bcm_recv(struct hci_uart *hu, const void *data, int count)
+ {
+ 	struct bcm_data *bcm = hu->priv;
+ 
+ 	/* n9dbg: temporary raw RX trace for the flounder bring-up */
+-	pr_info("n9dbg bcm rx %d%s: %*ph\n", count,
+-		test_bit(HCI_UART_REGISTERED, &hu->flags) ? "" : " (unregistered)",
+-		min(count, 32), data);
++	if (!n9dbg_quiet)
++		pr_info("n9dbg bcm rx %d%s: %*ph\n", count,
++			test_bit(HCI_UART_REGISTERED, &hu->flags) ? "" : " (unregistered)",
++			min(count, 32), data);
+ 
+ 	if (!test_bit(HCI_UART_REGISTERED, &hu->flags))
+ 		return -EUNATCH;
+@@ -732,8 +749,18 @@ static int bcm_enqueue(struct hci_uart *hu, struct sk_buff *skb)
+ 	/* Prepend skb with frame type */
+ 	memcpy(skb_push(skb, 1), &hci_skb_pkt_type(skb), 1);
+ 	/* n9dbg: temporary raw TX trace for the flounder bring-up */
+-	pr_info("n9dbg bcm tx %u: %*ph\n", skb->len, min_t(int, skb->len, 16),
+-		skb->data);
++	if (skb->len >= 3 && skb->data[1] == 0x4c && skb->data[2] == 0xfc) {
++		if (!n9dbg_quiet)
++			pr_info("n9dbg bcm tx: patch records start (quiet)\n");
++		n9dbg_quiet = true;
++		n9dbg_records++;
++	} else {
++		if (n9dbg_quiet)
++			pr_info("n9dbg bcm: %u patch records sent\n", n9dbg_records);
++		n9dbg_quiet = false;
++		pr_info("n9dbg bcm tx %u: %*ph\n", skb->len,
++			min_t(int, skb->len, 16), skb->data);
++	}
+ 	skb_queue_tail(&bcm->txq, skb);
+ 
+ 	return 0;
+@@ -1552,6 +1579,13 @@ static int bcm_serdev_probe(struct serdev_device *serdev)
+ 	if (err)
+ 		dev_err(&serdev->dev, "Failed to power down\n");
+ 
++	/* n9dbg: flounder test (n9bt75). serdev opens the UART before
++	 * bcm_open powers the chip, so the port sees the unpowered chip's
++	 * TX low (break/framing errors) during boot. The working tty paths
++	 * power the chip first. Power it here, before the port opens. */
++	err = bcm_gpio_set_power(bcmdev, true);
++	pr_info("n9dbg probe: chip powered before serdev open (%d)\n", err);
++
+ 	data = device_get_match_data(bcmdev->dev);
+ 	if (data) {
+ 		bcmdev->max_autobaud_speed = data->max_autobaud_speed;
+-- 
+2.56.0
+

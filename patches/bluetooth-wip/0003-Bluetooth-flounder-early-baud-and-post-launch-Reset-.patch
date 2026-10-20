@@ -1,0 +1,69 @@
+From 0e4af1c56a599a6e3dfc42752ecdf2f1896dddbe Mon Sep 17 00:00:00 2001
+From: nyasha <nmushambi@proton.me>
+Date: Wed, 21 Oct 2026 00:43:38 +1300
+Subject: [PATCH 3/3] Bluetooth: flounder early baud and post-launch Reset
+ (WIP, n9bt77/78)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- DT: brcm,bcm4335a0 (no no_early_set_baudrate) so the whole setup and
+  the firmware download run at 3 Mbaud (0.45 s download, n9bt77)
+- hci_bcm: after Launch RAM, host back to 115200, 100 ms, HCI Reset, then
+  fc18 — Android's order; mainline's fc18-first goes unanswered
+- n9bt78 (this commit) untested: the tablet hung off USB during that boot
+
+Co-Authored-By: Claude Code <noreply@anthropic.com>
+---
+ arch/arm64/boot/dts/nvidia/tegra132-flounder.dts |  7 ++++++-
+ drivers/bluetooth/hci_bcm.c                      | 16 ++++++++++++++++
+ 2 files changed, 22 insertions(+), 1 deletion(-)
+
+diff --git a/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts b/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
+index 8b18d10b7..a31a67ef6 100644
+--- a/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
++++ b/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
+@@ -698,7 +698,12 @@ serial@70006200 {
+ 					   <1000000 4000000 136>;
+ 
+ 		bluetooth {
+-			compatible = "brcm,bcm43540-bt";
++			/* Test n9bt77: a compatible without
++			 * no_early_set_baudrate, so hci_uart switches to 3M
++			 * before the download and back to 115200 after Launch
++			 * RAM (a real change, which reprograms the UART after
++			 * the chip reboots) — Android's sequence. */
++			compatible = "brcm,bcm4335a0";
+ 			max-speed = <3000000>;
+ 			shutdown-gpios = <&gpio TEGRA_GPIO(R, 1) GPIO_ACTIVE_HIGH>;
+ 			device-wakeup-gpios = <&gpio TEGRA_GPIO(EE, 1) GPIO_ACTIVE_LOW>;
+diff --git a/drivers/bluetooth/hci_bcm.c b/drivers/bluetooth/hci_bcm.c
+index 110a302e3..558b21a4e 100644
+--- a/drivers/bluetooth/hci_bcm.c
++++ b/drivers/bluetooth/hci_bcm.c
+@@ -620,6 +620,22 @@ static int bcm_setup(struct hci_uart *hu)
+ 	if (speed)
+ 		host_set_baudrate(hu, speed);
+ 
++	/* n9dbg: flounder test (n9bt78). Android's order after Launch RAM:
++	 * host 115200, 100 ms settle, HCI Reset, then fc18. Mainline sends
++	 * fc18 first, which the freshly booted firmware leaves unanswered
++	 * (n9bt76/77). */
++	{
++		struct sk_buff *skb;
++
++		msleep(100);
++		skb = __hci_cmd_sync(hu->hdev, HCI_OP_RESET, 0, NULL,
++				     HCI_INIT_TIMEOUT);
++		pr_info("n9dbg post-launch Reset: %ld\n",
++			IS_ERR(skb) ? PTR_ERR(skb) : 0L);
++		if (!IS_ERR(skb))
++			kfree_skb(skb);
++	}
++
+ 	/* Operational speed if any */
+ 	if (hu->oper_speed)
+ 		speed = hu->oper_speed;
+-- 
+2.56.0
+
