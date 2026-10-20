@@ -346,3 +346,37 @@ rfkill state to reproduce Android's power-off-first.
 **Diagnostic bug:** earlier "stall" verdicts from the fast reader were false
 when `adb root` restarted adbd and `dd` returned empty: md5(empty) is stable,
 so the records compared equal. The reader now requires ≥32 KiB and retries.
+
+## 2026-10-20 late: the polarity and clock bugs (n9bt44..60)
+
+Live Android state with Bluetooth powered (verified on the device):
+
+```
+gpio-137 (shutdown_gpio) out lo     <- low = powered
+gpio-241 (bt_ext_wake)   out hi     <- idle = "BT sleeping"
+gpio-166 (bt_host_wake)  in  lo
+```
+
+Consequences, all now fixed in our code/DT:
+
+- **BT_REG_ON is active low.** The vendor DTB lists PR1 (0x89) and PEE1
+  (0xf1) in `gpio-output-low`, and `bluedroid_pm` powers the section on by
+  setting `shutdown_gpio` to **0**. Our always-on `regulator-fixed` drove it
+  high, i.e. kept the chip shut down. The old "regulator" DTB was therefore
+  never a working BT configuration; the stray `04 0e` reads were noise.
+- **BT_WAKE is active low.** `TIO_ASSERT_BT_WAKE` sets `ext_wake = 0`;
+  `ext_wake = 1` means "BT sleeping".
+- **CRTSCTS is 0x80000000**, not 0x8000. Every earlier flow-control attempt
+  silently set the wrong bit. Android's HAL ORs `CRTSCTS|CLOCAL` into
+  c_cflag before `tcsetattr`.
+- **32 kHz LPO**: the vendor PMIC node has `ti,clock-boot-enable` on
+  `clk32k_kg`. Mainline's `clk-palmas` ignored the property, so the LPO was
+  never enabled. The driver now honours it and the DT sets it.
+- `rfkill-gpio` aborts its probe on a NULL `reset-gpios` (it drives reset
+  before shutdown), so a shutdown-only node silently never claims the pin.
+  Our node points both properties at PR1, active low.
+- Programmed baud is 3,040,800 for a requested 3,000,000 (1.36% high, from
+  the 48.65 MHz uart clock), same source Android uses.
+
+Still no HCI reply from the chip in the latest runs; the focused probe in
+`n9bt60` isolates LPO status plus one corrected btwake pass.
