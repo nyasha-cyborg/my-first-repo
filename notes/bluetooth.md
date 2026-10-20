@@ -808,3 +808,32 @@ left no record; those hangs are a separate, still-open problem.
 n9bt79 (planned): replace the 100 ms before the post-launch Reset with a
 ~5 s sleep; expect Reset ok, fc18 ok, hci0 up. If the sleep works, tune it
 down (Android's hciattach waits less, check btld/REA for the real figure).
+
+### n9bt79–81 (08:10–08:35): settle delay found; wake polarity and spacing dead
+
+All runs: 3M early baud, firmware 489 records in 0.4–0.7 s, Launch RAM ok.
+
+| build | change | result after Launch RAM |
+|---|---|---|
+| 79 | 5 s sleep before post-launch Reset | **Reset ok, answered in 2 ms**; then fc18 lost (2 s timeout), Reset ok, 0x1001 lost |
+| 80 | + BT_WAKE raw high (DT ACTIVE_HIGH, asserted before REG_ON); pin read `out hi` | identical to 79 |
+| 81 | + 2 s sleep between Reset and fc18 | identical: Reset ok, fc18 lost, Reset ok, 0x1001 lost |
+
+Conclusions:
+- Chip firmware needs ~4–5 s after Launch RAM (Reset at 100 ms/2 s fails;
+  libbt's own "settlement delay" for this chip is only 100 ms, so Android
+  must differ elsewhere — e.g. the downstream UART ioctls 0x8003/0x8005).
+- **Dead:** BT_WAKE polarity as the cause (79 vs 80 same). **Dead:** "command
+  right after a reply is lost" (81 spaced fc18 by 2.1 s and still lost).
+- Live pattern: post-launch only **Reset** is answered; fc18 (vendor) and
+  0x1001 (Read Local Version) are not, though both worked before Launch RAM.
+- Android's libbt-vendor (REA 08:25): `hw_lpm_enable` sends `fc27` with
+  `01 01 01 01 01 01 01 00 00 00 00 00` (sleep mode 1, BT_WAKE active high),
+  default settlement 100 ms. Never tried here: **fc27 as the first command
+  after the post-launch Reset**.
+- Tooling: stripped images are now assembled with
+  `tools/bootimg-swap-ramdisk.py <in> <rd.gz> <out> [kernel-region]`;
+  kernel release pinned by patching vermagic of the rebuilt hci_uart.ko
+  (same-length hash swap) so init/module paths stay valid.
+- The tablet stalls without writing a record in roughly 1 of 3 boots
+  (watchdog at 90 s); the loop just retries.
