@@ -365,7 +365,9 @@ Consequences, all now fixed in our code/DT:
   setting `shutdown_gpio` to **0**. Our always-on `regulator-fixed` drove it
   high, i.e. kept the chip shut down. The old "regulator" DTB was therefore
   never a working BT configuration; the stray `04 0e` reads were noise.
-- **BT_WAKE is active low.** `TIO_ASSERT_BT_WAKE` sets `ext_wake = 0`;
+- ~~BT_WAKE is active low~~ — **unverified, see "REA: Android's running kernel" below**: in
+  Android's bluedroid_pm, lpm "1" drives ext_wake raw high + stay_awake. Old claim:
+  `TIO_ASSERT_BT_WAKE` sets `ext_wake = 0`;
   `ext_wake = 1` means "BT sleeping".
 - **CRTSCTS is 0x80000000**, not 0x8000. Every earlier flow-control attempt
   silently set the wrong bit. Android's HAL ORs `CRTSCTS|CLOCAL` into
@@ -500,7 +502,7 @@ leave the UART", "ROM answers at 3M".
 ## Next actions
 
 1. Kernel DT: PR1 `shutdown-gpios` (and the rfkill node's `reset-gpios`)
-   must be **GPIO_ACTIVE_HIGH**; BT_WAKE stays active low. Then let
+   must be **GPIO_ACTIVE_HIGH**; BT_WAKE polarity unverified (see REA section below). Then let
    `hci_uart`/`hci_bcm` own the chip via serdev, `init_speed` 115200,
    `oper_speed` 3000000.
 2. Firmware: `btbcm` has no BCM4350C0 subver entry; stage

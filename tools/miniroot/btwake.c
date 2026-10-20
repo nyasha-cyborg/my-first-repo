@@ -6,7 +6,7 @@
  * boot (as a fixed regulator does) is not the same signal: the chip comes up
  * with the line already asserted and never sees the idle->wake transition.
  *
- * This tool power-cycles REG_ON (PR1), asserts BT_WAKE (PEE1, active low),
+ * This tool power-cycles REG_ON (PR1), drives BT_WAKE (PEE1) high then low,
  * then replays libbt-vendor's opening: HCI Reset at 115200/crtscts, VSC
  * 0xfc18 to 3 Mbaud, switch the host, Read Local Name.  If 115200 is silent
  * it falls back to a 3M Reset for comparison.
@@ -494,9 +494,10 @@ void start_c(long *sp)
 	}
 
 power_done:
-	/* BT_WAKE is ACTIVE LOW on this board: bluedroid_pm's
-	 * TIO_ASSERT_BT_WAKE sets ext_wake = 0 and "BT sleeping" sets it
-	 * to 1.  Hold it asserted (low) through the probe. */
+	/* BT_WAKE: the chip boots with it high (as Android leaves it), then
+	 * it is driven low and held through the probe.  This sequence is
+	 * proven on hardware (n9bt65/69).  Which level means "awake" is
+	 * unverified: Android's lpm "1" drives it raw high + stay_awake. */
 	hwake = out_line(chip, offset, 1);	/* idle: sleep */
 	if (hwake < 0) {
 		put("btwake: wake line unavailable\n");
@@ -542,7 +543,7 @@ power_done:
 			/* Re-edge the wake line and retry. */
 			set_line(hwake, 1);	/* sleep */
 			ms(50);
-			set_line(hwake, 0);	/* assert (active low) */
+			set_line(hwake, 0);	/* drive low (as on the first pass) */
 			put("btwake: retry with fresh wake edge\n");
 			ms(30);
 		}

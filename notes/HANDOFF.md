@@ -132,7 +132,8 @@ local.
 - ~~REG_ON active low~~ — **wrong, corrected 21:10**: live Android shows
   gpio-137 `out hi` with BT on, `out lo` with BT off. REG_ON (PR1) is
   **active high**. See `bluetooth.md`; n9bt65 got the first HCI replies.
-- **`BT_WAKE` (PEE1, gpio 241) is active low.** Live Android state with
+- ~~`BT_WAKE` (PEE1, gpio 241) is active low~~ — **unverified** (REA 23:50:
+  Android's lpm "1" drives it raw high = awake; see `bluetooth.md`). Live Android state with
   BT on: `shutdown_gpio hi`, `bt_ext_wake hi` (idle = sleep).
 - **`CRTSCTS` is 0x80000000.** Every earlier "flow control" run used 0x8000,
   so hardware flow control was never actually on.
@@ -141,7 +142,8 @@ local.
   the DTB sets it. Verified in the record: `n9bt: clk32kg 1`.
 - **`rfkill-gpio` quirk:** it drives `reset-gpios` before `shutdown-gpios`
   and aborts on NULL, so shutdown-only nodes never probe. Our node gives both
-  properties the same pin, active low.
+  properties the same pin, active low. (Superseded: the node is removed,
+  PR1 is active high and owned by hci_bcm's `shutdown-gpios`.)
 - Programmed 3 M is really 3,040,800 (1.36% high) from the 48.65 MHz uart
   clock; reported by the temporary `n9dbg` print in `serial-tegra`.
 
