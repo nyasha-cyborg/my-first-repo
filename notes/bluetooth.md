@@ -659,3 +659,26 @@ n9bt73 traces the two remaining layers: `n9dbg serdev write len/total
 tiocm` in hci_serdev's write work (did the bytes reach the UART, or is TX
 stuck behind CTS?) and `n9dbg ttyport rx count active` in
 serdev-ttyport (do reply bytes reach serdev and get dropped?).
+
+### n9bt73: the second command never leaves the host
+
+```
+tx Reset           -> n9dbg serdev write 4/4 tiocm=0x26 -> ttyport rx 7 -> bcm rx ok
+tx 0x1001 (+1 s)   -> n9dbg serdev write 4/4 tiocm=0x26 -> (no ttyport rx at all)
+```
+
+`write 4/4` = accepted into the serial core's xmit buffer, not "on the
+wire". Code check: soft CTS (`hw_stopped`) cannot latch — modem-status
+interrupts need `nvidia,enable-modem-interrupt` (absent) and
+`tegra_uart_get_mctrl` always reports CTS. Remaining gate: **hardware
+CTS** (`MCR CTS_EN` with CRTSCTS) holding the FIFO while the chip's RTS is
+deasserted, i.e. the chip stops accepting after replying to Reset.
+serdev's `ttyport_open` forces CRTSCTS *before* hci_bcm powers the chip;
+the working paths enable it after the chip is up.
+
+Also: this record's last snapshot is at 4 s (`uptime_at_write=4s`) even
+though the run completed and rebooted at ~23 s — snapshots after that were
+not persisted. Open.
+
+n9bt74: `bcm_open` turns host flow control off (RTS kept asserted) right
+after power-on under serdev.
