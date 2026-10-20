@@ -739,3 +739,19 @@ set_termios when nothing changes — no reprogram.
 n9bt77 (DT only): compatible `brcm,bcm4335a0` (no device data) so
 hci_uart sets 3M before setup and btbcm returns to 115200 after launch —
 Android's order. (n9bt68's early-baud test predates the probe-power fix.)
+
+### n9bt77: early baud works — 3M download in 0.45 s; post-launch still stuck
+
+```
+4.18 fc18 -> 3M ok; Reset, 0x1001, fc79, fc6e, 0c14 all ok at 3,040,800 baud
+5.74 489 patch records in 0.45 s (7.8 s at 115200), fc4e ok
+6.00 host back to 115200 (real change -> UART reprogrammed, 258 ms after launch)
+6.00 fc18 -> no reply;  8.19 Reset -> reply at 9.99;  10.99 0x1001 -> no reply
+```
+
+The reprogram happened but did not help. Order differs from Android after
+launch — Android: host 115200, 100 ms, **Reset**, then fc18. Mainline:
+host 115200, **fc18 first** (unanswered), Reset only in btbcm_finalize.
+
+n9bt78: bcm_setup inserts 100 ms + HCI Reset after the host returns to
+115200, before fc18. Full rebuild, release `g80e28b1bf7c7-dirty`.
