@@ -6,6 +6,12 @@
  *
  * Load order matters: rfkill -> cfg80211 -> brcmutil -> brcmfmac.
  */
+#define N9_STR2(x) #x
+#define N9_STR(x) N9_STR2(x)
+#ifndef N9BUILD
+#define N9BUILD 0
+#endif
+
 #define SYS_mknodat       33
 #define SYS_mount         40
 #define SYS_openat        56
@@ -369,7 +375,7 @@ void _start(void)
 			 * pinger does. */
 			"( exec 4>/dev/watchdog 2>/dev/null; while true; do busybox sleep 5; done ) & "
 
-			"echo '<6>n9bt: start' > /dev/kmsg; "
+			"echo '<6>n9bt: start build " N9_STR(N9BUILD) "' > /dev/kmsg; "
 			"busybox mount -t proc none /proc 2>/dev/null; busybox mount -t sysfs none /sys 2>/dev/null; busybox mount -t debugfs none /sys/kernel/debug 2>/dev/null; "
 			"echo '<6>n9bt: sdio '$(busybox ls /sys/bus/sdio/devices 2>&1 | busybox tr '\\n' ' ') > /dev/kmsg; "
 			/* Release the watchdog before any probe can block on a
@@ -382,18 +388,14 @@ void _start(void)
 			/* BT_WAKE (PEE1) edge first: Android raises it per
 			 * transaction, so the chip sees idle->wake; a static
 			 * high from boot is not the same signal. */
-			/* Keep btwake alive: it holds PR1 high. Killing it
-			 * (timeout) released the line and left the chip
-			 * unpowered for every later sweep. */
-			"( /bin/btwake 137 241 3000000 2>&1 | busybox sed 's/^/<6>n9bt: wake /' > /dev/kmsg ) & "
-			"busybox timeout 9 /bin/hciraw-min /dev/ttyTHS2 115200 2>&1 | busybox sed 's/^/<6>n9bt: 115200 /' > /dev/kmsg; "
-			"busybox timeout 9 /bin/hciraw-min /dev/ttyTHS2 921600 2>&1 | busybox sed 's/^/<6>n9bt: 921600 /' > /dev/kmsg; "
-			"busybox timeout 9 /bin/hciraw-min /dev/ttyTHS2 1500000 2>&1 | busybox sed 's/^/<6>n9bt: 1500k /' > /dev/kmsg; "
-			"busybox timeout 9 /bin/hciraw-min /dev/ttyTHS2 3000000 2>&1 | busybox sed 's/^/<6>n9bt: 3M /' > /dev/kmsg; "
-			"busybox timeout 9 /bin/hciraw-min /dev/ttyTHS2 3000000 f 2>&1 | busybox sed 's/^/<6>n9bt: 3Mf /' > /dev/kmsg; "
-			"busybox timeout 9 /bin/hciraw-min /dev/ttyTHS2 3000000 r 2>&1 | busybox sed 's/^/<6>n9bt: 3Mr /' > /dev/kmsg; "
-			"busybox timeout 9 /bin/hciraw-min /dev/ttyTHS2 115200 r 2>&1 | busybox sed 's/^/<6>n9bt: 115r /' > /dev/kmsg; "
-			"echo '<6>n9bt: late-gpio '$(busybox cat /sys/kernel/debug/gpio | busybox grep -E 'gpio-191|gpio-137' | busybox tr '\\n' ';') > /dev/kmsg; "
+			/* Android's BT_VND_PWR_ON forces a power-off first:
+			 * rfkill state 1 = blocked (line high = shutdown),
+			 * 0 = unblocked (line low = powered). */
+			"echo '<6>n9bt: clk32kg '$(busybox cat /sys/kernel/debug/clk/clk32kg/clk_enable_count 2>&1) > /dev/kmsg; "
+			"busybox timeout 20 /bin/btwake 137 241 3000000 > /dev/kmsg 2>&1; "
+			"echo '<6>n9bt: btwake end' > /dev/kmsg; "
+			"busybox timeout 9 /bin/hciraw-min /dev/ttyTHS2 3000000 2>&1 | busybox sed 's/^/<6>n9bt: post3M /' > /dev/kmsg; "
+						"echo '<6>n9bt: late-gpio '$(busybox cat /sys/kernel/debug/gpio | busybox grep -E 'gpio-191|gpio-137' | busybox tr '\\n' ';') > /dev/kmsg; "
 			"R=$(busybox grep -l wifi-reg-on /sys/class/regulator/regulator.*/name 2>/dev/null | busybox head -1); "
 			"echo '<6>n9bt: reg '$(busybox cat $R/name 2>/dev/null)' state='$(busybox cat $R/state 2>/dev/null) > /dev/kmsg; "
 			"echo '<6>n9bt: done' > /dev/kmsg; "

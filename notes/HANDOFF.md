@@ -118,3 +118,64 @@ start by the `0525:a4a7` gadget. Rebuild pattern: `bootimg-repack.py
 6. Bluetooth.
 7. Installed boot (needs approval to flash).
 8. Upstream: the VBUS comparator fix and `nvidia,only-1-8v` handling.
+
+---
+
+# Session 2026-10-20 (evening)
+
+Tip after this session: nexus9 `dc0e86a` (+ note commits), kernel `45145e5`.
+`origin/nexus9` was pushed once on request up to `b87585c`; later commits are
+local.
+
+## Bluetooth: what was wrong, what is now true
+
+- **The chip was powered off the whole time.** On flounder `BT_REG_ON` (PR1,
+  gpio 137) is **active low**: the vendor DTB lists it in `gpio-output-low`
+  and `bluedroid_pm` powers on by writing 0. Our always-on regulator held it
+  high = shutdown.
+- **`BT_WAKE` (PEE1, gpio 241) is also active low.** Live Android state with
+  BT on: `shutdown_gpio lo`, `bt_ext_wake hi` (idle = sleep).
+- **`CRTSCTS` is 0x80000000.** Every earlier "flow control" run used 0x8000,
+  so hardware flow control was never actually on.
+- **32 kHz LPO was off.** Vendor marks `clk32k_kg` boot-enabled; mainline
+  ignored the property. `clk-palmas` now honours `ti,clock-boot-enable` and
+  the DTB sets it. Verified in the record: `n9bt: clk32kg 1`.
+- **`rfkill-gpio` quirk:** it drives `reset-gpios` before `shutdown-gpios`
+  and aborts on NULL, so shutdown-only nodes never probe. Our node gives both
+  properties the same pin, active low.
+- Programmed 3 M is really 3,040,800 (1.36% high) from the 48.65 MHz uart
+  clock; reported by the temporary `n9dbg` print in `serial-tegra`.
+
+## Where the BT bring-up stands
+
+`btwake` now: powers PR1 off→on, asserts BT_WAKE low, opens ttyTHS2 at 3 M
+with true CRTSCTS, sends `01 03 0c 00`. Still **no HCI reply**.
+
+New observation (needs explanation): in `n9bt61` the record ends at "sending
+HCI Reset" and Android was back 32 s after boot, i.e. the board seems to
+reset a few seconds after the first HCI write, much earlier than the 45 s
+watchdog. Test in flight: same image with `tegra_wdt.heartbeat=90`.
+
+## Tooling truths (new)
+
+- Repacked images **must be stripped** (`tail -c +257`) or hboot accepts the
+  upload and does nothing; this caused a long false "stall" streak.
+- `adb exec-out dd` returning empty makes two records compare equal; the
+  reader now requires ≥32 KiB and retries.
+- `/dev/kmsg` write = one record per write. Tools must build a whole line
+  and write once; `sed` through a never-exiting pipe never flushes.
+- every init now stamps `n9bt: start build N` so stale records are obvious.
+- `tegra_wdt.early_start=1` arms the hardware watchdog at probe; stalls now
+  self-reset after `heartbeat` seconds instead of needing a power cycle.
+
+## Next actions
+
+1. Finish the heartbeat-90 test: if the reset still happens seconds after the
+   HCI write, it is not the watchdog — read the screen/panic, and try a
+   plain 115200 no-flow send with 1 s settle to separate frame issues from
+   hardware reset.
+2. Once a reply is seen: `hciattach-min` with HCIUART_BCM, firmware
+   `BCM.hcd` (from `bcm4350c0.hcd`), then BlueZ pairing.
+3. Speaker: mainline tfa989x probe currently hangs the console; HAL only
+   flips ALSA mixer switches (`SPK VMixer SPK Switch`).
+4. Touch events, installed pmOS boot, stall root cause — unchanged priorities.

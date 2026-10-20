@@ -42,7 +42,7 @@
 #define CS8 0x30
 #define CREAD 0x80
 #define CLOCAL 0x800
-#define CRTSCTS 0x8000
+#define CRTSCTS 0x80000000u
 
 struct gpiohandle_request {
 	unsigned int lineoffsets[64];
@@ -78,10 +78,25 @@ static long sc(long n, long a, long b, long c, long d, long e)
 
 static void put(const char *s)
 {
-	long n = 0;
+	/* One write per line: every /dev/kmsg write becomes its own
+	 * record, so prefix and text must travel together. */
+	static char line[192];
+	static const char pre[] = "<6>n9bt: ";
+	int i = 0, j;
 
-	while (s[n]) n++;
-	sc(SYS_write, 2, (long)s, n, 0, 0);
+	for (j = 0; pre[j] && i < 180; j++)
+		line[i++] = pre[j];
+	for (j = 0; s[j] && s[j] != '\n' && i < 190; j++)
+		line[i++] = s[j];
+	line[i++] = '\n';
+	{
+		long fd = sc(SYS_openat, AT_FDCWD, (long)"/dev/kmsg", 1 /*O_WRONLY*/, 0, 0);
+
+		if (fd >= 0) {
+			sc(SYS_write, fd, (long)line, i, 0, 0);
+			sc(SYS_close, fd, 0, 0, 0, 0);
+		}
+	}
 }
 
 static void puthex(unsigned char v)
@@ -355,25 +370,31 @@ void start_c(long *sp)
 			put("btwake: power line owned (rfkill), skipping\n");
 			goto power_done;
 		}
-		put("btwake: power off\n");
-		ms(200);
+		/* Raw line values: high = shutdown/off, low = powered. */
+		put("btwake: power off (high)\n");
 		if (set_line(hpwr, 1) < 0)
+			put("btwake: power off set failed\n");
+		ms(200);
+		if (set_line(hpwr, 0) < 0)
 			put("btwake: power on set failed\n");
-		put("btwake: power on\n");
+		put("btwake: power on (low)\n");
 		ms(500);
 	}
 
 power_done:
-	hwake = out_line(chip, offset, 0);	/* start idle/low */
+	/* BT_WAKE is ACTIVE LOW on this board: bluedroid_pm's
+	 * TIO_ASSERT_BT_WAKE sets ext_wake = 0 and "BT sleeping" sets it
+	 * to 1.  Hold it asserted (low) through the probe. */
+	hwake = out_line(chip, offset, 1);	/* idle: sleep */
 	if (hwake < 0) {
 		put("btwake: wake line unavailable\n");
 		sc(SYS_exit, 1, 0, 0, 0, 0);
 	}
-	put("btwake: wake low\n");
-	ms(250);
-	if (set_line(hwake, 1) < 0)
-		put("btwake: wake high set failed\n");
-	put("btwake: wake high\n");
+	put("btwake: wake idle (high)\n");
+	ms(20);
+	if (set_line(hwake, 0) < 0)
+		put("btwake: wake assert set failed\n");
+	put("btwake: wake asserted (low)\n");
 	ms(30);
 
 	fd = sc(SYS_openat, AT_FDCWD, (long)"/dev/ttyTHS2",
@@ -394,36 +415,42 @@ power_done:
 	for (tries = 0; tries < 2; tries++) {
 		if (tries) {
 			/* Re-edge the wake line and retry. */
-			set_line(hwake, 0);
-			put("btwake: retry: wake low\n");
-			ms(250);
-			set_line(hwake, 1);
-			put("btwake: retry: wake high\n");
+			set_line(hwake, 1);	/* sleep */
+			put("btwake: retry: wake deasserted\n");
+			ms(50);
+			set_line(hwake, 0);	/* assert (active low) */
+			put("btwake: retry: wake asserted\n");
 			ms(30);
 		}
 		put("btwake: sending HCI Reset\n");
 		sc(SYS_write, fd, (long)reset, 4, 0, 0);
-		for (n = 0; n < 10; n++) {
-			long r = sc(SYS_read, fd, (long)buf, sizeof(buf), 0, 0);
+		/* Accumulate: one non-blocking read can return only the first
+		 * two bytes of an HCI event. */
+		{
+			int total = 0;
 
-			if (r > 0) {
-				long i;
+			for (n = 0; n < 10; n++) {
+				long r = sc(SYS_read, fd, (long)buf, sizeof(buf), 0, 0);
 
-				put("btwake: got ");
-				for (i = 0; i < r; i++) {
-					puthex(buf[i]);
-					sc(SYS_write, 2, (long)" ", 1, 0, 0);
+				if (r > 0) {
+					long i;
+
+					put("btwake: got ");
+					for (i = 0; i < r; i++) {
+						puthex(buf[i]);
+						sc(SYS_write, 2, (long)" ", 1, 0, 0);
+					}
+					put("\n");
+					total += r;
 				}
-				put("\n");
+				ms(200);
+			}
+			if (total > 0) {
+				put("btwake: done (reply)\n");
 				break;
 			}
-			ms(200);
+			put("btwake: no reply in 2s\n");
 		}
-		if (n < 10) {
-			put("btwake: done (reply)\n");
-			break;
-		}
-		put("btwake: no reply in 2s\n");
 	}
 
 	sc(SYS_close, fd, 0, 0, 0, 0);
