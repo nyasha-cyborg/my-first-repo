@@ -755,3 +755,15 @@ host 115200, **fc18 first** (unanswered), Reset only in btbcm_finalize.
 
 n9bt78: bcm_setup inserts 100 ms + HCI Reset after the host returns to
 115200, before fc18. Full rebuild, release `g80e28b1bf7c7-dirty`.
+
+### 00:41: tablet off USB during n9bt78 — needs a manual power cycle
+
+n9bt78's mainline gadget enumerated (00:37:46), then the tablet vanished
+from USB (no gadget, fastboot or adb) and did not come back within ~4 min;
+the early watchdog did not recover it. Same signature as the 23:00 hang on
+n9bt67, so not obviously caused by the n9bt78 change. No record read yet:
+after the power cycle, pull the record first (`tools/record-id.py`) — if it
+says build 78, the run got far enough to log.
+
+Resume: power cycle (hold power ~15 s) -> Android -> read record ->
+otherwise `tools/bt-bootloop.sh 78`.
