@@ -282,3 +282,35 @@ cause. Needs a clean boot to test.
   `bt-child` into the rolling record to locate how far userspace got.
 - Image `n9bt30` = new DTB + early-watchdog Image + properly stripped
   modules for vermagic `g5bf55902df2e-dirty`.
+
+## GPIO chardev bugs, and the first bytes from the chip (2026-10-20 18:xx)
+
+Three separate bugs kept `btwake` from ever driving BT_WAKE:
+
+- `CONFIG_GPIO_SYSFS` is off, so `/sys/class/gpio` does not exist. The chip
+  map now comes from `/sys/kernel/debug/gpio` (`gpiochipN: <count> GPIOs`,
+  in probe order): chip0 is tegra-gpio (256), chip1 is the PMIC (8), so
+  line 241 = chip0 offset 241.
+- `struct gpiohandle_request` gained `char consumer_label[32]`; the ioctl is
+  now `_IOWR(0xB4,0x03, 364 bytes)` = `0xC16CB403`, and `SET_LINE_VALUES`
+  is `_IOWR(0xB4,0x09,...)` = `0xC040B409`. The old numbers/sizes return
+  EINVAL.
+- `GPIOHANDLE_REQUEST_OUTPUT` is bit 1 (=2); bit 0 is INPUT. With 1 the
+  line was requested as an input and `SET_LINE_VALUES` returned EPERM.
+
+First signal ever received from the chip, on the boot after the struct fix
+(n9bt32/33, with the wake pulse still failing):
+
+```
+n9bt: 921600 raw: got 04 0e
+n9bt: 1500k raw: got 00 80 00 00 80 00 00
+n9bt: 3M raw: got 00 00
+```
+
+`04 0e` is the HCI event header (Command Complete) — almost certainly
+mangled by a baud mismatch, but it is the first non-empty read. The properly
+wired wake pulse (output flag fixed) is image `n9bt34`.
+
+Environment note: the early-stall rate rose sharply in the evening
+(~9 of 11 boots around 18:00-18:30), with battery at 44%. Charging on a wall
+socket before the next run.

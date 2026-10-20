@@ -25,10 +25,13 @@
 #define O_NOCTTY 0400
 #define O_NONBLOCK 04000
 
-/* GPIO v1 chardev ioctls (CONFIG_GPIO_CDEV_V1) */
-#define GPIOHANDLE_GET_LINE_IOCTL 0xC14CB403
-#define GPIOHANDLE_SET_LINE_VALUES_IOCTL 0xC040B405
-#define GPIOHANDLE_REQUEST_OUTPUT 1
+/* GPIO chardev ioctls.  The request struct gained consumer_label[32], so
+ * sizeof == 364 and the encoded ioctl number is 0xC16CB403 (0xC14CB403 is
+ * the pre-label layout and the kernel rejects it as a different size). */
+#define GPIOHANDLE_GET_LINE_IOCTL 0xC16CB403
+/* _IOWR(0xB4, 0x09, struct gpiohandle_data); 0x05 is a different command */
+#define GPIOHANDLE_SET_LINE_VALUES_IOCTL 0xC040B409
+#define GPIOHANDLE_REQUEST_OUTPUT 2	/* bit 1; 1 is INPUT */
 
 /* Android's live termios on /dev/ttyTHS2: legacy TCSETS, speed 3000000
  * (B3000000 == 0x100d), cs8|cread|clocal|crtscts. */
@@ -45,6 +48,7 @@ struct gpiohandle_request {
 	unsigned int lineoffsets[64];
 	unsigned int flags;
 	unsigned char default_values[64];
+	char consumer_label[32];
 	unsigned int lines;
 	int fd;
 };
@@ -139,6 +143,68 @@ static long readnum(const char *path)
  * the DT gpios property use.  /dev/gpiochipN offsets are local to that
  * chip, and the numbering order is probe order (the PMIC GPIO controller
  * usually comes first), so resolve chip and offset from sysfs. */
+/*
+ * /sys/kernel/debug/gpio lists controllers in probe order with their line
+ * counts, and gpiolib numbers them from 0 in that same order:
+ *   gpiochip0: 256 GPIOs, parent: platform/6000d000.gpio, tegra-gpio:
+ *   gpiochip1: 8 GPIOs, parent: ...:tps65913@58:gpio, ...
+ * CONFIG_GPIO_SYSFS is off, so this is the only mapping available.
+ */
+static int find_chip_debugfs(unsigned int line, unsigned int *offset, char *path)
+{
+	static const char f[] = "/sys/kernel/debug/gpio";
+	char buf[4096];
+	long fd, n;
+	int i;
+	unsigned int base = 0;
+
+	fd = sc(SYS_openat, AT_FDCWD, (long)f, 0, 0, 0);
+	if (fd < 0)
+		return -1;
+	n = sc(SYS_read, fd, (long)buf, sizeof(buf) - 1, 0, 0);
+	sc(SYS_close, fd, 0, 0, 0, 0);
+	if (n <= 0)
+		return -1;
+	buf[n] = 0;
+
+	for (i = 0; i + 8 < n; i++) {
+		int c = 0, k;
+		unsigned int count = 0;
+
+		if (buf[i] != 'g' || buf[i + 1] != 'p' || buf[i + 2] != 'i' ||
+		    buf[i + 3] != 'o' || buf[i + 4] != 'c' || buf[i + 5] != 'h' ||
+		    buf[i + 6] != 'i' || buf[i + 7] != 'p')
+			continue;
+		/* only at start of a line */
+		if (i > 0 && buf[i - 1] != '\n')
+			continue;
+		k = i + 8;
+		while (k < n && buf[k] >= '0' && buf[k] <= '9')
+			c = c * 10 + (buf[k++] - '0');
+		while (k < n && buf[k] != '\n' && (buf[k] < '0' || buf[k] > '9'))
+			k++;
+		while (k < n && buf[k] >= '0' && buf[k] <= '9')
+			count = count * 10 + (buf[k++] - '0');
+		if ((unsigned long)line >= base && (unsigned long)line < base + count) {
+			static const char dev[] = "/dev/gpiochip";
+			int k2 = 0;
+
+			for (k2 = 0; dev[k2]; k2++)
+				path[k2] = dev[k2];
+			if (c >= 10)
+				path[k2++] = '0' + c / 10;
+			path[k2++] = '0' + c % 10;
+			path[k2] = 0;
+			*offset = line - base;
+			return 0;
+		}
+		base += count;
+		while (i < n && buf[i] != '\n')
+			i++;
+	}
+	return -1;
+}
+
 static int find_chip(unsigned int line, unsigned int *offset, char *path)
 {
 	int c;
@@ -184,7 +250,8 @@ static int find_chip(unsigned int line, unsigned int *offset, char *path)
 			return 0;
 		}
 	}
-	return -1;
+	/* sysfs absent (CONFIG_GPIO_SYSFS off): parse the debugfs map. */
+	return find_chip_debugfs(line, offset, path);
 }
 
 static int out_line(const char *chip, unsigned int line, unsigned int init)
@@ -202,6 +269,12 @@ static int out_line(const char *chip, unsigned int line, unsigned int init)
 	req.lineoffsets[0] = line;
 	req.flags = GPIOHANDLE_REQUEST_OUTPUT;
 	req.default_values[0] = (unsigned char)init;
+	req.consumer_label[0] = 'b';
+	req.consumer_label[1] = 't';
+	req.consumer_label[2] = 'w';
+	req.consumer_label[3] = 'a';
+	req.consumer_label[4] = 'k';
+	req.consumer_label[5] = 'e';
 	req.lines = 1;
 	rc = sc(SYS_ioctl, fd, GPIOHANDLE_GET_LINE_IOCTL, (long)&req, 0, 0);
 	sc(SYS_close, fd, 0, 0, 0, 0);
