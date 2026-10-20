@@ -50,7 +50,9 @@ for attempt in $(seq 1 "$TRIES"); do
 	pull || { echo "attempt $attempt: record read failed"; continue; }
 	now=$(python3 -I "$HERE/record-id.py" "$REC")
 	build=${now%% *}
-	if [ "$build" = "$N" ] || { [ "$build" = "none" ] && [ "$now" != "$before" ]; }; then
+	# fresh only if the record differs from the one seen before this attempt,
+	# even when it already names build N (a hung earlier run can leave one)
+	if [ "$now" != "$before" ] && { [ "$build" = "$N" ] || [ "$build" = "none" ]; }; then
 		echo "attempt $attempt: fresh record ($now) at $(date +%T)"
 		python3 -I "$HERE/read-record.py" "$REC" 5000 2>/dev/null \
 			| grep -vE "01 4c fc|04 0e 04 01 4c fc 00" \

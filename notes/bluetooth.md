@@ -767,3 +767,21 @@ says build 78, the run got far enough to log.
 
 Resume: power cycle (hold power ~15 s) -> Android -> read record ->
 otherwise `tools/bt-bootloop.sh 78`.
+
+### 2026-10-21 08:00: n9bt78 — inconclusive, tablet hangs on this image
+
+- First `bt-bootloop.sh 78` run reported "fresh" but the record hash
+  (`45dfc13ac2d995b0`) equalled the pre-run record: it came from the earlier
+  interrupted attempt. Script fixed: fresh now requires a hash different from
+  the pre-attempt record even when the build number matches.
+- That (possibly stale) build-78 record: power-on, 3M early baud, Reset,
+  0x1001, fc79, fc6e, 0c14, firmware download start all fine; no fc4e (Launch
+  RAM) line and no `n9dbg post-launch Reset` line; ends `n9bt: rebooting` at
+  87 s. Tablet came back `bootreason=watchdog`.
+- Re-run with the fixed script: tablet fell off USB (no adb/fastboot/gadget)
+  and needs a manual power cycle. Second hang on n9bt78, so the hang may be
+  tied to this image (the post-launch path) rather than being the unrelated
+  early stall.
+
+Next: power cycle -> pull record -> `record-id.py`; if build 78 with a new
+hash, look for the `post-launch Reset` line.
