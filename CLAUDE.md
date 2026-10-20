@@ -16,6 +16,16 @@ Before working on USB, display, audio, Bluetooth, or boot-stage debugging:
 Do not re-derive state from full logs when a note exists; extend the note if
 detail is missing.
 
+## Vendor behaviour: REA before designing tests
+
+Before designing a kernel-side test for how vendor hardware behaves, pull the
+relevant Android userspace blobs with root adb (`/vendor/lib64`,
+`/vendor/lib64/hw`, `/vendor/firmware`, `/system/etc`) into a fresh directory
+and run REA on them. Userspace vendor libs often answer questions the
+downstream kernel source cannot (which sysfs node powers a chip, which ioctl
+drives wake, whether a HAL does real work or only flips ALSA mixer switches).
+Record the result in the topic note before the next boot cycle.
+
 ## Layout
 
 - `notes/` — investigation state and evidence, one file per topic
