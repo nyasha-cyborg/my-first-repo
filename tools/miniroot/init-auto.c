@@ -353,6 +353,47 @@ void _start(void)
 	int i;
 
 	sc(SYS_mount, (long)"devtmpfs", (long)"/dev", (long)"devtmpfs", 0, 0);
+
+	/* Self-reporting BT probe: the serial console is intermittently dead,
+	 * so run the HCI test here and log results to kmsg (the rolling record
+	 * picks them up), then trigger the watchdog release. Runs before the
+	 * tty wait, so a wedged console cannot hide the outcome. */
+	if (sc(SYS_openat, AT_FDCWD, (long)"/etc/bt-run", O_RDONLY, 0, 0) >= 0 &&
+	    sc(SYS_clone, 17, 0, 0, 0, 0) == 0) {
+		static const char *bt[] = { "busybox", "sh", "-c",
+			/* Own the watchdog from the start: opened, never pinged,
+			 * so this boot resets ~120 s later no matter what the
+			 * pinger does. */
+			"( exec 4>/dev/watchdog 2>/dev/null; while true; do busybox sleep 5; done ) & "
+
+			"echo '<6>n9bt: start' > /dev/kmsg; "
+			"busybox mount -t proc none /proc 2>/dev/null; busybox mount -t sysfs none /sys 2>/dev/null; busybox mount -t debugfs none /sys/kernel/debug 2>/dev/null; "
+			"echo '<6>n9bt: sdio '$(busybox ls /sys/bus/sdio/devices 2>&1 | busybox tr '\\n' ' ') > /dev/kmsg; "
+			/* Release the watchdog before any probe can block on a
+			 * wedged tty, so a hang still ends in a reset to Android. */
+			"busybox touch /stop-ping; "
+			"busybox modprobe ecdh_generic; busybox modprobe rfkill; "
+			"busybox modprobe bluetooth; busybox modprobe hci_uart; "
+			/* BT_WAKE (PEE1) edge first: Android raises it per
+			 * transaction, so the chip sees idle->wake; a static
+			 * high from boot is not the same signal. */
+			"busybox timeout 8 /bin/btwake 241 3000000 2>&1 | busybox sed 's/^/<6>n9bt: wake /' > /dev/kmsg; "
+			"busybox timeout 9 /bin/hciraw-min /dev/ttyTHS2 115200 2>&1 | busybox sed 's/^/<6>n9bt: 115200 /' > /dev/kmsg; "
+			"busybox timeout 9 /bin/hciraw-min /dev/ttyTHS2 921600 2>&1 | busybox sed 's/^/<6>n9bt: 921600 /' > /dev/kmsg; "
+			"busybox timeout 9 /bin/hciraw-min /dev/ttyTHS2 1500000 2>&1 | busybox sed 's/^/<6>n9bt: 1500k /' > /dev/kmsg; "
+			"busybox timeout 9 /bin/hciraw-min /dev/ttyTHS2 3000000 2>&1 | busybox sed 's/^/<6>n9bt: 3M /' > /dev/kmsg; "
+			"busybox timeout 9 /bin/hciraw-min /dev/ttyTHS2 3000000 f 2>&1 | busybox sed 's/^/<6>n9bt: 3Mf /' > /dev/kmsg; "
+			"busybox timeout 9 /bin/hciraw-min /dev/ttyTHS2 3000000 r 2>&1 | busybox sed 's/^/<6>n9bt: 3Mr /' > /dev/kmsg; "
+			"busybox timeout 9 /bin/hciraw-min /dev/ttyTHS2 115200 r 2>&1 | busybox sed 's/^/<6>n9bt: 115r /' > /dev/kmsg; "
+			"echo '<6>n9bt: late-gpio '$(busybox cat /sys/kernel/debug/gpio | busybox grep -E 'gpio-191|gpio-137' | busybox tr '\\n' ';') > /dev/kmsg; "
+			"R=$(busybox grep -l wifi-reg-on /sys/class/regulator/regulator.*/name 2>/dev/null | busybox head -1); "
+			"echo '<6>n9bt: reg '$(busybox cat $R/name 2>/dev/null)' state='$(busybox cat $R/state 2>/dev/null) > /dev/kmsg; "
+			"echo '<6>n9bt: done' > /dev/kmsg; "
+			"while true; do busybox sleep 1; done", 0 };
+
+		run("/bin/busybox", bt);
+	}
+
 	sc(SYS_mount, (long)"proc", (long)"/proc", (long)"proc", 0, 0);
 	sc(SYS_mount, (long)"sysfs", (long)"/sys", (long)"sysfs", 0, 0);
 	sleep_ms(300);
