@@ -785,3 +785,26 @@ otherwise `tools/bt-bootloop.sh 78`.
 
 Next: power cycle -> pull record -> `record-id.py`; if build 78 with a new
 hash, look for the `post-launch Reset` line.
+
+### n9bt78 clean result (08:20, fresh record confirmed): chip answers ~4 s after Launch RAM
+
+```
+13.33 Launch RAM (fc4e ff ff ff ff) -> ok          (489 records in 0.74 s at 3M)
+13.60 host back to 115200
+13.71 post-launch Reset                           -> tx timeout at 15.87 (-110)
+15.87 fc18 -> 3M                                  -> no reply
+17.57 rx 04 0e 04 01 03 0c 00  (the Reset reply, 3.9 s after it was sent)
+19.71 Reset again at 3M -> timeout; "BCM: Reset failed (-110)"
+```
+
+Pattern across runs: first reply after Launch RAM arrives 4.2 s (n9bt76:
+13.0 -> 17.24), 4.0 s (n9bt77: 6.0 -> 9.99) and 4.2 s (n9bt78) later. So the
+chip's firmware needs ~4 s to boot after Launch RAM; commands sent earlier
+are lost (the 2 s HCI timeout is shorter than that), and a Reset sent early
+is answered late. The "post-launch order" hypothesis (fc18 before Reset) is
+**dead**; the delay is the variable. Earlier "hang" boots (00:38, 08:02)
+left no record; those hangs are a separate, still-open problem.
+
+n9bt79 (planned): replace the 100 ms before the post-launch Reset with a
+~5 s sleep; expect Reset ok, fc18 ok, hci0 up. If the sleep works, tune it
+down (Android's hciattach waits less, check btld/REA for the real figure).
