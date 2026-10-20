@@ -314,3 +314,35 @@ wired wake pulse (output flag fixed) is image `n9bt34`.
 Environment note: the early-stall rate rose sharply in the evening
 (~9 of 11 boots around 18:00-18:30), with battery at 44%. Charging on a wall
 socket before the next run.
+
+## 2026-10-20 evening: REA results, PR1 discovery, reader bug
+
+**REA of `libbt-vendor.so`** (pulled from the device):
+- Android powers BT by writing `/sys/class/rfkill/rfkillN/state`; it never
+  touches a GPIO directly.
+- Wake/sleep uses vendor UART ioctls `0x8003`, `0x8004`, `0x8005` issued on
+  the tty, handled by the downstream serial driver. Userspace has no other
+  wake path, so manually driving PEE1 is the correct mainline analogue.
+- Firmware: `/vendor/firmware/<FwPatchFileName>`, and BT_VND_PWR_ON forces a
+  power-off first (already seen in logcat).
+
+**REA of `audio.primary.flounder.so`:** the HAL only flips ALSA mixer
+switches (`SPK VMixer SPK Switch`, `Codec VMixer Codec Switch`); amp and
+codec handling lives in vendor kernel drivers. `RT5506` in `/system/etc` is
+a register table, not code.
+
+**GPIO chardev corrections:** request struct is 364 bytes with
+`consumer_label` (ioctl `0xC16CB403`); `SET_LINE_VALUES` is `0xC040B409`;
+`GPIOHANDLE_REQUEST_OUTPUT` is 2. The BT_WAKE pulse now works.
+
+**PR1 (BT_REG_ON) finding, still being tested:** every DTB where PR1 is not
+driven high by a boot-time kernel consumer fails to reach init (no `n9st`
+marks, reset by the early watchdog). That covers: PR1 unclaimed, and PR1
+owned by `rfkill-gpio` as a module (probe only happens after init). The
+always-on `regulator-fixed` DTB boots. Test in flight: `rfkill-gpio` built
+into the kernel so it claims PR1 high at boot, then userspace writes the
+rfkill state to reproduce Android's power-off-first.
+
+**Diagnostic bug:** earlier "stall" verdicts from the fast reader were false
+when `adb root` restarted adbd and `dd` returned empty: md5(empty) is stable,
+so the records compared equal. The reader now requires ≥32 KiB and retries.
