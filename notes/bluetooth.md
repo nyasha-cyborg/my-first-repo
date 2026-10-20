@@ -698,3 +698,22 @@ the chip (:324), so the port watches the unpowered chip's TX held low
 n9bt75: hci_bcm probe powers the chip (`bcm_gpio_set_power(true)`) right
 after its power-off, i.e. before hci_uart opens the port; bcm_open's
 second power-on only re-edges BT_WAKE.
+
+### n9bt75: ROOT CAUSE — serdev opened the port before the chip had power
+
+hci_bcm probe now powers the chip *before* hci_uart's `serdev_device_open`.
+Under the real serdev driver:
+
+```
+Reset ok -> 0x1001 ok (subver 610c) -> fc79 chip id 92 -> fc6e features 0x2f
+-> 0c14 "BCM4350C0" -> BCM4354 'brcm/BCM4354.hcd' Patch -> fc2e ok
+-> fc4c patch records, every one acked (208-byte writes, 7-byte replies)
+```
+
+**Confirmed:** opening the UART while the chip is unpowered (its TX held
+low through boot) is what limited serdev to a single reply. The record
+filled at 14.2 s (~2000 trace lines) mid-download, so the post-Launch-RAM
+stage is not visible yet.
+
+n9bt76: same fix, trace quiet during fc4c records, serdev/ttyport traces
+removed. Kernel commit `80e28b1bf` local (see `git -C ~/code/linux-flounder log`).
