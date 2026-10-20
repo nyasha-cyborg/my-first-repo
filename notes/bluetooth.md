@@ -242,3 +242,21 @@ verified: right UART (serdev of_node = `/serial@70006200`), IRQ 56 firing,
 48 MHz clock, correct pads. Next probes: pulse REG_ON from userspace via the
 GPIO chardev (Android's "power-off first"), and check whether the chip answers
 only after that explicit off->on cycle.
+
+## BT_WAKE hypothesis (2026-10-20, n9bt28)
+
+Android's bluedroid_pm raises BT_WAKE (PEE1) per transmit
+(`gpio_direction_output(ext_wake, 1)`) and drops it when host_wake is low,
+so the chip sees an idle->wake edge before HCI. A fixed regulator holding
+PEE1 high from boot never produces that edge.
+
+- DT: removed the always-on `bt_wake` regulator so userspace can own PEE1.
+- New `btwake` tool: PEE1 low 250 ms -> high, 120 ms settlement, UART at
+  Android's B3000000|cs8|cread|clocal|crtscts, HCI Reset, one retry with a
+  fresh edge. Holds the line high afterwards.
+- Ramdisk init runs it before the raw baud sweep; image `n9bt28`.
+
+Result so far: inconclusive. The intermittent early stall hit four boots in
+a row (no `n9bt: start` written, no adb, no fastboot - init never ran), and
+the control image `n9bt27` stalled the same way, so the image is not the
+cause. Needs a clean boot to test.
