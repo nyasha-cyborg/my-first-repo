@@ -682,3 +682,19 @@ not persisted. Open.
 
 n9bt74: `bcm_open` turns host flow control off (RTS kept asserted) right
 after power-on under serdev.
+
+### n9bt74: host flow control off -> even Reset unanswered
+
+`bcm_open` set flow off + RTS on: `tx Reset -> write 4/4 -> nothing ->
+0x0c03 tx timeout`. With CRTSCTS off the Tegra RTS output is apparently not
+asserted (despite tiocm 0x26), so the chip never sends; with CRTSCTS on,
+auto-RTS lets exactly one reply through. **Dead** as a fix; reverted.
+
+Remaining ordering difference vs both working paths: serdev opens the
+UART (`serdev_device_open`, hci_serdev.c:320) *before* `p->open` powers
+the chip (:324), so the port watches the unpowered chip's TX held low
+(break/framing errors) through boot. btwake/hciattach power first.
+
+n9bt75: hci_bcm probe powers the chip (`bcm_gpio_set_power(true)`) right
+after its power-off, i.e. before hci_uart opens the port; bcm_open's
+second power-on only re-edges BT_WAKE.
