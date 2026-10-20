@@ -608,3 +608,35 @@ rolling record; compare record md5 + kernel build instead.
 n9bt71: serdev path again (`bcm43540-bt`), test delays `msleep(500)` after
 power-on (hci_bcm) and `msleep(1000)` after every Reset (btbcm), init
 syncs before the early reboot.
+
+### n9bt71: longer delays alone do not fix serdev
+
+500 ms power-on settle + 1 s after Reset: `tx Reset -> rx ok (1.7 ms)`,
+`tx 0x1001` one second later -> nothing. The tty path answered 0x1001
+100 ms after Reset (n9bt70), so plain post-Reset timing is **dead**.
+
+### REA: Android's running kernel (bluedroid_pm), 2026-10-20 23:50
+
+Artifact: running LNX (`mmcblk0p16`), `Linux 3.10.103-g5cef0dc1890 #13
+Dec 20 2024` (custom 2024 build, not the 2017 stock). Image wrapped as ELF
+windows with `/proc/kallsyms` (`/tmp/n9tools/image2elf.py`).
+
+- struct fields: `[0] reset_gpio` (absent on flounder), `[1] shutdown_gpio`,
+  `[2] gpio_host_wake`, `[3] gpio_ext_wake`; probe sets ext_wake **output
+  high**; supplies `avdd`/`dvdd` optional.
+- `bluedroid_pm_rfkill_set_power(unblock)`: 100 x udelay(1000), regulators
+  on, `shutdown=1` (reset=1), 100 ms. **BT_WAKE is not touched at
+  power-on** — the chip boots with it raw high.
+- `/proc/bluetooth/sleep/lpm` write: `"1"` -> ext_wake raw **1** +
+  `__pm_stay_awake`; `"0"` -> ext_wake raw 0 only once host_wake is low,
+  else re-arm a 1.5 s timer; `__pm_relax`. So in Android's own driver raw
+  high means awake. The "BT_WAKE active low" note above came from a
+  misread and is **unverified**; what is certain is that the chip boots
+  with BT_WAKE high in both working cases (Android, btwake).
+- Failing case is unique: hci_bcm drives BT_WAKE low in the same instant
+  as REG_ON.
+
+n9bt72: hci_bcm power-on reordered to btwake's proven sequence (wake
+deasserted -> REG_ON high -> 500 ms -> wake asserted -> 50 ms -> 100 ms),
+btbcm 1 s post-Reset kept. Kernel rebuilt (release
+`g6499bae9e9de-dirty`) with all modules restaged.
