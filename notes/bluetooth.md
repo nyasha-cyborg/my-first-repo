@@ -380,3 +380,28 @@ Consequences, all now fixed in our code/DT:
 
 Still no HCI reply from the chip in the latest runs; the focused probe in
 `n9bt60` isolates LPO status plus one corrected btwake pass.
+
+## Clean 90 s run (n9bt61 @ heartbeat=90)
+
+With the watchdog given enough time the whole probe completes, so the earlier
+"record ends at sending HCI Reset" was the 45 s watchdog truncating the run,
+not a crash:
+
+```
+n9bt: clk32kg 1                      <- LPO enabled
+btwake: power off (high)
+btwake: power on (low)
+btwake: wake asserted (low)
+btwake: sending HCI Reset
+btwake: no reply in 2s
+btwake: retry ... no reply in 2s
+btwake end
+post3M raw: no reply in 6s
+```
+
+So: chip powered, awake, LPO on, 3.04 Mbaud, true CRTSCTS — still silent.
+Next hypothesis from Android's log order: the HAL performs a baud dance
+(3000000 -> 115200 with ~100 ms settlement -> 3000000) *before* the first HCI
+command, which looks like a deliberate UART resync. That sequence has never
+been reproduced. Test it next, then fall back to hciattach/btbcm with the
+ROM assumed at 115200.
