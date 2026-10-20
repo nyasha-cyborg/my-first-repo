@@ -353,13 +353,16 @@ void _start(void)
 	int i;
 
 	sc(SYS_mount, (long)"devtmpfs", (long)"/dev", (long)"devtmpfs", 0, 0);
+	mark("devtmpfs");
 
 	/* Self-reporting BT probe: the serial console is intermittently dead,
 	 * so run the HCI test here and log results to kmsg (the rolling record
 	 * picks them up), then trigger the watchdog release. Runs before the
 	 * tty wait, so a wedged console cannot hide the outcome. */
+	mark("bt-check");
 	if (sc(SYS_openat, AT_FDCWD, (long)"/etc/bt-run", O_RDONLY, 0, 0) >= 0 &&
 	    sc(SYS_clone, 17, 0, 0, 0, 0) == 0) {
+		mark("bt-child");
 		static const char *bt[] = { "busybox", "sh", "-c",
 			/* Own the watchdog from the start: opened, never pinged,
 			 * so this boot resets ~120 s later no matter what the

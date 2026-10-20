@@ -260,3 +260,25 @@ Result so far: inconclusive. The intermittent early stall hit four boots in
 a row (no `n9bt: start` written, no adb, no fastboot - init never ran), and
 the control image `n9bt27` stalled the same way, so the image is not the
 cause. Needs a clean boot to test.
+
+## 2026-10-20 later: image-wrapper bug, chip lookup, stall instrumentation
+
+- **Bogus "stalls" explained:** repacked images retained the 256-byte HTC
+  wrapper. `fastboot boot` reports OKAY, hboot then ignores the image and
+  stays in fastboot. Strip with `tail -c +257` (or use a stripped stock);
+  the `-stripped.img` name means exactly that. Several "failed boots" earlier
+  today were this, not the hardware.
+- **testA** (old DTB, new ramdisk) booted and wrote a fresh record. Its
+  `btwake` failed with `line request errno 22`: global line 241 is not an
+  offset on `/dev/gpiochip0`. The PMIC GPIO controller probes first. btwake
+  now resolves chip path and offset from `/sys/class/gpio/gpiochipN/{base,
+  ngpio}`.
+- **The genuine stall is random, not the DTB:** a control boot with the old
+  DTB stalled too. Two new-DTB boots and one old-DTB control boot all hung
+  before writing any record.
+- **Instrumentation added:** `tegra_wdt.early_start=1` arms the hardware
+  watchdog in probe, so a pre-init hang now self-resets after 120 s instead
+  of needing a power cycle; init also marks `devtmpfs`, `bt-check` and
+  `bt-child` into the rolling record to locate how far userspace got.
+- Image `n9bt30` = new DTB + early-watchdog Image + properly stripped
+  modules for vermagic `g5bf55902df2e-dirty`.
