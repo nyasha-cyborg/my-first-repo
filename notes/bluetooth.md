@@ -642,3 +642,20 @@ n9bt72: hci_bcm power-on reordered to btwake's proven sequence (wake
 deasserted -> REG_ON high -> 500 ms -> wake asserted -> 50 ms -> 100 ms),
 btbcm 1 s post-Reset kept. Kernel rebuilt (release
 `g6499bae9e9de-dirty`) with all modules restaged.
+
+### n9bt72: btwake's wake order under hci_bcm — still only Reset answered
+
+hci_bcm power-on reordered (wake deasserted -> REG_ON -> 500 ms -> wake
+asserted -> 50 ms -> 100 ms): `tx Reset -> rx ok (1.7 ms)`, `tx 0x1001`
+1 s later -> nothing. **Dead:** "BT_WAKE asserted together with REG_ON".
+
+So with identical hci_bcm/btbcm code and identical chip power sequence,
+tty/N_HCI (n9bt70) gets every reply and serdev gets only the first.
+Code read: hci_serdev receive/write paths look equivalent; runtime PM
+(`bcm_suspend_device`, which drops RTS) is only enabled with a host-wake
+IRQ, which we do not declare — **dead** from the code.
+
+n9bt73 traces the two remaining layers: `n9dbg serdev write len/total
+tiocm` in hci_serdev's write work (did the bytes reach the UART, or is TX
+stuck behind CTS?) and `n9dbg ttyport rx count active` in
+serdev-ttyport (do reply bytes reach serdev and get dropped?).
