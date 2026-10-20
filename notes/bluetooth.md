@@ -837,3 +837,21 @@ Conclusions:
   (same-length hash swap) so init/module paths stay valid.
 - The tablet stalls without writing a record in roughly 1 of 3 boots
   (watchdog at 90 s); the loop just retries.
+
+### n9bt82–84 (08:40–08:50): LPO register fine; WLAN-first test not yet valid
+
+- n9bt82 (init prints Palmas page-1 regs): mainline `CLK32KG_CTRL d4=07,
+  d5=00` = Android's values (read in Android with BT off and on). **Dead:**
+  "LPO clock not really running". Post-launch behaviour unchanged.
+- Android's fast bring-up (logcat 08:36:50) had Wi-Fi enabled and the SDIO
+  functions enumerated; BT images never power the WLAN side (`n9bt: sdio`
+  empty). Timeline there: download 0.47 s, host 115200 + "Settlement delay
+  100 ms", Reset+fc18 answered inside it, 3M again 107 ms after launch.
+- n9bt83/84 load brcmfmac before BT (`/etc/bt-wifi-first`, init-auto.c):
+  no SDIO device and no `wlan0` even after a 40 s poll; mmc1 logs
+  "Switching to 3.3V signalling voltage failed". So the combo chip's WLAN
+  side was **not** up and BT behaviour is unchanged. Open: why the proven
+  WiFi images enumerate and these do not.
+- Reproducible init build: `clang --target=aarch64-linux-gnu -nostdlib
+  -static -O2 -fuse-ld=lld -DN9BUILD=<n> -o init tools/miniroot/init-auto.c`
+  gives a byte-identical binary to the shipped init.

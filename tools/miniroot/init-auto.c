@@ -382,6 +382,18 @@ void _start(void)
 			 * wedged tty, so a hang still ends in a reset to Android. */
 			"busybox touch /stop-ping; "
 			"echo '<6>n9bt: clk32kg '$(busybox cat /sys/kernel/debug/clk/clk32kg/clk_enable_count 2>&1) > /dev/kmsg; "
+			/* Palmas CLK32KG_CTRL/CLK32KGAUDIO_CTRL (page 1, 0xd4/0xd5);
+			 * Android reads 07/00 whether BT is on or off. */
+			"echo '<6>n9bt: palmas '$(busybox grep ^d[45] /sys/kernel/debug/regmap/4-0059/registers) > /dev/kmsg; "
+			/* /etc/bt-wifi-first: Android's fast BT bring-up always had
+			 * the combo chip's WLAN side up (n9bt83 test). */
+			"if [ -e /etc/bt-wifi-first ]; then "
+			"busybox sleep 15; K=/lib/modules/$(busybox uname -r); "
+			"for m in rfkill cfg80211 brcmutil brcmfmac; do "
+			"busybox insmod $K/$m.ko 2>&1 | busybox sed \"s/^/<6>n9bt: wifi insmod $m: /\" > /dev/kmsg; done; "
+			"for i in $(busybox seq 1 40); do [ -e /sys/class/net/wlan0 ] && break; busybox sleep 1; done; "
+			"echo '<6>n9bt: sdio '$(busybox ls /sys/bus/sdio/devices 2>&1 | busybox tr '\\n' ' ') > /dev/kmsg; "
+			"echo '<6>n9bt: net '$(busybox ls /sys/class/net 2>&1) > /dev/kmsg; fi; "
 			"if [ -e /etc/bt-hci ]; then "
 			/* Kernel path: hci_bcm owns PR1/PEE1 via the serdev
 			 * bluetooth node and runs Reset@115200 and the firmware
