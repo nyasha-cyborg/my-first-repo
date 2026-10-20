@@ -538,3 +538,10 @@ speaker amps still unloaded pending the probe-hang investigation.
 
 The automatic path is verified on `n9audio4-stripped.img`: after the sequential
 load fix, the `G9` card registers with no manual commands.
+
+## Priority (2026-10-20)
+
+Speaker output is the requirement; headphones do not matter for the
+daily-usable target. That removes the blocked rt5506 path from the critical
+list and puts the tfa989x amplifier probe hang first in line: the codec and
+card already work, so the remaining speaker blocker is the amplifier driver.
