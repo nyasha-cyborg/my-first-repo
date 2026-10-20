@@ -310,8 +310,9 @@ void start_c(long *sp)
 	char chipbuf[64];
 	const char *chip;
 	unsigned int offset;
-	int wake = (argc > 1) ? num(argv[1]) : 241;
-	int baud = (argc > 2) ? num(argv[2]) : 3000000;
+	int power = (argc > 1) ? num(argv[1]) : 137;
+	int wake = (argc > 2) ? num(argv[2]) : 241;
+	int baud = (argc > 3) ? num(argv[3]) : 3000000;
 	struct termios_k t;
 	int ldisc = 0;
 	long fd, n;
@@ -335,6 +336,34 @@ void start_c(long *sp)
 		put("\n");
 	}
 
+	/* Android's BT_VND_PWR_ON powers the section off first, then on.
+	 * Our old DT held REG_ON from boot, so the chip never saw that
+	 * edge; do it here now that userspace owns the line. */
+	{
+		char chip2[64];
+		unsigned int off2;
+		int hpwr;
+
+		if (find_chip((unsigned int)power, &off2, chip2) < 0) {
+			put("btwake: power chip lookup failed\n");
+			sc(SYS_exit, 3, 0, 0, 0, 0);
+		}
+		hpwr = out_line(chip2, off2, 0);
+		if (hpwr < 0) {
+			/* rfkill-gpio owns PR1 now and has already done the
+			 * power cycle; nothing more to do here. */
+			put("btwake: power line owned (rfkill), skipping\n");
+			goto power_done;
+		}
+		put("btwake: power off\n");
+		ms(200);
+		if (set_line(hpwr, 1) < 0)
+			put("btwake: power on set failed\n");
+		put("btwake: power on\n");
+		ms(500);
+	}
+
+power_done:
 	hwake = out_line(chip, offset, 0);	/* start idle/low */
 	if (hwake < 0) {
 		put("btwake: wake line unavailable\n");
@@ -360,7 +389,7 @@ void start_c(long *sp)
 		    | CS8 | CREAD | CLOCAL | CRTSCTS;
 	if (sc(SYS_ioctl, fd, TCSETS, (long)&t, 0, 0) < 0)
 		put("btwake: TCSETS failed\n");
-	ms(120);					/* Android: 100 ms settlement */
+	ms(200);					/* Android: 100 ms settlement */
 
 	for (tries = 0; tries < 2; tries++) {
 		if (tries) {

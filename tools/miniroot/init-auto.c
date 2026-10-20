@@ -375,12 +375,17 @@ void _start(void)
 			/* Release the watchdog before any probe can block on a
 			 * wedged tty, so a hang still ends in a reset to Android. */
 			"busybox touch /stop-ping; "
-			"busybox modprobe ecdh_generic; busybox modprobe rfkill; "
-			"busybox modprobe bluetooth; busybox modprobe hci_uart; "
+			/* Raw HCI needs no stack modules; loading them here only
+			 * risks a hang before the probe (seen: record stops
+			 * right after "sdio"). Load them after if ever needed. */
+			"echo '<6>n9bt: gpiochips '$(busybox grep gpiochip /sys/kernel/debug/gpio 2>&1 | busybox tr '\\n' ';') > /dev/kmsg; "
 			/* BT_WAKE (PEE1) edge first: Android raises it per
 			 * transaction, so the chip sees idle->wake; a static
 			 * high from boot is not the same signal. */
-			"busybox timeout 8 /bin/btwake 241 3000000 2>&1 | busybox sed 's/^/<6>n9bt: wake /' > /dev/kmsg; "
+			/* Keep btwake alive: it holds PR1 high. Killing it
+			 * (timeout) released the line and left the chip
+			 * unpowered for every later sweep. */
+			"( /bin/btwake 137 241 3000000 2>&1 | busybox sed 's/^/<6>n9bt: wake /' > /dev/kmsg ) & "
 			"busybox timeout 9 /bin/hciraw-min /dev/ttyTHS2 115200 2>&1 | busybox sed 's/^/<6>n9bt: 115200 /' > /dev/kmsg; "
 			"busybox timeout 9 /bin/hciraw-min /dev/ttyTHS2 921600 2>&1 | busybox sed 's/^/<6>n9bt: 921600 /' > /dev/kmsg; "
 			"busybox timeout 9 /bin/hciraw-min /dev/ttyTHS2 1500000 2>&1 | busybox sed 's/^/<6>n9bt: 1500k /' > /dev/kmsg; "
