@@ -717,3 +717,25 @@ stage is not visible yet.
 
 n9bt76: same fix, trace quiet during fc4c records, serdev/ttyport traces
 removed. Kernel commit `80e28b1bf` local (see `git -C ~/code/linux-flounder log`).
+
+### n9bt76: firmware loads under serdev; same failure after Launch RAM
+
+```
+5.20  BCM4354 'brcm/BCM4354.hcd' Patch, fc2e ok
+13.00 489 patch records sent, fc4e (Launch RAM) ok
+13.25 fc18 -> 3M (250 ms after launch)          -> no reply, timeout
+15.44 Reset                                     -> reply only at 17.24
+18.26 0x1001 (1 s after)                        -> no reply, timeout
+```
+
+Launch RAM reboots the chip *while the port is open* — the same condition
+the probe-power fix removed at power-on, with the same "one reply gets
+through" result. Android downloads at 3M and after launch sets the host
+back to 115200: a real speed change, so the Tegra UART is reprogrammed
+after the chip reboots. With `bcm43540-bt` (`no_early_set_baudrate`)
+mainline stays at 115200 throughout, and the serial core skips
+set_termios when nothing changes — no reprogram.
+
+n9bt77 (DT only): compatible `brcm,bcm4335a0` (no device data) so
+hci_uart sets 3M before setup and btbcm returns to 115200 after launch —
+Android's order. (n9bt68's early-baud test predates the probe-power fix.)
