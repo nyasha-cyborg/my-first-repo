@@ -381,29 +381,54 @@ void _start(void)
 			/* Release the watchdog before any probe can block on a
 			 * wedged tty, so a hang still ends in a reset to Android. */
 			"busybox touch /stop-ping; "
-			/* Raw HCI needs no stack modules; loading them here only
-			 * risks a hang before the probe (seen: record stops
-			 * right after "sdio"). Load them after if ever needed. */
-			"echo '<6>n9bt: gpiochips '$(busybox grep gpiochip /sys/kernel/debug/gpio 2>&1 | busybox tr '\\n' ';') > /dev/kmsg; "
-			/* BT_WAKE (PEE1) edge first: Android raises it per
-			 * transaction, so the chip sees idle->wake; a static
-			 * high from boot is not the same signal. */
-			/* Android's BT_VND_PWR_ON forces a power-off first:
-			 * REG_ON (PR1) is active high: line low = off,
-			 * high = powered (live Android, 2026-10-20). */
 			"echo '<6>n9bt: clk32kg '$(busybox cat /sys/kernel/debug/clk/clk32kg/clk_enable_count 2>&1) > /dev/kmsg; "
-			/* btwake holds PR1/PEE1 after its probe; sample all three
-			 * BT lines (REG_ON, HOST_WAKE, BT_WAKE) while it does. */
-			"busybox timeout 20 /bin/btwake 137 241 > /dev/kmsg 2>&1 & "
-			"busybox sleep 14; "
-			"echo '<6>n9bt: held-gpio '$(busybox grep -E 'gpio-(137|166|241) ' /sys/kernel/debug/gpio | busybox tr -s ' ' | busybox tr '\\n' ';') > /dev/kmsg; "
-			"wait; "
-			"echo '<6>n9bt: btwake end' > /dev/kmsg; "
-			"busybox timeout 9 /bin/hciraw-min /dev/ttyTHS2 3000000 2>&1 | busybox sed 's/^/<6>n9bt: post3M /' > /dev/kmsg; "
-						"echo '<6>n9bt: late-gpio '$(busybox cat /sys/kernel/debug/gpio | busybox grep -E 'gpio-191|gpio-137' | busybox tr '\\n' ';') > /dev/kmsg; "
-			"R=$(busybox grep -l wifi-reg-on /sys/class/regulator/regulator.*/name 2>/dev/null | busybox head -1); "
-			"echo '<6>n9bt: reg '$(busybox cat $R/name 2>/dev/null)' state='$(busybox cat $R/state 2>/dev/null) > /dev/kmsg; "
+			"if [ -e /etc/bt-hci ]; then "
+			/* Kernel path: hci_bcm owns PR1/PEE1 via the serdev
+			 * bluetooth node and runs Reset@115200 and the firmware
+			 * download (subver 0x610c -> brcm/BCM4354.hcd) on its own
+			 * once hci0 registers. busybox insmod needs dependency
+			 * order. */
+			"  K=/lib/modules/$(busybox uname -r); "
+			"  for m in rfkill ecc ecdh_generic bluetooth btbcm hci_uart; do "
+			"    busybox insmod $K/$m.ko 2>&1 | busybox sed \"s/^/<6>n9bt: insmod $m: /\" > /dev/kmsg; "
+			"  done; "
+			"  echo '<6>n9bt: modules loaded' > /dev/kmsg; "
+			"  busybox sleep 15; "
+			"  echo '<6>n9bt: hci '$(busybox ls /sys/class/bluetooth 2>&1 | busybox tr '\\n' ' ') > /dev/kmsg; "
+			"  echo '<6>n9bt: bt-gpio '$(busybox grep -E 'gpio-(137|166|241) ' /sys/kernel/debug/gpio | busybox tr -s ' ' | busybox tr '\\n' ';') > /dev/kmsg; "
+			"elif [ -e /etc/bt-ldisc ]; then "
+			/* tty path: btwake powers the chip and holds PR1/PEE1,
+			 * hciattach-min puts ttyTHS2 into N_HCI with the BCM
+			 * proto; hci_bcm/btbcm then run setup and load the
+			 * firmware over the line discipline instead of serdev.
+			 * n9bt70: this path downloaded the firmware. */
+			"  /bin/btwake 137 241 hold > /dev/kmsg 2>&1 & "
+			"  busybox sleep 1; "
+			"  K=/lib/modules/$(busybox uname -r); "
+			"  for m in ecc ecdh_generic bluetooth btbcm hci_uart; do "
+			"    busybox insmod $K/$m.ko 2>&1 | busybox sed \"s/^/<6>n9bt: insmod $m: /\" > /dev/kmsg; "
+			"  done; "
+			"  /bin/hciattach-min /dev/ttyTHS2 > /dev/kmsg 2>&1 & "
+			"  busybox sleep 25; "
+			"  echo '<6>n9bt: hci '$(busybox ls /sys/class/bluetooth 2>&1 | busybox tr '\\n' ' ') > /dev/kmsg; "
+			"  echo '<6>n9bt: bt-gpio '$(busybox grep -E 'gpio-(137|166|241) ' /sys/kernel/debug/gpio | busybox tr -s ' ' | busybox tr '\\n' ';') > /dev/kmsg; "
+			"else "
+			/* Userspace probe: btwake replays libbt-vendor's opening
+			 * and holds PR1/PEE1; sample the BT lines while it does. */
+			"  busybox timeout 20 /bin/btwake 137 241 > /dev/kmsg 2>&1 & "
+			"  busybox sleep 14; "
+			"  echo '<6>n9bt: held-gpio '$(busybox grep -E 'gpio-(137|166|241) ' /sys/kernel/debug/gpio | busybox tr -s ' ' | busybox tr '\\n' ';') > /dev/kmsg; "
+			"  wait; "
+			"  echo '<6>n9bt: btwake end' > /dev/kmsg; "
+			"fi; "
 			"echo '<6>n9bt: done' > /dev/kmsg; "
+			/* The monitor writes the record every 2 s for the first
+			 * minute; let one write land, then go straight back to
+			 * Android instead of idling until the watchdog fires.
+			 * /etc/bt-stay keeps the old idle-until-watchdog mode. */
+			/* emit() fsyncs each snapshot; the sync is only a guard
+			 * because reboot -f skips the normal flush. */
+			"if [ ! -e /etc/bt-stay ]; then busybox sleep 5; echo '<6>n9bt: rebooting' > /dev/kmsg; busybox sleep 3; busybox sync; busybox sleep 1; busybox reboot -f; fi; "
 			"while true; do busybox sleep 1; done", 0 };
 
 		run("/bin/busybox", bt);

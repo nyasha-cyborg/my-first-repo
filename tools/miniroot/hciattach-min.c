@@ -102,7 +102,10 @@ void _start(void)
 		t.c_cflag |= BOTHER;
 		t.c_ispeed = t.c_ospeed = baud;
 	} else {
-		t.c_ispeed = t.c_ospeed = B115200;
+		/* TCSETS2 without BOTHER takes the speed from CBAUD in
+		 * c_cflag; leaving it 0 means B0, i.e. hang up. */
+		t.c_cflag |= B115200;
+		t.c_ispeed = t.c_ospeed = 115200;
 	}
 
 	rc = sc(SYS_ioctl, fd, TCSETS2, (long)&t, 0, 0);

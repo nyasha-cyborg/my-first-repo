@@ -509,3 +509,102 @@ leave the UART", "ROM answers at 3M".
 3. BlueZ: `bluetoothctl` scan, then pair earbuds (A2DP).
 4. Early stall still ~50% at 21% battery on USB: charge from a wall socket
    before long runs.
+
+## Kernel path: hci_bcm over serdev (n9bt66/67, 2026-10-20 21:30, PAUSED)
+
+Kernel tree `~/code/linux-flounder` (uncommitted on top of `45145e3cf`):
+- DT: `bluetooth` child of `serial@70006200`, `brcm,bcm43540-bt`,
+  `max-speed = <3000000>`, `shutdown-gpios` PR1 **ACTIVE_HIGH**,
+  `device-wakeup-gpios` PEE1 ACTIVE_LOW, `clocks = <&palmas_clk32kg>`
+  ("lpo"); HOST_WAKE omitted; `bluetooth-rfkill` node removed.
+- `hci_bcm.c` restored to upstream (proto `init_speed` 115200), plus a
+  temporary `n9dbg bcm rx/tx` raw trace in `bcm_recv`/`bcm_enqueue`.
+- Ramdisk: `/etc/bt-hci` makes init insmod bluetooth/btbcm/hci_uart
+  instead of running btwake. `brcm/BCM.hcd` == vendor `bcm4350c0.hcd`.
+
+n9bt66 (third attempt; two early stalls first):
+
+```
+hci_uart_bcm serial0-0: supply vbat/vddio not found, using dummy regulator
+Bluetooth: hci0: command 0x1001 tx timeout
+Bluetooth: hci0: BCM: Reading local version info failed (-110)
+n9bt: bt-gpio gpio-137 (shutdown) out hi ; gpio-241 (device-wakeup) out lo ACTIVE LOW
+```
+
+HCI Reset succeeded (btbcm_reset is silent on success); the next command,
+Read Local Version at 115200, got no reply. Android never sends 0x1001
+before fc18 — it goes Reset -> fc18 -> 3M -> Read Local Name.
+`bcm43540-bt` data sets `no_early_set_baudrate`, so hci_bcm stays at 115200.
+
+n9bt67 = n9bt66 + rx/tx trace, to tell "chip ignores 0x1001" from "host
+loses the 15-byte reply". One attempt was in flight when paused for
+charging; its record (if init ran) is still on the DTB partition.
+
+Next:
+1. Read the n9bt67 record (`start build 67`, `n9dbg bcm`), or re-boot it.
+2. If the chip ignores 0x1001 at ROM stage: try a compatible without
+   `no_early_set_baudrate` (fc18 before setup, like Android), or move
+   btbcm's Read Local Version after the baud switch.
+3. Early stall is ~50% at <20% battery; charge on a wall socket first.
+
+### n9bt67/68 raw trace: under hci_uart the chip answers only HCI Reset
+
+n9bt67 (`bcm43540-bt`, no early baud):
+```
+3.048 n9dbg bcm tx 4: 01 03 0c 00            Reset
+3.152 n9dbg bcm rx 7: 04 0e 04 01 03 0c 00   ok
+3.253 n9dbg bcm tx 4: 01 01 10 00            Read Local Version -> nothing, 5.41 timeout
+```
+n9bt68 (`bcm4335a0` experiment, fc18 before setup):
+```
+2.912 tx 10: 01 18 fc 06 00 00 c0 c6 2d 00   fc18 -> nothing, 4.98 timeout
+4.985 tx 4:  01 03 0c 00                     Reset
+4.987 rx 7:  04 0e 04 01 03 0c 00            ok (1.6 ms)
+5.088 tx 4:  01 01 10 00                     Read Local Version -> nothing
+```
+Zero RX bytes for every non-Reset command, so this is not reassembly loss.
+**Dead:** "wrong command order" (fc18 first fails too). The same chip
+answered Reset, fc18 and Local Name to btwake over the tty on the old
+kernel (n9bt65).
+
+n9bt69 discriminates kernel/DT vs serdev path: new kernel, bluetooth node
+`status = "disabled"` via `fdtput` on a DTB copy (ttyTHS2 returns), and
+btwake extended to Reset -> 0x1001 @115200 -> fc18 -> 3M -> Local Name ->
+0x1001 @3M. Init now reboots ~8 s after `n9bt: done` unless `/etc/bt-stay`.
+
+### n9bt69: new kernel, tty path, btwake — every command answered
+
+BT node disabled with `fdtput` (ttyTHS2 returns). Reset, **0x1001 @115200**
+(`... 06 00 10 06 0f 00 0c 61`: manufacturer 0x000f, **LMP subver 0x610c
+= "BCM4354"** in btbcm's table, so it requests `brcm/BCM4354.hcd`), fc18,
+Local Name "BCM4350C0", 0x1001 @3M. **Dead:** "new kernel/DT broke the UART".
+
+### n9bt70: hci_uart over N_HCI (tty) — FIRMWARE DOWNLOADED
+
+btwake `hold` powers/wakes, `hciattach-min` (fixed: TCSETS2 at 115200 had
+CBAUD 0 = B0/hang-up) attaches N_HCI + BCM. `BCM4354.hcd` = vendor
+`bcm4350c0.hcd` (HTC board file kept as `BCM4354-htc-board.hcd`).
+
+```
+3.76 tx fc18(115200) -> ok;  Reset -> ok;  0x1001 -> ok (subver 610c)
+3.93 BCM: chip id 92 / features 0x2f / BCM4350C0
+3.96 BCM4354 (003.001.012) build 0000 / BCM4354 'brcm/BCM4354.hcd' Patch
+     ~1000 fc4c records, all acked
+13.50 tx fc4e (launch RAM) -> ok
+13.76 tx fc18 -> timeout          (250 ms after launch)
+15.87 tx Reset -> rx only at 17.74 (chip still booting new firmware)
+17.85 tx 0x1001 -> timeout         (100 ms after that reply)
+```
+
+**Confirmed (timing):** the chip ignores commands for a while after it
+boots — from power-on (serdev: 100-120 ms settle) and after Launch RAM
+(250 ms). A late Reset reply = "just finished booting"; the next command
+100 ms later is dropped. That explains n9bt66/67/68 too. **Dead:** "serdev
+vs tty" as the cause.
+
+Freshness check trap: a trace flood pushes `start build N` out of the
+rolling record; compare record md5 + kernel build instead.
+
+n9bt71: serdev path again (`bcm43540-bt`), test delays `msleep(500)` after
+power-on (hci_bcm) and `msleep(1000)` after every Reset (btbcm), init
+syncs before the early reboot.

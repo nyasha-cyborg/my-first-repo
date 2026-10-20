@@ -445,6 +445,7 @@ void start_c(long *sp)
 	static const unsigned char to3m[10] = {
 		0x01, 0x18, 0xfc, 0x06, 0x00, 0x00, 0xc0, 0xc6, 0x2d, 0x00 };
 	static const unsigned char rdname[4] = { 0x01, 0x14, 0x0c, 0x00 };
+	static const unsigned char rdver[4] = { 0x01, 0x01, 0x10, 0x00 };
 	unsigned char buf[300];
 	int hwake, tries, n;
 
@@ -508,6 +509,14 @@ power_done:
 	put("btwake: wake asserted (low)\n");
 	ms(30);
 
+	/* "hold": power and wake only, leave the UART to N_HCI/hci_uart
+	 * (the tty path has no device to drive these lines itself). */
+	if (argc > 3 && argv[3][0] == 'h') {
+		put("btwake: holding power and wake, no UART probe\n");
+		for (;;)
+			ms(1000);
+	}
+
 	fd = sc(SYS_openat, AT_FDCWD, (long)"/dev/ttyTHS2",
 		O_RDWR | O_NOCTTY | O_NONBLOCK, 0, 0);
 	if (fd < 0) {
@@ -542,6 +551,11 @@ power_done:
 
 	if (n && cc_ok(buf, n, 0x0c03)) {
 		put("btwake: ROM answered at 115200\n");
+		/* hci_bcm's order (n9bt67): after Reset, 100 ms, then Read
+		 * Local Version at 115200.  Under hci_uart the chip never
+		 * answered it; check whether the ROM does over the tty. */
+		ms(100);
+		hci_cmd(fd, "Read Local Version @115200", rdver, 4, buf, sizeof(buf), 1000);
 		n = hci_cmd(fd, "VSC fc18 -> 3000000", to3m, 10, buf, sizeof(buf), 1000);
 		if (n && cc_ok(buf, n, 0xfc18)) {
 			if (set_speed(fd, B3000000) < 0)
@@ -558,6 +572,7 @@ power_done:
 				}
 				lb_end();
 			}
+			hci_cmd(fd, "Read Local Version @3M", rdver, 4, buf, sizeof(buf), 1000);
 		}
 	} else if (!n) {
 		/* Old path, kept as the comparison point. */
