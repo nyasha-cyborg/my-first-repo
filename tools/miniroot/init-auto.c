@@ -389,10 +389,15 @@ void _start(void)
 			 * transaction, so the chip sees idle->wake; a static
 			 * high from boot is not the same signal. */
 			/* Android's BT_VND_PWR_ON forces a power-off first:
-			 * rfkill state 1 = blocked (line high = shutdown),
-			 * 0 = unblocked (line low = powered). */
+			 * REG_ON (PR1) is active high: line low = off,
+			 * high = powered (live Android, 2026-10-20). */
 			"echo '<6>n9bt: clk32kg '$(busybox cat /sys/kernel/debug/clk/clk32kg/clk_enable_count 2>&1) > /dev/kmsg; "
-			"busybox timeout 20 /bin/btwake 137 241 3000000 > /dev/kmsg 2>&1; "
+			/* btwake holds PR1/PEE1 after its probe; sample all three
+			 * BT lines (REG_ON, HOST_WAKE, BT_WAKE) while it does. */
+			"busybox timeout 20 /bin/btwake 137 241 > /dev/kmsg 2>&1 & "
+			"busybox sleep 14; "
+			"echo '<6>n9bt: held-gpio '$(busybox grep -E 'gpio-(137|166|241) ' /sys/kernel/debug/gpio | busybox tr -s ' ' | busybox tr '\\n' ';') > /dev/kmsg; "
+			"wait; "
 			"echo '<6>n9bt: btwake end' > /dev/kmsg; "
 			"busybox timeout 9 /bin/hciraw-min /dev/ttyTHS2 3000000 2>&1 | busybox sed 's/^/<6>n9bt: post3M /' > /dev/kmsg; "
 						"echo '<6>n9bt: late-gpio '$(busybox cat /sys/kernel/debug/gpio | busybox grep -E 'gpio-191|gpio-137' | busybox tr '\\n' ';') > /dev/kmsg; "

@@ -129,12 +129,11 @@ local.
 
 ## Bluetooth: what was wrong, what is now true
 
-- **The chip was powered off the whole time.** On flounder `BT_REG_ON` (PR1,
-  gpio 137) is **active low**: the vendor DTB lists it in `gpio-output-low`
-  and `bluedroid_pm` powers on by writing 0. Our always-on regulator held it
-  high = shutdown.
-- **`BT_WAKE` (PEE1, gpio 241) is also active low.** Live Android state with
-  BT on: `shutdown_gpio lo`, `bt_ext_wake hi` (idle = sleep).
+- ~~REG_ON active low~~ — **wrong, corrected 21:10**: live Android shows
+  gpio-137 `out hi` with BT on, `out lo` with BT off. REG_ON (PR1) is
+  **active high**. See `bluetooth.md`; n9bt65 got the first HCI replies.
+- **`BT_WAKE` (PEE1, gpio 241) is active low.** Live Android state with
+  BT on: `shutdown_gpio hi`, `bt_ext_wake hi` (idle = sleep).
 - **`CRTSCTS` is 0x80000000.** Every earlier "flow control" run used 0x8000,
   so hardware flow control was never actually on.
 - **32 kHz LPO was off.** Vendor marks `clk32k_kg` boot-enabled; mainline
@@ -179,3 +178,11 @@ watchdog. Test in flight: same image with `tegra_wdt.heartbeat=90`.
 3. Speaker: mainline tfa989x probe currently hangs the console; HAL only
    flips ALSA mixer switches (`SPK VMixer SPK Switch`).
 4. Touch events, installed pmOS boot, stall root cause — unchanged priorities.
+
+## Update 2026-10-20 21:20 — Bluetooth answers
+
+n9bt65: HCI Reset @115200, VSC fc18 to 3M and Read Local Name
+("BCM4350C0") all succeed. Root cause of the silence: REG_ON is active
+**high**. Next: fix the kernel DT polarity, hand the chip to
+hci_uart/hci_bcm with the vendor firmware, then BlueZ pairing. Details and
+evidence in `bluetooth.md`.

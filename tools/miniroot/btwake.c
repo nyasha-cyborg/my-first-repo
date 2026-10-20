@@ -6,11 +6,12 @@
  * boot (as a fixed regulator does) is not the same signal: the chip comes up
  * with the line already asserted and never sees the idle->wake transition.
  *
- * This tool drives PEE1 low, then high, waits for the chip to settle, opens
- * the UART at Android's 3 Mbaud/crtscts settings, sends an HCI Reset, and
- * retries once with a fresh wake edge if the first frame is unanswered.
+ * This tool power-cycles REG_ON (PR1), asserts BT_WAKE (PEE1, active low),
+ * then replays libbt-vendor's opening: HCI Reset at 115200/crtscts, VSC
+ * 0xfc18 to 3 Mbaud, switch the host, Read Local Name.  If 115200 is silent
+ * it falls back to a 3M Reset for comparison.
  *
- * usage: btwake [chip] [wake_line] [baud]
+ * usage: btwake [power_line] [wake_line]
  */
 #define SYS_openat    56
 #define SYS_close     57
@@ -37,6 +38,10 @@
  * (B3000000 == 0x100d), cs8|cread|clocal|crtscts. */
 #define TCSETS 0x5402
 #define TIOCSETD 0x5423
+#define TIOCOUTQ 0x5411
+#define TIOCMGET 0x5415
+#define TIOCM_RTS 0x004
+#define TIOCM_CTS 0x020
 #define B3000000 0x100d
 #define B115200 0x1002
 #define CS8 0x30
@@ -99,23 +104,45 @@ static void put(const char *s)
 	}
 }
 
-static void puthex(unsigned char v)
+/* Line builder: numbers and hex must land in the same kmsg record as their
+ * label, so accumulate here and emit once with lb_end(). */
+static char lb[180];
+static int lbn;
+
+static void lb_str(const char *s)
+{
+	while (*s && *s != '\n' && lbn < (int)sizeof(lb) - 1)
+		lb[lbn++] = *s++;
+}
+
+static void lb_hex(unsigned char v)
 {
 	static const char hx[] = "0123456789abcdef";
 
-	sc(SYS_write, 2, (long)&hx[v >> 4], 1, 0, 0);
-	sc(SYS_write, 2, (long)&hx[v & 0xf], 1, 0, 0);
+	if (lbn < (int)sizeof(lb) - 4) {
+		lb[lbn++] = hx[v >> 4];
+		lb[lbn++] = hx[v & 0xf];
+		lb[lbn++] = ' ';
+	}
 }
 
-static void putdec(long v)
+static void lb_dec(long v)
 {
 	char b[20];
 	int i = 0;
 
-	if (v < 0) { put("-"); v = -v; }
+	if (v < 0) { lb_str("-"); v = -v; }
 	if (!v) b[i++] = '0';
 	while (v) { b[i++] = '0' + (v % 10); v /= 10; }
-	while (i) sc(SYS_write, 2, (long)&b[--i], 1, 0, 0);
+	while (i && lbn < (int)sizeof(lb) - 1)
+		lb[lbn++] = b[--i];
+}
+
+static void lb_end(void)
+{
+	lb[lbn] = 0;
+	put(lb);
+	lbn = 0;
 }
 
 static int num(const char *s)
@@ -276,7 +303,7 @@ static int out_line(const char *chip, unsigned int line, unsigned int init)
 
 	fd = sc(SYS_openat, AT_FDCWD, (long)chip, O_RDWR, 0, 0);
 	if (fd < 0) {
-		put("btwake: chip open errno "); putdec(-fd); put("\n");
+		lb_str("btwake: chip open errno "); lb_dec(-fd); lb_end();
 		return -1;
 	}
 	for (unsigned int i = 0; i < sizeof(req); i++)
@@ -294,7 +321,7 @@ static int out_line(const char *chip, unsigned int line, unsigned int init)
 	rc = sc(SYS_ioctl, fd, GPIOHANDLE_GET_LINE_IOCTL, (long)&req, 0, 0);
 	sc(SYS_close, fd, 0, 0, 0, 0);
 	if (rc < 0) {
-		put("btwake: line request errno "); putdec(-rc); put("\n");
+		lb_str("btwake: line request errno "); lb_dec(-rc); lb_end();
 		return -2;
 	}
 	return req.fd;
@@ -308,6 +335,89 @@ static int set_line(int hfd, unsigned int v)
 		((char *)&d)[i] = 0;
 	d.values[0] = (unsigned char)v;
 	return (int)sc(SYS_ioctl, hfd, GPIOHANDLE_SET_LINE_VALUES_IOCTL, (long)&d, 0, 0);
+}
+
+/* Android's userial_vendor_open: cfmakeraw, then c_cflag |= CRTSCTS, speed
+ * from the open config.  Raw termios is all-zero flags apart from cflag. */
+static int set_speed_fc(long fd, unsigned int bconst, unsigned int fc)
+{
+	struct termios_k t;
+
+	for (unsigned int i = 0; i < sizeof(t); i++)
+		((char *)&t)[i] = 0;
+	t.c_cflag = bconst | CS8 | CREAD | CLOCAL | fc;
+	return (int)sc(SYS_ioctl, fd, TCSETS, (long)&t, 0, 0);
+}
+
+static int set_speed(long fd, unsigned int bconst)
+{
+	return set_speed_fc(fd, bconst, CRTSCTS);
+}
+
+/* With CRTSCTS the UART only shifts bytes out while CTS (the chip's RTS) is
+ * asserted, so a chip that never raises RTS leaves the command queued and
+ * looks exactly like a silent chip.  Log CTS/RTS and the unsent count. */
+static long g_fd = -1;
+
+static void line_state(const char *when)
+{
+	int m = 0, q = -1;
+	long rc = sc(SYS_ioctl, g_fd, TIOCMGET, (long)&m, 0, 0);
+
+	sc(SYS_ioctl, g_fd, TIOCOUTQ, (long)&q, 0, 0);
+	lb_str("btwake: lines "); lb_str(when);
+	if (rc < 0) {
+		lb_str(" tiocmget errno "); lb_dec(-rc);
+	} else {
+		lb_str(" cts="); lb_dec(!!(m & TIOCM_CTS));
+		lb_str(" rts="); lb_dec(!!(m & TIOCM_RTS));
+	}
+	lb_str(" outq="); lb_dec(q);
+	lb_end();
+}
+
+/* Write one HCI command and collect whatever arrives for up to wait_ms.
+ * Returns the number of bytes received; every chunk is logged as one line. */
+static int hci_cmd(long fd, const char *what, const unsigned char *cmd, int len,
+		   unsigned char *rx, int rxmax, int wait_ms)
+{
+	int total = 0, t;
+	long w;
+
+	lb_str("btwake: send "); lb_str(what); lb_end();
+	w = sc(SYS_write, fd, (long)cmd, len, 0, 0);
+	if (w != len) {
+		lb_str("btwake: write returned "); lb_dec(w); lb_end();
+	}
+	for (t = 0; t < wait_ms; t += 50) {
+		long r = sc(SYS_read, fd, (long)(rx + total), rxmax - total, 0, 0);
+
+		if (r > 0) {
+			lb_str("btwake: got ");
+			for (long i = 0; i < r; i++)
+				lb_hex(rx[total + i]);
+			lb_end();
+			total += r;
+			if (total >= rxmax)
+				break;
+		}
+		ms(50);
+	}
+	if (!total) {
+		lb_str("btwake: no reply to "); lb_str(what); lb_end();
+	}
+	line_state("after");
+	return total;
+}
+
+/* A Command Complete for `op` with status 0: 04 0e <len> <ncmd> <op lo> <op hi> 00 */
+static int cc_ok(const unsigned char *rx, int n, unsigned int op)
+{
+	for (int i = 0; i + 6 < n; i++)
+		if (rx[i] == 0x04 && rx[i + 1] == 0x0e &&
+		    rx[i + 4] == (op & 0xff) && rx[i + 5] == (op >> 8))
+			return rx[i + 6] == 0;
+	return 0;
 }
 
 static void start_c(long *sp) __attribute__((noreturn, used));
@@ -327,13 +437,16 @@ void start_c(long *sp)
 	unsigned int offset;
 	int power = (argc > 1) ? num(argv[1]) : 137;
 	int wake = (argc > 2) ? num(argv[2]) : 241;
-	int baud = (argc > 3) ? num(argv[3]) : 3000000;
-	struct termios_k t;
 	int ldisc = 0;
-	long fd, n;
-	unsigned char reset[4] = { 0x01, 0x03, 0x0c, 0x00 };
-	unsigned char buf[64];
-	int hwake, tries;
+	long fd;
+	static const unsigned char reset[4] = { 0x01, 0x03, 0x0c, 0x00 };
+	/* HCI_VSC_UPDATE_BAUDRATE, exactly as hw_config_cback builds it:
+	 * opcode fc18, len 6, 00 00, then 3000000 little-endian. */
+	static const unsigned char to3m[10] = {
+		0x01, 0x18, 0xfc, 0x06, 0x00, 0x00, 0xc0, 0xc6, 0x2d, 0x00 };
+	static const unsigned char rdname[4] = { 0x01, 0x14, 0x0c, 0x00 };
+	unsigned char buf[300];
+	int hwake, tries, n;
 
 	if (find_chip((unsigned int)wake, &offset, chipbuf) < 0) {
 		/* Fall back to the raw number on chip 0. */
@@ -342,13 +455,9 @@ void start_c(long *sp)
 		put("btwake: chip lookup failed, trying chip0\n");
 	} else {
 		chip = chipbuf;
-		put("btwake: user line ");
-		putdec(wake);
-		put(" -> ");
-		put(chip);
-		put(" offset ");
-		putdec(offset);
-		put("\n");
+		lb_str("btwake: user line "); lb_dec(wake);
+		lb_str(" -> "); lb_str(chip);
+		lb_str(" offset "); lb_dec(offset); lb_end();
 	}
 
 	/* Android's BT_VND_PWR_ON powers the section off first, then on.
@@ -370,14 +479,16 @@ void start_c(long *sp)
 			put("btwake: power line owned (rfkill), skipping\n");
 			goto power_done;
 		}
-		/* Raw line values: high = shutdown/off, low = powered. */
-		put("btwake: power off (high)\n");
-		if (set_line(hpwr, 1) < 0)
+		/* REG_ON is ACTIVE HIGH: live Android, 2026-10-20 21:10,
+		 * gpio-137 shutdown_gpio reads "out hi" with BT on and
+		 * "out lo" with BT off (repeated on/off/on/off). */
+		put("btwake: power off (low)\n");
+		if (set_line(hpwr, 0) < 0)
 			put("btwake: power off set failed\n");
 		ms(200);
-		if (set_line(hpwr, 0) < 0)
+		if (set_line(hpwr, 1) < 0)
 			put("btwake: power on set failed\n");
-		put("btwake: power on (low)\n");
+		put("btwake: power on (high)\n");
 		ms(500);
 	}
 
@@ -404,54 +515,68 @@ power_done:
 		sc(SYS_exit, 2, 0, 0, 0, 0);
 	}
 	sc(SYS_ioctl, fd, TIOCSETD, (long)&ldisc, 0, 0);	/* N_TTY */
-	for (unsigned int i = 0; i < sizeof(t); i++)
-		((char *)&t)[i] = 0;
-	t.c_cflag = ((baud == 3000000) ? B3000000 : B115200)
-		    | CS8 | CREAD | CLOCAL | CRTSCTS;
-	if (sc(SYS_ioctl, fd, TCSETS, (long)&t, 0, 0) < 0)
-		put("btwake: TCSETS failed\n");
-	ms(200);					/* Android: 100 ms settlement */
+	g_fd = fd;
 
-	for (tries = 0; tries < 2; tries++) {
+	/* libbt-vendor (REA, 2026-10-20): op(USERIAL_OPEN) opens at config
+	 * 09 02 07 00 = 8N1, baud index 7 = B115200, with CRTSCTS.
+	 * hw_config_start then sends HCI Reset at that speed, and only
+	 * after its Command Complete switches the chip to 3M with VSC
+	 * 0xfc18.  The ROM therefore talks 115200 first. */
+	if (set_speed(fd, B115200) < 0)
+		put("btwake: TCSETS 115200 failed\n");
+	ms(100);
+	line_state("open");
+
+	n = 0;
+	for (tries = 0; tries < 2 && !n; tries++) {
 		if (tries) {
 			/* Re-edge the wake line and retry. */
 			set_line(hwake, 1);	/* sleep */
-			put("btwake: retry: wake deasserted\n");
 			ms(50);
 			set_line(hwake, 0);	/* assert (active low) */
-			put("btwake: retry: wake asserted\n");
+			put("btwake: retry with fresh wake edge\n");
 			ms(30);
 		}
-		put("btwake: sending HCI Reset\n");
-		sc(SYS_write, fd, (long)reset, 4, 0, 0);
-		/* Accumulate: one non-blocking read can return only the first
-		 * two bytes of an HCI event. */
-		{
-			int total = 0;
+		n = hci_cmd(fd, "HCI Reset @115200", reset, 4, buf, sizeof(buf), 2000);
+	}
 
-			for (n = 0; n < 10; n++) {
-				long r = sc(SYS_read, fd, (long)buf, sizeof(buf), 0, 0);
+	if (n && cc_ok(buf, n, 0x0c03)) {
+		put("btwake: ROM answered at 115200\n");
+		n = hci_cmd(fd, "VSC fc18 -> 3000000", to3m, 10, buf, sizeof(buf), 1000);
+		if (n && cc_ok(buf, n, 0xfc18)) {
+			if (set_speed(fd, B3000000) < 0)
+				put("btwake: TCSETS 3M failed\n");
+			ms(20);
+			n = hci_cmd(fd, "Read Local Name @3M", rdname, 4, buf, sizeof(buf), 1000);
+			if (n > 7) {
+				/* 04 0e len ncmd 14 0c status name... */
+				lb_str("btwake: local name ");
+				for (int i = 7; i < n && buf[i]; i++) {
+					char c[2] = { (char)buf[i], 0 };
 
-				if (r > 0) {
-					long i;
-
-					put("btwake: got ");
-					for (i = 0; i < r; i++) {
-						puthex(buf[i]);
-						sc(SYS_write, 2, (long)" ", 1, 0, 0);
-					}
-					put("\n");
-					total += r;
+					lb_str(c);
 				}
-				ms(200);
+				lb_end();
 			}
-			if (total > 0) {
-				put("btwake: done (reply)\n");
-				break;
-			}
-			put("btwake: no reply in 2s\n");
+		}
+	} else if (!n) {
+		/* Old path, kept as the comparison point. */
+		put("btwake: 115200 silent, trying 3M\n");
+		if (set_speed(fd, B3000000) < 0)
+			put("btwake: TCSETS 3M failed\n");
+		ms(100);
+		n = hci_cmd(fd, "HCI Reset @3M", reset, 4, buf, sizeof(buf), 2000);
+		if (!n) {
+			/* Every no-flow-control run so far had REG_ON at the
+			 * wrong polarity; this leg has never been valid. */
+			if (set_speed_fc(fd, B115200, 0) < 0)
+				put("btwake: TCSETS 115200 noflow failed\n");
+			ms(100);
+			hci_cmd(fd, "HCI Reset @115200 noflow", reset, 4, buf,
+				sizeof(buf), 2000);
 		}
 	}
+	put("btwake: probe done\n");
 
 	sc(SYS_close, fd, 0, 0, 0, 0);
 	/* Hold BT_WAKE asserted so the chip stays awake for later tools. */

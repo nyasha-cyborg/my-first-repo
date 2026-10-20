@@ -214,8 +214,9 @@ bt_hwcfg: Settlement delay -- 100 ms
 bt_hwcfg: bt vendor lib: set UART baud 3000000
 ```
 
-So: the module is a **BCM4350C0**, its ROM answers at **3 Mbaud** (not 115200),
-and the firmware is **bcm4350c0.hcd** (the vendor dir has it; `bcm4354.hcd` is
+So: the module is a **BCM4350C0**, ~~its ROM answers at 3 Mbaud~~ (wrong —
+see "libbt-vendor's real opening" below: the first Reset is at 115200 and
+unlogged), and the firmware is **bcm4350c0.hcd** (the vendor dir has it; `bcm4354.hcd` is
 the HTC board-named variant). Android also deliberately power-cycles REG_ON
 ("BT_VND_PWR_ON now forces power-off first").
 
@@ -405,3 +406,106 @@ Next hypothesis from Android's log order: the HAL performs a baud dance
 command, which looks like a deliberate UART resync. That sequence has never
 been reproduced. Test it next, then fall back to hciattach/btbcm with the
 ROM assumed at 115200.
+
+## libbt-vendor's real opening (REA, 2026-10-20 21:00)
+
+The "baud dance" read off logcat was a misreading. Decompiled
+`/vendor/lib64/libbt-vendor.so` (sha256 `5890605f…`):
+
+- `op(BT_VND_OP_USERIAL_OPEN)` -> `userial_vendor_open(cfg 09 02 07 00)`:
+  8N1, baud index 7 -> table `0x104d90[6]` = `0x1002` = **B115200**;
+  `cfmakeraw`, `c_cflag |= 0x80000000` (CRTSCTS), then vendor ioctls
+  `0x8003`, `0x8005` (downstream serial driver only).
+- `hw_config_start`: **HCI Reset at 115200** (no log line), then
+  `hw_config_cback`: VSC `fc18` (`06 00 00 c0 c6 2d 00`) -> *then* logs
+  "set UART baud 3000000" -> Read Local Name (`0c14`, logs "Chipset") ->
+  firmware (`fc2e` + records) -> 115200 + 100 ms settle (fw restarts at
+  115200) -> Reset -> `fc18` -> 3M -> `fc01` bdaddr.
+- So the 3M->115200->3M sequence is **post-firmware**, not a resync before
+  first contact.
+
+## n9bt63: Android's exact opening, still silent (build 63)
+
+`btwake` now replays it: PR1 off/on, PEE1 asserted low, 115200+CRTSCTS,
+Reset, retry with a fresh wake edge, `fc18`/3M/Local Name on success, 3M
+Reset as fallback. Also fixed: `puthex`/`putdec` wrote single chars to
+stderr->kmsg, so any reply bytes were split into 1-char records.
+
+```
+n9bt: clk32kg 1
+n9bt: btwake: user line 241 -> /dev/gpiochip0 offset 241
+n9bt: btwake: power off (high) / power on (low) / wake asserted (low)
+n9bt: btwake: no reply to HCI Reset @115200     (x2, second with new edge)
+n9bt: btwake: no reply to HCI Reset @3M
+post3M raw: no reply in 6s
+```
+
+First n9bt63 boot hit the early stall (no record, 90 s watchdog return);
+battery 22% on USB only.
+
+**Dead:** "wrong initial baud" — both 115200 and 3M silent with CRTSCTS.
+
+**Open question now:** do our bytes leave the UART at all? With CRTSCTS the
+Tegra transmits only while CTS (= chip RTS) is asserted; a chip held in
+reset never asserts it, and the command sits in the queue. Never measured.
+
+## n9bt64: transmit diagnostics (build 64)
+
+All legs silent, including **115200 no-flow**. `cts=1 rts=1 outq=0`
+everywhere, but that is uninformative: mainline `serial-tegra`
+`get_mctrl` always reports CTS (hardware handles it), and `outq` only shows
+the tty buffer drained into DMA/FIFO.
+
+## REG_ON is ACTIVE HIGH — the 2026-10-20 "polarity fix" was wrong
+
+Live Android, toggled with `svc bluetooth enable/disable`, read from
+`/d/gpio`, repeated on/off/on/off:
+
+```
+BT off: gpio-137 (shutdown_gpio) out lo   gpio-166 in lo   gpio-241 out hi
+BT on:  gpio-137 (shutdown_gpio) out hi   gpio-166 in lo   gpio-241 out hi
+rfkill: bluedroid_pm state 1
+```
+
+The earlier "`out lo` = powered" sample was taken with BT off. Every btwake
+run from n9bt44 to n9bt64 therefore held the chip **off**. The old
+always-on regulator (PR1 high) had the right polarity but ran with the
+wrong CRTSCTS bit, LPO off and 3M-only probes.
+
+## n9bt65: FIRST HCI REPLY (build 65)
+
+btwake with PR1 low->high, PEE1 asserted low, 115200+CRTSCTS, LPO on:
+
+```
+n9bt: btwake: power off (low) / power on (high)
+n9bt: btwake: send HCI Reset @115200
+n9bt: btwake: got 04 0e 04 01 03 0c 00            <- Command Complete, ok
+n9bt: btwake: send VSC fc18 -> 3000000
+n9bt: btwake: got 04 0e 04 01 18 fc 00            <- ok
+n9bt: btwake: send Read Local Name @3M
+n9bt: btwake: got 04 0e fc 01 14 0c 00 42 43 4d 34 33 35 30 43 30 ...
+n9bt: btwake: local name BCM4350C0
+n9bt: held-gpio gpio-137 out hi ; gpio-241 out lo
+```
+
+Chip, UART TX/RX, pads, LPO and the 3M switch are all proven. Reply
+latency ~50 ms per command.
+
+**Confirmed:** REG_ON active high; BT_WAKE asserted low works; ROM speaks
+115200 first; `fc18` + host 3,040,800 baud works.
+
+**Dead:** "wrong initial baud" (the silence was REG_ON), "bytes never
+leave the UART", "ROM answers at 3M".
+
+## Next actions
+
+1. Kernel DT: PR1 `shutdown-gpios` (and the rfkill node's `reset-gpios`)
+   must be **GPIO_ACTIVE_HIGH**; BT_WAKE stays active low. Then let
+   `hci_uart`/`hci_bcm` own the chip via serdev, `init_speed` 115200,
+   `oper_speed` 3000000.
+2. Firmware: `btbcm` has no BCM4350C0 subver entry; stage
+   `bcm4350c0.hcd` as `brcm/BCM.hcd` (or add the subver) and confirm the
+   download + post-patch 115200 Reset.
+3. BlueZ: `bluetoothctl` scan, then pair earbuds (A2DP).
+4. Early stall still ~50% at 21% battery on USB: charge from a wall socket
+   before long runs.
