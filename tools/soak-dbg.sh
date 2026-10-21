@@ -8,7 +8,10 @@ IMG=$1
 N=${2:-10}
 HERE=$(dirname "$0")
 LOG=/tmp/n9build/soak.log
-cnt() { "$HERE/n9sh.sh" "grep -E ' (palmas|7000d000.i2c)\$|rtc\$' /proc/interrupts | awk '{print \$2}' | tr '\n' ' '" 6 | tail -1; }
+cnt() { "$HERE/n9sh.sh" "$(cat <<'EOC'
+grep -E ' palmas$| 7000d000.i2c$|rtc$' /proc/interrupts | awk '{printf "%s ", $2}'
+EOC
+)" 6 | tail -1; }
 for k in $(seq 1 "$N"); do
 	t0=$(date +%T)
 	for i in $(seq 1 100); do adb devices | grep -q 'device$' && break; sleep 3; done
@@ -29,7 +32,7 @@ for k in $(seq 1 "$N"); do
 	done
 	if [ "$rel" = 0 ]; then echo "$k $t0 gadget@${up}s SHELL-DEAD" >> $LOG; else
 		a=$(cnt); sleep 4; b=$(cnt)
-		"$HERE/n9sh.sh" 'echo 0 > /sys/class/rtc/rtc0/wakealarm; echo $(( $(date +%s)+5 )) > /sys/class/rtc/rtc0/wakealarm' 3 >/dev/null
+		"$HERE/n9sh.sh" 'echo 0 > /sys/class/rtc/rtc0/wakealarm; echo $(( $(date +%s)+5 )) > /sys/class/rtc/rtc0/wakealarm' 4 >/dev/null
 		sleep 9; c=$(cnt)
 		echo "$k $t0 gadget@${up}s shell-ok irq[a]=$a irq[b]=$b irq[after-alarm]=$c" >> $LOG
 		"$HERE/n9sh.sh" 'reboot -f' 2 >/dev/null

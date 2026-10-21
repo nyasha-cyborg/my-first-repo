@@ -217,6 +217,31 @@ Supersedes every earlier "Next actions" list. Full evidence: `bluetooth.md`.
   `/tmp/n9build` is tmpfs: ramdisk templates are lost on host reboot (rebuild
   from `n9bt100-stripped.img`: `bootimg-split.py` + `cpio`).
 
+## STATE at 2026-10-22 ~02:00 (overnight) — read this first
+
+- **Tablet is off USB** (no adb/fastboot/gadget) since ~01:35 during a soak run:
+  needs a power cycle (hold power ~15 s) and probably charging (battery was
+  ~flat earlier; test boots do not charge it). Nothing is flashed; everything
+  is `fastboot boot`.
+- Done today: **Bluetooth works** (hci0, LE scan hears devices); PMIC
+  interrupt storm fixed by dropping `nvidia,invert-interrupt`; both sound
+  cards register; speaker PCM stream plays without errors **but is silent**
+  (parked, next steps in `audio.md`). Kernel: `~/code/linux-flounder`
+  `usb-bringup` @ `6988accc2` (release `6.19.0-htc-flounder-g6988accc2d82`);
+  full series exported to `patches/linux-flounder-series/`.
+- Open: (1) is the PMIC interrupt actually delivered after the invert fix
+  (RTC alarm did not fire once; read INT status regs after an alarm to tell
+  PMIC-side from delivery-side), (2) silent speakers, (3) boot reliability
+  soak on the fixed console (`tools/soak-dbg.sh <img> 20`, image
+  `n9soak5-stripped.img`), (4) Wi-Fi+BT together in a real rootfs, BlueZ
+  pairing.
+- Harness lessons (do not re-learn): console must be the read-line-and-run
+  shell (`/etc/n9-plainsh`) driven by `tools/n9sh.sh` (marker based);
+  interactive `ash` over the gadget gets corrupted by host tty echo;
+  a command inheriting the console as stdin eats later lines (init now runs
+  every line with `</dev/null`); `pgrep -f`/`pkill -f` patterns can match your
+  own command line; never `cat` a regmap debugfs file during an irq storm.
+
 ## NEW 2026-10-21 22:45 — likely root cause of the stalls
 The Palmas PMIC interrupt storms (~1000 irq/s, i2c4 ~10k irq/s, all
 `palmas_usb_vbus`) and starves the PMIC I2C bus, so every regulator operation

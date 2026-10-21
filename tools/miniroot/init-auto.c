@@ -570,7 +570,7 @@ void _start(void)
 			 * sh: a bad line (syntax error, stray byte) can never
 			 * kill the console shell or leave two readers on the
 			 * tty. */
-			"while :; do IFS= read -r l && /bin/sh -c \"$l\"; done", 0 };
+			"while :; do IFS= read -r l && /bin/sh -c \"$l\" </dev/null; done", 0 };
 
 		sc(SYS_execve, (long)"/bin/sh", (long)plain_argv, 0, 0, 0);
 	}
