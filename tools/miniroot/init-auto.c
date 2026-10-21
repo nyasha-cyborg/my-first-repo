@@ -566,7 +566,11 @@ void _start(void)
 		/* sh on a tty is always interactive; feed it through a pipe so
 		 * it never prompts or queries the terminal, and respawn it. */
 		static const char *plain_argv[] = { "sh", "-c",
-			"while :; do /bin/busybox cat | /bin/sh; done", 0 };
+			/* read one console line at a time and run it in a child
+			 * sh: a bad line (syntax error, stray byte) can never
+			 * kill the console shell or leave two readers on the
+			 * tty. */
+			"while :; do IFS= read -r l && /bin/sh -c \"$l\"; done", 0 };
 
 		sc(SYS_execve, (long)"/bin/sh", (long)plain_argv, 0, 0, 0);
 	}

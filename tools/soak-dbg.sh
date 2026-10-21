@@ -19,7 +19,7 @@ for k in $(seq 1 "$N"); do
 	for i in $(seq 1 60); do lsusb | grep -q 0525:a4a7 && { up=$i; break; }; sleep 1; done
 	if [ $up = 0 ]; then echo "$k $t0 NO-GADGET" >> $LOG; continue; fi
 	sleep 12
-	"$HERE/n9sh.sh" '/bin/busybox --install -s /bin; mount -t debugfs none /sys/kernel/debug 2>/dev/null' 3 >/dev/null
+	"$HERE/n9sh.sh" '/bin/busybox --install -s /bin; mount -t debugfs none /sys/kernel/debug 2>/dev/null' 9 >/dev/null
 	# the first command (busybox --install) can take longer than its window:
 	# retry the readiness probe before declaring the shell dead
 	rel=0
