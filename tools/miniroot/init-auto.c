@@ -415,6 +415,7 @@ void _start(void)
 			"  busybox sleep 15; "
 			"  echo '<6>n9bt: hci '$(busybox ls /sys/class/bluetooth 2>&1 | busybox tr '\\n' ' ') > /dev/kmsg; "
 			"  echo '<6>n9bt: bt-gpio '$(busybox grep -E 'gpio-(137|166|241) ' /sys/kernel/debug/gpio | busybox tr -s ' ' | busybox tr '\\n' ';') > /dev/kmsg; "
+			"  if [ -e /etc/bt-scan ]; then /bin/btscan-min; fi; "
 			"elif [ -e /etc/bt-ldisc ]; then "
 			/* tty path: btwake powers the chip and holds PR1/PEE1,
 			 * hciattach-min puts ttyTHS2 into N_HCI with the BCM

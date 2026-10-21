@@ -973,3 +973,26 @@ driver.
 Next: stability repeats, ablate those three, BlueZ scan/pair, then the
 WiFi note (pwrseq fix may close the SDIO enumeration bug), then an upstream
 series.
+
+### n9bt94–97 (22:00–22:08): the radio hears real devices
+
+`tools/miniroot/btscan-min.c` (new): raw HCI socket, `HCIDEVUP`, LE scan
+(6 s) + classic inquiry (10 s), plus an HCI **monitor** socket that logs every
+packet the kernel sends/receives (like btmon). Wired into init-auto.c with
+`/etc/bt-scan`.
+
+- Raw-socket reads returned nothing (my tool's filter/parse), but the
+  monitor shows the controller answering Reset/0x1001 and then a stream of
+  **LE advertising reports**: 20 events from **9 distinct addresses** in
+  ~11 s (nearby phones/tags). So the RF path, firmware and kernel HCI
+  receive path all work.
+- Classic inquiry: no results (nothing discoverable nearby / not verified).
+- One `Frame reassembly failed (-84)` seen once during an earlier scan run
+  (n9bt95): not reproduced in n9bt96/97; keep an eye on it.
+- Stability: n9bt93 passed 3/3 repeats (hci0 up, build 0690, no timeouts);
+  the failed attempts were pre-init stalls with no record.
+
+Remaining: ablate the three DT extras (BT_WAKE active-high, audio clock
+node, `brcm,bcm4335a0` compatible), fix `btscan-min`'s raw-socket read,
+BlueZ pairing with a real device, update `wifi.md` (pwrseq/LPO ordering),
+upstream series (probe-time power + pwrseq DT).
