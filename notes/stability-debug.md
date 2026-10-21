@@ -538,3 +538,33 @@ serial shell and `/proc/<pid>/stack`:
 Next: read the Palmas INT3 / VBUS state registers while storming; check the
 IRQ trigger type (DT says edge; palmas INT is level-low), the local
 `palmas-usb` n9 changes, and whether the storm starts at gadget connect.
+
+### 22:45 follow-up: what is and is not the storm's cause
+
+- **Android is quiet** on the same hardware and cable: `/proc/interrupts`
+  shows the PMIC irq (`GIC 4-0058`) at 8 events and `palmas_usb_vbus` at 0.
+- Android's DT: palmas `interrupts = <0 86 0>` (type NONE, same as ours) and
+  its `pmc` node has **no** `nvidia,invert-interrupt`; ours sets it (commit
+  `38ff68627`, "correct flounder battery settings"). Sibling boards in the
+  tree (norrin, smaug, p2894) use `IRQ_TYPE_LEVEL_HIGH`.
+- **Dead:** removing `ti,enable-vbus-detection` (image `n9dbgB`): storm
+  unchanged (palmas irq 100k and i2c 800k within ~20 s), so the VBUS child is
+  not the source, only the symptom's loudest consumer.
+- **Dead (hung the machine):** `IRQ_TYPE_LEVEL_HIGH` for the palmas parent
+  (image `n9dbgC`): shell never answered, board needed a reset. With the
+  existing PMC `invert-interrupt` this is probably a polarity mismatch
+  (palmas.c also sets the PMIC INT_POLARITY bit when LEVEL_HIGH).
+- Untested: drop `nvidia,invert-interrupt` from the flounder `pmc` node
+  (Android has none) with the type left NONE; or LEVEL_HIGH without invert.
+- REA: Android kernel (`/dev/block/mmcblk0p16`, sha256 `b26351cb…`, pulled with
+  `mcp__rea__pull_adb_file`). kallsyms addresses are hidden (kptr_restrict);
+  recovered by locating the kernel's own address table in the Image
+  (offset 11312640, 71795 entries, `_text` = 0xffffffc000080000) and pairing
+  it with `/proc/kallsyms` order -> `kallsyms.fixed` (rebuildable, tmpfs).
+  `palmas_i2c_probe` = 0xffffffc0004e5434, `palmas_irq_set_type` 0x4e4c08,
+  `palmas_irq_thread` 0x4e4f8c. Window wrapped with
+  `tools/image2elf.py Image kallsyms.fixed ffffffc000080000 out.elf
+  ffffffc0004e0000 ffffffc000500000`. First decompile of `palmas_i2c_probe`
+  shows a 4-slave regmap setup and a per-chip-id jump table; the IRQ
+  request itself still has to be read (follow the jump-table case for the
+  tps65913, then `palmas_irq_*`).

@@ -217,9 +217,20 @@ Supersedes every earlier "Next actions" list. Full evidence: `bluetooth.md`.
   `/tmp/n9build` is tmpfs: ramdisk templates are lost on host reboot (rebuild
   from `n9bt100-stripped.img`: `bootimg-split.py` + `cpio`).
 
+## NEW 2026-10-21 22:45 — likely root cause of the stalls
+The Palmas PMIC interrupt storms (~1000 irq/s, i2c4 ~10k irq/s, all
+`palmas_usb_vbus`) and starves the PMIC I2C bus, so every regulator operation
+blocks (this is what looked like the `tfa989x` probe hang, and probably mode B
+and the early stall). Android is quiet on the same hardware. Dead ends and
+the REA recipe are in `stability-debug.md` (22:45 follow-up). Untested next
+step: drop `nvidia,invert-interrupt` from the flounder `pmc` node (Android
+has none), then re-measure `/proc/interrupts` on `n9dbgA`-style images.
+Images: `n9dbgA` (consistent kernel `...gbd93f7930b07`, serial shell, all
+modules staged by `tools/stage-modules.sh`); drive it with `tools/n9sh.sh`.
+Never `cat` a regmap debugfs file while the storm runs: it wedges the shell.
+
 ## Next (ranked)
-1. Early stall (~1 in 3 boots never writes a record, watchdog resets):
-   `stability-debug.md`.
+1. Fix the Palmas interrupt storm (above), then re-test the early stall.
 2. BlueZ pairing; Wi-Fi+BT coexistence in a real rootfs.
 3. Audio bring-up (`audio.md`), touch events, installed boot (needs approval
    to flash).
