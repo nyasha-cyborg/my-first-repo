@@ -1,0 +1,33 @@
+From 71ec2f85ea62a0570870c780b9ea14963f15d0b9 Mon Sep 17 00:00:00 2001
+From: nyasha <nmushambi@proton.me>
+Date: Wed, 21 Oct 2026 22:57:04 +1300
+Subject: [PATCH] arm64: tegra132: flounder: do not invert the PMC interrupt
+ polarity
+
+The Palmas PMIC interrupt stormed (~1000 irq/s, the PMIC I2C bus ~10k
+irq/s), starving every regulator operation: the tfa989x probe hung in
+regulator_dev_lookup behind irq/72-palmas, the SDIO rescan blocked, and the
+machine stalled in 'mode B'. The vendor DT has no nvidia,invert-interrupt
+property in its PMC node; the port had added it. Without it the interrupt
+counters stay quiet and snd-soc-tfa989x probes (both sound cards register).
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+---
+ arch/arm64/boot/dts/nvidia/tegra132-flounder.dts | 1 -
+ 1 file changed, 1 deletion(-)
+
+diff --git a/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts b/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
+index 30a362fd6..41470e8ad 100644
+--- a/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
++++ b/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
+@@ -1163,7 +1163,6 @@ rt5677@0 {
+ 	};
+ 
+ 	pmc@7000e400 {
+-		nvidia,invert-interrupt;
+ 		nvidia,suspend-mode = <0>;
+ 		nvidia,cpu-pwr-good-time = <500>;
+ 		nvidia,cpu-pwr-off-time = <300>;
+-- 
+2.56.0
+

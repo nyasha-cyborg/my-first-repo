@@ -568,3 +568,24 @@ IRQ trigger type (DT says edge; palmas INT is level-low), the local
   shows a 4-slave regmap setup and a per-chip-id jump table; the IRQ
   request itself still has to be read (follow the jump-table case for the
   tps65913, then `palmas_irq_*`).
+
+## 2026-10-21 23:00 — FIXED: remove `nvidia,invert-interrupt` from the flounder PMC node
+
+Image `n9dbgD` (consistent kernel `...gbd93f7930b07`, only change: the DT
+property removed, matching the vendor DT):
+
+```
+/proc/interrupts, 4 s apart:   palmas 17622 -> 17622   i2c(7000d000) 140903 -> 140903
+palmas_usb_vbus 0              (before: ~1000/s and ~10k/s, all vbus)
+modprobe snd-soc-tfa989x       rc=0, no D-state tasks
+/proc/asound/cards             0 [speakers] 1 [G9]       (both cards)
+```
+
+So the interrupt-polarity double inversion made the PMIC INT line storm; it
+starved the PMIC I2C bus and every regulator user queued behind it (tfa989x,
+SDIO rescan, late regulator cleanup, ...). Kernel commit in linux-flounder
+(local), patch exported to `patches/`. Still to verify: that the early stall
+(~1 in 3 boots) and mode B are gone (soak), and that the PMIC interrupt still
+works at all (the count freezes after boot; an edge-typed trigger on a level
+line may now miss events, e.g. VBUS/charger changes — check with a cable
+unplug/plug, and see whether LEVEL_HIGH without invert is the cleaner fix).
