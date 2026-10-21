@@ -191,42 +191,36 @@ evidence in `bluetooth.md`.
 
 ---
 
-# RESUME HERE — Bluetooth, paused 2026-10-21 00:45
+# RESUME HERE — Bluetooth solved 2026-10-21 22:20
 
-Supersedes the "Next actions" lists above. Full evidence: `bluetooth.md`.
+Supersedes every earlier "Next actions" list. Full evidence: `bluetooth.md`.
 
-## State
-- Kernel `~/code/linux-flounder` branch `usb-bringup`, tip `0e4af1c56`
-  (local only — its `origin` is someone else's repo; never push it).
-  The three BT commits on top of `45145e3cf` are exported to
-  `patches/bluetooth-wip/` (apply with `git am`).
-- Release for the next build: `6.19.0-htc-flounder-g0e4af1c56…` — commit
-  changed it, so rebuild Image **and** restage every ramdisk module
-  (trap 3). Ramdisk template: `/tmp/n9build/rd78` (tmpfs, lost on host
-  reboot; rebuild from `rd66` steps in `bluetooth.md` if gone).
-- Tablet: hung off USB during the n9bt78 boot at ~00:38; being charged.
+## Bluetooth: working
+- **Root cause**: the BCM4354 is a Wi-Fi/BT combo; the BT firmware only runs
+  properly while the WLAN side is alive. The SDIO card used to race the 32 kHz
+  LPO (always-on `wifi-reg-on` regulator, one scan at host probe).
+- **Fix** = kernel commit `bd93f7930` in `~/code/linux-flounder` (branch
+  `usb-bringup`, local only, never push; exported as
+  `patches/bluetooth-wip/0004-*.patch` on top of the three older WIP commits):
+  DT `mmc-pwrseq-simple` with the Palmas `clk32kg` as `ext_clock` (replaces
+  the regulator) + `hci_bcm` powers the chip in probe before serdev opens the
+  UART. Everything else is upstream `hci_bcm`/`btbcm`.
+- Proven: hci0 up (firmware build 0690) 3/3 repeats, no timeouts; LE scan hears
+  9 distinct devices in ~11 s (`tools/miniroot/btscan-min.c`, `/etc/bt-scan`).
+  Wi-Fi alone still works on the new DT (DHCP lease).
+- Not done: BlueZ pairing with a real device; classic inquiry found nothing;
+  Wi-Fi + BT together in one image (the n9bt101 test image started two
+  wpa_supplicants — artifact); upstream series; installed rootfs with bluez.
+- Handy: `tools/bt-bootloop.sh N` boots `n9bt<N>-stripped.img` and prints the
+  record; `tools/bootimg-swap-ramdisk.py` swaps ramdisk/kernel region in a
+  stripped image; init build recipe in `bluetooth.md` (n9bt82-84 section).
+  `/tmp/n9build` is tmpfs: ramdisk templates are lost on host reboot (rebuild
+  from `n9bt100-stripped.img`: `bootimg-split.py` + `cpio`).
 
-## Proven
-- REG_ON (PR1) active high; chip = BCM4350C0, subver 0x610c ->
-  `brcm/BCM4354.hcd` (= vendor `bcm4350c0.hcd`).
-- **Root cause**: serdev opened the UART before the chip had power -> only
-  one reply ever got through. Fix: power at probe (`80e28b1bf`).
-- Early baud (`brcm,bcm4335a0`): setup + 0.45 s firmware download at 3M.
-
-## Open — the one remaining step
-After Launch RAM the chip reboots with the port open; the first command
-(mainline sends fc18 first) is unanswered. n9bt78 (`0e4af1c56`) adds
-Android's order: host 115200, 100 ms, Reset, then fc18. **Untested.**
-
-## Resume
-1. Tablet in Android -> `adb root` -> pull record ->
-   `python3 -I tools/record-id.py rec.bin`; if build 78, read it.
-2. Otherwise `tools/bt-bootloop.sh 78` (image already built).
-3. If hci0 comes up: tune delays (1 s in btbcm, 500 ms wake), drop the
-   n9dbg traces, proper compatible instead of bcm4335a0, then BlueZ.
-4. Side task: ramoops to locate the ~50% pre-init early stall (Android
-   kernel has ramoops/persistent_ram built in; region not yet found in
-   its DTB).
-
-Always REA vendor blobs/kernels before designing a hardware test.
-Commit + push `nexus9` after each test cycle.
+## Next (ranked)
+1. Early stall (~1 in 3 boots never writes a record, watchdog resets):
+   `stability-debug.md`.
+2. BlueZ pairing; Wi-Fi+BT coexistence in a real rootfs.
+3. Audio bring-up (`audio.md`), touch events, installed boot (needs approval
+   to flash).
+4. Upstream: pwrseq/LPO ordering, probe-time power, VBUS comparator fix.
