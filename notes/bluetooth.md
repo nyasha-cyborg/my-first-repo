@@ -996,3 +996,14 @@ Remaining: ablate the three DT extras (BT_WAKE active-high, audio clock
 node, `brcm,bcm4335a0` compatible), fix `btscan-min`'s raw-socket read,
 BlueZ pairing with a real device, update `wifi.md` (pwrseq/LPO ordering),
 upstream series (probe-time power + pwrseq DT).
+
+### n9bt98 (22:11): ablation — the DT extras are not needed
+
+Original active-low BT_WAKE (`GPIO_ACTIVE_LOW`) and no `clock-audio` node:
+hci0 up (build 0690), LE scan hears devices. So the whole fix is
+(1) DT `mmc-pwrseq-simple` with the Palmas LPO as `ext_clock` (replacing the
+always-on `wifi-reg-on` regulator) and (2) `hci_bcm` powering the chip in
+probe before serdev opens the port. Kernel commit amended to `HEAD` in
+linux-flounder (local only); patch re-exported as
+`patches/bluetooth-wip/0004-...`. Compatible stays `brcm,bcm4335a0`
+(early 3 Mbaud download, 0.4 s instead of ~8 s).

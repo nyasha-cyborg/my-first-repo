@@ -1,4 +1,4 @@
-From 3706fe92eea0897d56931cdc04c7f801536df4fa Mon Sep 17 00:00:00 2001
+From bd93f7930b073339ef716535ad9695a6a83581b8 Mon Sep 17 00:00:00 2001
 From: nyasha <nmushambi@proton.me>
 Date: Wed, 21 Oct 2026 21:46:13 +1300
 Subject: [PATCH] Bluetooth: flounder - order WLAN power and power the chip
@@ -10,50 +10,25 @@ always-on regulator raised WL_REG_ON at boot, the SDIO scan ran once).
 
 - DT: mmc-pwrseq-simple with the Palmas clk32kg as ext_clock, then WL_REG_ON,
   300 ms, then the SDIO scan; drop the always-on wifi-reg-on regulator
-- DT: boot-enable the Palmas audio 32 kHz output like the vendor DT; assert
-  BT_WAKE (active high) with REG_ON
 - hci_bcm: power the chip in probe, before serdev opens the UART
 - hci_bcm/btbcm: back to the upstream code (drop the local tty speed and
   3 Mbaud init hacks and all n9dbg traces)
 
-Tested on hardware: hci0 up with firmware build 0690 (n9bt93).
+Tested on hardware: hci0 up with firmware build 0690, LE scan hears nearby
+devices (n9bt98).
 
 Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
 ---
- .../boot/dts/nvidia/tegra132-flounder.dts     | 28 ++++-----
+ .../boot/dts/nvidia/tegra132-flounder.dts     | 18 ++----
  drivers/bluetooth/btbcm.c                     |  4 +-
  drivers/bluetooth/hci_bcm.c                   | 62 ++-----------------
- 3 files changed, 20 insertions(+), 74 deletions(-)
+ 3 files changed, 11 insertions(+), 73 deletions(-)
 
 diff --git a/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts b/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
-index a31a67ef6..657e6743f 100644
+index a31a67ef6..30a362fd6 100644
 --- a/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
 +++ b/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
-@@ -706,7 +706,7 @@ bluetooth {
- 			compatible = "brcm,bcm4335a0";
- 			max-speed = <3000000>;
- 			shutdown-gpios = <&gpio TEGRA_GPIO(R, 1) GPIO_ACTIVE_HIGH>;
--			device-wakeup-gpios = <&gpio TEGRA_GPIO(EE, 1) GPIO_ACTIVE_LOW>;
-+			device-wakeup-gpios = <&gpio TEGRA_GPIO(EE, 1) GPIO_ACTIVE_HIGH>;
- 			/* HOST_WAKE (PU6) is left out until its polarity is
- 			 * measured; without it hci_bcm skips runtime PM. */
- 			clocks = <&palmas_clk32kg>;
-@@ -948,6 +948,14 @@ palmas_clk32kg: clock {
- 				ti,clock-boot-enable;
- 			};
- 
-+			/* The vendor DT boot-enables the audio 32 kHz output too
-+			 * (n9bt87 test: is the BT LPO on this output?). */
-+			palmas_clk32kgaudio: clock-audio {
-+				compatible = "ti,palmas-clk32kgaudio";
-+				#clock-cells = <0>;
-+				ti,clock-boot-enable;
-+			};
-+
- 			pmic {
- 				compatible = "ti,tps65913-pmic", "ti,palmas-pmic";
- 
-@@ -1221,20 +1229,12 @@ usb2-0 {
+@@ -1221,20 +1221,12 @@ usb2-0 {
  	/* BT_REG_ON (PR1) and BT_WAKE (PEE1) belong to the bluetooth node
  	 * under serial@70006200; hci_bcm drives both. */
  
@@ -78,7 +53,7 @@ index a31a67ef6..657e6743f 100644
  		reset-gpios = <&gpio TEGRA_GPIO(X, 7) GPIO_ACTIVE_LOW>;
  		post-power-on-delay-ms = <300>;
  		power-off-delay-us = <300>;
-@@ -1247,7 +1247,7 @@ mmc@700b0000 {
+@@ -1247,7 +1239,7 @@ mmc@700b0000 {
  		sd-uhs-sdr104;
  		nvidia,only-1-8v;
  		non-removable;
