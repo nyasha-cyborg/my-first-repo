@@ -943,3 +943,11 @@ hci_bcm sequence needs no special delays.
 Remaining: repeat for stability, drop the n9dbg traces and the 1 s btbcm
 delay if unneeded, give the DT a proper compatible (not bcm4335a0), check
 ordering when brcmfmac loads *after* BT, then BlueZ scan/pair.
+
+### n9bt91 (21:41): no brcmfmac needed — only the SDIO/WLAN power sequence
+
+Same as n9bt90 without `/etc/bt-wifi-first` (brcmfmac never loaded): hci0
+up at 7.2 s (BCM4354 37.4MHz WLBGA Google T1-0319 build 0690), no timeouts.
+So the requirement is the WLAN side being powered and enumerated with the
+LPO-first pwrseq (WL_REG_ON after the 32 kHz clock), not a running Wi-Fi
+driver.
