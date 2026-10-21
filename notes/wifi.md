@@ -134,3 +134,25 @@ the ordering matters.
 2. Real MAC address: the chip reports `00:90:4c:16:70:01`, which is not the
    board MAC. The NVRAM in use is the NVIDIA p2371 one, not flounder's.
 3. Then touch, audio, and the installed-boot path.
+
+## 2026-10-21: new SDIO power sequence (from the Bluetooth work)
+
+Kernel commit `bd93f7930` (linux-flounder, local): the always-on
+`wifi-reg-on` regulator is gone; `mmc-pwrseq-simple` now enables the Palmas
+`clk32kg` LPO as `ext_clock`, then raises WL_REG_ON, waits 300 ms, then
+sdhci scans. Findings:
+
+- The SDIO card enumerated on **every** boot where the init sampled late
+  (`mmc1: new UHS-I speed SDR104 SDIO card`, functions 1-3 at ~1.5-2.7 s).
+  The old setup raced the LPO (WL_REG_ON high from the very start, scan once
+  at host probe) — plausible root cause of the "intermittent enumeration"
+  above, not yet proven over many boots.
+- Pure Wi-Fi image on the new DT (n9wifi102): wlan0 present, wpa_supplicant
+  initialised, DHCP lease 192.168.1.100 from 192.168.1.71. The "3.3V
+  signalling voltage failed" line still appears on working boots (expected).
+- Combined BT+Wi-Fi image (n9bt101) did not associate: two wpa_supplicant
+  instances (`ctrl_iface exists`), a flaw of that test image (the BT script
+  reboots at ~39 s and the main init also runs wifi_bringup), not of the DT.
+- Trap: `init-auto.c` has literal `KVER` in the module paths; compile with
+  `sed 's|/lib/modules/KVER/|/lib/modules/<release>/|'` or every insmod fails
+  with rc=fffffffe.
