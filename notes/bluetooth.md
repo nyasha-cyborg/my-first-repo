@@ -922,3 +922,24 @@ the 32 kHz LPO; see wifi.md).
 Open: how much of the 5 s + 2 s test sleeps is still needed with WLAN up
 (Android needs 100 ms); then remove the n9dbg traces, proper compatible,
 BlueZ pairing.
+
+### n9bt90 (21:39): works with Android-like delays — hci0 up, no timeouts
+
+Same image as n9bt89 with the test sleeps removed (100 ms before the
+post-launch Reset, none before fc18):
+
+```
+22.04 Launch RAM (fc4e) ok
+22.40 post-launch Reset ok   (was: deaf ~4 s while WLAN was dead)
+22.41 fc18 -> 3M ok
+23.48 hci0: BCM4354 37.4MHz WLBGA Google T1-0319 build 0690
+35.5  n9bt: hci hci0
+```
+
+No `tx timeout` anywhere in the record. Conclusion stands: the chip's
+firmware needs the WLAN core running; with it up, mainline's ordinary
+hci_bcm sequence needs no special delays.
+
+Remaining: repeat for stability, drop the n9dbg traces and the 1 s btbcm
+delay if unneeded, give the DT a proper compatible (not bcm4335a0), check
+ordering when brcmfmac loads *after* BT, then BlueZ scan/pair.
