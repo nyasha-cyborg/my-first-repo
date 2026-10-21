@@ -1,0 +1,33 @@
+From 6988accc2d82ec9b9d956cd26b339b6353548a2a Mon Sep 17 00:00:00 2001
+From: nyasha <nmushambi@proton.me>
+Date: Thu, 22 Oct 2026 00:13:27 +1300
+Subject: [PATCH] ASoC: tegra: tolerate codecs without set_sysclk in the
+ generic machine driver
+
+The flounder speaker amps (TFA9895) derive their clock from BCLK and have no
+set_sysclk; tegra_machine_hw_params() failed the stream with -ENOTSUPP
+("codec_dai clock not set: -524") before any audio flowed.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+---
+ sound/soc/tegra/tegra_asoc_machine.c | 4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/sound/soc/tegra/tegra_asoc_machine.c b/sound/soc/tegra/tegra_asoc_machine.c
+index 5a80ca82a..263aa2143 100644
+--- a/sound/soc/tegra/tegra_asoc_machine.c
++++ b/sound/soc/tegra/tegra_asoc_machine.c
+@@ -362,7 +362,9 @@ static int tegra_machine_hw_params(struct snd_pcm_substream *substream,
+ 	}
+ 
+ 	err = snd_soc_dai_set_sysclk(codec_dai, clk_id, mclk, SND_SOC_CLOCK_IN);
+-	if (err < 0) {
++	/* Codecs that derive their clock from BCLK (e.g. the TFA9895 speaker
++	 * amps on flounder) do not implement set_sysclk; that is not an error. */
++	if (err < 0 && err != -ENOTSUPP) {
+ 		dev_err(card->dev, "codec_dai clock not set: %d\n", err);
+ 		return err;
+ 	}
+-- 
+2.56.0
+

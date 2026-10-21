@@ -558,6 +558,18 @@ void _start(void)
 
 	mark("exec sh");
 	say("\nn9wifi: shell\n");
+	/* /etc/n9-plainsh: non-interactive sh on the console (no prompt, no
+	 * line editor, no ESC[6n cursor queries). The host tty echoes the
+	 * device's own output back, which corrupts an interactive ash
+	 * (stray quotes -> endless "> " continuation prompts). */
+	if (sc(SYS_openat, AT_FDCWD, (long)"/etc/n9-plainsh", O_RDONLY, 0, 0) >= 0) {
+		/* sh on a tty is always interactive; feed it through a pipe so
+		 * it never prompts or queries the terminal, and respawn it. */
+		static const char *plain_argv[] = { "sh", "-c",
+			"while :; do /bin/busybox cat | /bin/sh; done", 0 };
+
+		sc(SYS_execve, (long)"/bin/sh", (long)plain_argv, 0, 0, 0);
+	}
 	sc(SYS_execve, (long)"/bin/sh", (long)sh_argv, 0, 0, 0);
 	say("n9wifi: exec failed\n");
 	for (;;)

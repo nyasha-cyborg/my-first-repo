@@ -545,3 +545,23 @@ Speaker output is the requirement; headphones do not matter for the
 daily-usable target. That removes the blocked rt5506 path from the critical
 list and puts the tfa989x amplifier probe hang first in line: the codec and
 card already work, so the remaining speaker blocker is the amplifier driver.
+
+## 2026-10-22 00:20 — speaker PCM stream runs end to end (audibility to be confirmed)
+
+Root causes found on the way (all on the consistent kernel `...g6988accc2d82`):
+1. The `tfa989x` "probe hang" was the Palmas PMIC interrupt storm starving the
+   PMIC I2C bus (see `stability-debug.md`); fixed by dropping
+   `nvidia,invert-interrupt` from the PMC node. After that
+   `modprobe snd-soc-tfa989x` returns and **both cards register**:
+   `0 [speakers]`, `1 [G9]`; `/dev/snd/pcmC0D0p` is the speaker playback.
+2. `tegra_machine_hw_params()` failed the stream with `codec_dai clock not
+   set: -524` because the TFA9895 amps have no `set_sysclk`. Fixed in
+   `sound/soc/tegra/tegra_asoc_machine.c` (tolerate `-ENOTSUPP`), kernel
+   commit `6988accc2`, patch exported to `patches/`.
+3. `tools/miniroot/tone-min.c` (freestanding, no alsa-lib): 48 kHz S16 stereo
+   sine via raw PCM ioctls. `tone-min 0 0 2 440 10` -> hw_refine/hw_params/
+   sw_params/prepare all 0, 96000 frames written, drain 0, no kernel errors.
+   Amplitude is a % of full scale (10 % by default; the amps run untuned and
+   have software volume only).
+Open: whether anything is audible (needs a human ear), amp gain/protection
+tuning, the headphone path (rt5506), mixer controls.
