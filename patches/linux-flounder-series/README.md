@@ -25,3 +25,16 @@ Build: `make O=../linux-flounder-out ARCH=arm64 LLVM=1 -j16 Image modules dtbs`
 | **ASoC: tegra: tolerate codecs without set_sysclk** | audio | speaker PCM plays; silent, parked |
 
 Tested kernel release for the last three: `6.19.0-htc-flounder-g6988accc2d82`.
+
+## Before sending anything upstream (checkpatch 2026-10-22)
+
+- `Bluetooth: flounder - order WLAN power...`: wrap the commit message at 75
+  columns; put block-comment `*/` on its own line (two places).
+- `ASoC: tegra: tolerate codecs without set_sysclk...`: same two nits;
+  `-ENOTSUPP` is what `snd_soc_dai_set_sysclk()` itself returns for a missing
+  op, so keep it (checkpatch prefers EOPNOTSUPP; explain in the commit text).
+- All commits carry `Co-Authored-By:`; upstream wants `Co-developed-by:` +
+  `Signed-off-by:` pairs, or drop the trailer.
+- The `PMC invert-interrupt` change is DT-only but its justification (Android
+  has no such property; bootloader leaves INTR_POLARITY 0) should be re-checked
+  once PMIC interrupt delivery is confirmed (see `notes/stability-debug.md`).
