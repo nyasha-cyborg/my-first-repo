@@ -273,9 +273,17 @@ static void heartbeat_loop(void)
 static void watchdog_ping_loop(long fd)
 {
 	static const char b = 0;
+	int n = 0;
+	/* /etc/n9-selfreset: soak/debug images stop pinging after ~160 s so a
+	 * dead shell cannot hold the board up; the 120 s hardware timeout then
+	 * resets it to Android without a power cycle. */
+	int selfreset = sc(SYS_openat, AT_FDCWD, (long)"/etc/n9-selfreset",
+			   O_RDONLY, 0, 0) >= 0;
 
 	for (;;) {
 		sleep_ms(20000);
+		if (selfreset && ++n > 8)
+			break;
 		/* /stop-ping: the harness asked the test to end; drop the magic
 		 * keepalive so the hardware resets us back to Android. */
 		if (sc(SYS_openat, AT_FDCWD, (long)"/stop-ping", O_RDONLY, 0, 0) >= 0)
