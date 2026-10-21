@@ -1,5 +1,5 @@
 diff --git a/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts b/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
-index a31a67ef6..2e294af04 100644
+index a31a67ef6..657e6743f 100644
 --- a/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
 +++ b/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
 @@ -706,7 +706,7 @@ bluetooth {
@@ -26,6 +26,40 @@ index a31a67ef6..2e294af04 100644
  			pmic {
  				compatible = "ti,tps65913-pmic", "ti,palmas-pmic";
  
+@@ -1221,20 +1229,12 @@ usb2-0 {
+ 	/* BT_REG_ON (PR1) and BT_WAKE (PEE1) belong to the bluetooth node
+ 	 * under serial@70006200; hci_bcm drives both. */
+ 
+-	wifi_reg_on: regulator-wifi-reg-on {
+-		compatible = "regulator-fixed";
+-		regulator-name = "wifi-reg-on";
+-		/* pwrseq drives this rail on at physical high; model the line
+-		 * as active-high so the regulator's enable does the same. */
+-		gpio = <&gpio TEGRA_GPIO(X, 7) GPIO_ACTIVE_HIGH>;
+-		enable-active-high;
+-		regulator-always-on;
+-		regulator-boot-on;
+-	};
+-
+ 	pwrseq_wifi: pwrseq-wifi {
+ 		compatible = "mmc-pwrseq-simple";
+-		status = "disabled";
++		/* n9bt89: LPO first, then WL_REG_ON, then 300 ms, then the
++		 * SDIO scan (was an always-on regulator racing the LPO). */
++		clocks = <&palmas_clk32kg>;
++		clock-names = "ext_clock";
+ 		reset-gpios = <&gpio TEGRA_GPIO(X, 7) GPIO_ACTIVE_LOW>;
+ 		post-power-on-delay-ms = <300>;
+ 		power-off-delay-us = <300>;
+@@ -1247,7 +1247,7 @@ mmc@700b0000 {
+ 		sd-uhs-sdr104;
+ 		nvidia,only-1-8v;
+ 		non-removable;
+-		/* rail held by wifi_reg_on */
++		mmc-pwrseq = <&pwrseq_wifi>;
+ 		vqmmc-supply = <&vdd_1v8>;
+ 		#address-cells = <1>;
+ 		#size-cells = <0>;
 diff --git a/drivers/bluetooth/hci_bcm.c b/drivers/bluetooth/hci_bcm.c
 index 558b21a4e..abbbb5d9c 100644
 --- a/drivers/bluetooth/hci_bcm.c

@@ -893,3 +893,32 @@ once (power cycle) and its re-run was not executed (blocked by the
 permission classifier, 18:35). Next: run n9bt88, then find why the second
 clock is not probed or enabled (check `palmas_clks_prepare` for
 `CLK32KGAUDIO`, regmap page for reg 0x01).
+
+### n9bt89 (21:35): ROOT CAUSE FOUND — the WLAN side of the combo chip must be alive
+
+With the Wi-Fi power sequence reworked (DT: `mmc-pwrseq-simple` with the
+Palmas `clk32kg` as `ext_clock`, then WL_REG_ON, 300 ms, then SDIO scan; the
+always-on `wifi-reg-on` regulator removed) **mmc1 enumerated at boot**
+(`mmc1: new UHS-I speed SDR104 SDIO card`, functions 1-3), brcmfmac loaded
+and ran firmware (`BCM4354/1 wl0 ... 7.35.349.104`, `wlan0` present), and
+*then* BT was brought up. Result:
+
+```
+20.34 fc18 -> 3M ok, Reset ok, ... firmware download, fc4e ok (21.85)
+27.18 post-launch Reset (after the 5 s test sleep) ok
+29.31 fc18 ok;  29.35 Reset ok
+30.38 hci0: BCM4354 37.4MHz WLBGA Google T1-0319 (003.001.012) build 0690
+30.4x  0c52, 0c45, 0c16, 0c01, 0801, 2001, 2010, 0c63 ... all answered
+35.35 n9bt: hci hci0
+```
+
+The patched firmware is running (build 0690) and the normal HCI init
+completes. Every earlier run had the WLAN core dead (no SDIO card), which
+is the one Android-vs-mainline difference; the chip's post-launch "deaf for
+~4 s, only Reset answered" was the BT firmware waiting on the WLAN side.
+Also fixes the long-standing flaky SDIO enumeration (the card used to race
+the 32 kHz LPO; see wifi.md).
+
+Open: how much of the 5 s + 2 s test sleeps is still needed with WLAN up
+(Android needs 100 ms); then remove the n9dbg traces, proper compatible,
+BlueZ pairing.
