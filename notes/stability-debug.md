@@ -589,3 +589,35 @@ SDIO rescan, late regulator cleanup, ...). Kernel commit in linux-flounder
 works at all (the count freezes after boot; an edge-typed trigger on a level
 line may now miss events, e.g. VBUS/charger changes — check with a cable
 unplug/plug, and see whether LEVEL_HIGH without invert is the cleaner fix).
+
+## 2026-10-21 23:55 — what the PMC/IRQ REA established, and the silent-console boots
+
+- Vendor (Android kernel, REA): `tegra_pmc_pmu_interrupt_polarity()` at
+  0xffffffc000787f48 sets/clears PMC_CNTRL bit 17 (0x20000); its only callers
+  are the board init functions (`ardbeg_regulator_init` calls it with 1 only
+  for PMU board ids 1733-1735; other ids take a path that never touches it).
+  `palmas_i2c_probe` writes PMIC POLARITY_CTRL (0xf9, mask 0x80) = 0x80 only
+  when the trigger flag has LEVEL_HIGH, else 0, and requests the IRQ with
+  `flags | ONESHOT` — identical to mainline palmas.c.
+- Measured: bootloader leaves `PMC_CNTRL = 00190a00` (INTR_POLARITY **0**);
+  Android's PMIC `POLARITY_CTRL (0x1f9)` reads **0x00** (new tool
+  `tools/miniroot/i2cget-min.c`, pushed to /data/local/tmp). So Android =
+  PMC not inverted, PMIC active-low-default, trigger NONE: exactly config B
+  (our DT without `invert-interrupt`). The vendor itself would not set the
+  bit for this board. The mainline-only difference is how the type-NONE SPI
+  is handled (GIC warns in `gic_irq_domain_translate`, hardware default
+  level-high; line shows as "Edge" in /proc/interrupts).
+- Config B outcomes: PMIC irq count freezes after boot (17622) and the PMIC
+  RTC alarm did not fire in one test (PMIC interrupt delivery unverified);
+  one burst of 52 `dummy 4-0059: Failed to read IRQ status: -121` (I2C NACK)
+  at 5.95 s in a boot whose serial shell was silent. Not seen in 4 earlier
+  good boots (which still had invert-interrupt).
+- Silent-console boots: gadget enumerates, host sees 0525:a4a7, zero bytes
+  from ttyACM0, but the kernel/init are alive (`n9hb` heartbeat ticks for
+  250-590 s in the record). Cause unknown. Two harness artifacts found and
+  fixed along the way: the soak's first command (busybox --install) outlasts
+  its window (retry probe now), and a stale `socat` holding ttyACM0 makes
+  every later probe silent.
+- Tools: `tools/stage-modules.sh`, `tools/n9sh.sh`, `tools/soak-dbg.sh`,
+  `tools/miniroot/{btscan-min,i2cget-min,tone-min}.c`; init gained
+  `/etc/n9-selfreset` (stop pinging the watchdog after ~160 s).

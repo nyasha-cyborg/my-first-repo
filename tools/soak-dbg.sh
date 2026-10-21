@@ -20,7 +20,13 @@ for k in $(seq 1 "$N"); do
 	if [ $up = 0 ]; then echo "$k $t0 NO-GADGET" >> $LOG; continue; fi
 	sleep 12
 	"$HERE/n9sh.sh" '/bin/busybox --install -s /bin; mount -t debugfs none /sys/kernel/debug 2>/dev/null' 3 >/dev/null
-	rel=$("$HERE/n9sh.sh" 'uname -r' 4 | grep -c htc-flounder)
+	# the first command (busybox --install) can take longer than its window:
+	# retry the readiness probe before declaring the shell dead
+	rel=0
+	for try in 1 2 3 4 5 6; do
+		rel=$("$HERE/n9sh.sh" 'uname -r' 4 | grep -c htc-flounder)
+		[ "$rel" != 0 ] && break
+	done
 	if [ "$rel" = 0 ]; then echo "$k $t0 gadget@${up}s SHELL-DEAD" >> $LOG; else
 		a=$(cnt); sleep 4; b=$(cnt)
 		"$HERE/n9sh.sh" 'echo 0 > /sys/class/rtc/rtc0/wakealarm; echo $(( $(date +%s)+5 )) > /sys/class/rtc/rtc0/wakealarm' 3 >/dev/null
