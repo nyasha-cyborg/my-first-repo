@@ -236,13 +236,16 @@ was left for you to start.
   is `fastboot boot`.
 - Done today: **Bluetooth works** (hci0, LE scan hears devices); PMIC
   interrupt storm fixed by dropping `nvidia,invert-interrupt`; both sound
-  cards register; speaker PCM stream plays without errors **but is silent**
-  (parked, next steps in `audio.md`). Kernel: `~/code/linux-flounder`
-  `usb-bringup` @ `6988accc2` (release `6.19.0-htc-flounder-g6988accc2d82`);
-  full series exported to `patches/linux-flounder-series/`.
+  cards register; **speaker root cause found 2026-10-22 09:10**: the bootloader
+  leaves the DAP pads as GPIOs (GPIO_CNF=1), overriding the I2S function; the
+  machine driver now releases them (`nvidia,i2s-pad-gpios`) and the amps lock
+  (R0 `0xd05f`). Needs a listening test (user away), details in `audio.md`.
+  Kernel: `~/code/linux-flounder` `usb-bringup` @ `96949bf28` (release
+  `6.19.0-htc-flounder-g96949bf28c4c`, image `n9ampL-stripped.img`); full
+  series exported to `patches/linux-flounder-series/` (0030-0032 new).
 - Open: (1) is the PMIC interrupt actually delivered after the invert fix
   (RTC alarm did not fire once; read INT status regs after an alarm to tell
-  PMIC-side from delivery-side), (2) silent speakers, (3) boot reliability
+  PMIC-side from delivery-side), (2) listen to the speakers, headphones (rt5506), (3) boot reliability
   soak on the fixed console (`tools/soak-dbg.sh <img> 20`, image
   `n9soak5-stripped.img`), (4) Wi-Fi+BT together in a real rootfs, BlueZ
   pairing.

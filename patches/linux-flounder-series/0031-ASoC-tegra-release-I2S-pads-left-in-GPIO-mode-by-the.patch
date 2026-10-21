@@ -1,0 +1,65 @@
+From 3e404887931a9d10931c2280d2f85044f256f6e0 Mon Sep 17 00:00:00 2001
+From: nyasha <nmushambi@proton.me>
+Date: Thu, 22 Oct 2026 09:00:26 +1300
+Subject: [PATCH] ASoC: tegra: release I2S pads left in GPIO mode by the
+ bootloader
+
+The flounder bootloader leaves the DAP3 pads (PP0-PP3) as GPIO outputs
+driving low (GPIO_CNF=1), which overrides the pinmux's I2S2 function: the
+TFA9895 speaker amps never saw BCLK/LRCK and never locked their PLL.
+Add an optional nvidia,i2s-pad-gpios list; the machine driver requests and
+frees each GPIO, which clears GPIO_CNF and hands the pad back to the pinmux.
+---
+ arch/arm64/boot/dts/nvidia/tegra132-flounder.dts | 10 ++++++++++
+ sound/soc/tegra/tegra_asoc_machine.c             | 14 ++++++++++++++
+ 2 files changed, 24 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts b/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
+index 04c5d2984..19489dac6 100644
+--- a/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
++++ b/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
+@@ -1367,6 +1367,16 @@ sound-speakers {
+ 		nvidia,i2s-controller = <&tegra_i2s2>;
+ 		nvidia,audio-codec = <&tfa9895_r>, <&tfa9895_l>;
+ 
++		/*
++		 * The bootloader leaves the DAP3 pads as GPIO outputs driving
++		 * low; the machine driver releases them so the I2S2 function
++		 * reaches the amplifiers.
++		 */
++		nvidia,i2s-pad-gpios = <&gpio TEGRA_GPIO(P, 0) GPIO_ACTIVE_HIGH>,
++				       <&gpio TEGRA_GPIO(P, 1) GPIO_ACTIVE_HIGH>,
++				       <&gpio TEGRA_GPIO(P, 2) GPIO_ACTIVE_HIGH>,
++				       <&gpio TEGRA_GPIO(P, 3) GPIO_ACTIVE_HIGH>;
++
+ 		/* The amplifiers' pin is "OUT"; the prefix tells them apart. */
+ 		nvidia,audio-routing =
+ 			"Speakers", "Speaker Right OUT",
+diff --git a/sound/soc/tegra/tegra_asoc_machine.c b/sound/soc/tegra/tegra_asoc_machine.c
+index 263aa2143..91035a0e6 100644
+--- a/sound/soc/tegra/tegra_asoc_machine.c
++++ b/sound/soc/tegra/tegra_asoc_machine.c
+@@ -457,6 +457,20 @@ int tegra_asoc_machine_probe(struct platform_device *pdev)
+ 	machine->hp_jack_gpio = &tegra_machine_hp_jack_gpio;
+ 	snd_soc_card_set_drvdata(card, machine);
+ 
++	/*
++	 * Some bootloaders leave the DAP pads in GPIO mode, which overrides the
++	 * I2S function the pinmux selects: the pads then sit at a fixed level
++	 * and the codec never sees BCLK/LRCK.  Freeing a Tegra GPIO hands the
++	 * pad back to its alternate function, so request and release each one.
++	 */
++	for (i = 0; i < gpiod_count(dev, "nvidia,i2s-pad"); i++) {
++		gpiod = gpiod_get_index(dev, "nvidia,i2s-pad", i, GPIOD_ASIS);
++		if (IS_ERR(gpiod))
++			return dev_err_probe(dev, PTR_ERR(gpiod),
++					     "failed to release I2S pad %d\n", i);
++		gpiod_put(gpiod);
++	}
++
+ 	gpiod = devm_gpiod_get_optional(dev, "nvidia,hp-mute", GPIOD_OUT_HIGH);
+ 	machine->gpiod_hp_mute = gpiod;
+ 	if (IS_ERR(gpiod))
+-- 
+2.56.0
+

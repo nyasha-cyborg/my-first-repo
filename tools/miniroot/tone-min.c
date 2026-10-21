@@ -1,9 +1,9 @@
 /* Play a short sine tone on an ALSA PCM playback device. Freestanding
  * aarch64 (no libc, no alsa-lib): drives the kernel PCM ioctls directly.
  *
- * usage: tone-min <card> <device> [seconds=2] [freq=440] [amp-percent=10]
+ * usage: tone-min <card> <device> [seconds=2] [freq=440] [amp-percent=10] [rate=48000]
  *   e.g. tone-min 0 0         (card 0 = the "speakers" card)
- * 48 kHz, S16_LE, 2 channels.  Amplitude is a % of full scale; keep it low.
+ * S16_LE, 2 channels, 48 kHz unless a rate is given.  Amplitude is a % of full scale; keep it low.
  * build: clang --target=aarch64-linux-gnu -nostdlib -static -O2 -fuse-ld=lld \
  *              -fno-stack-protector -I<dir with empty stdlib.h> -idirafter /usr/include \
  *              -o tone-min tools/miniroot/tone-min.c
@@ -101,7 +101,7 @@ void c_main(long *sp)
 	struct snd_pcm_sw_params swp;
 	struct snd_xferi xf;
 	static short buf[1024 * 2];
-	long fd, rc, secs, freq, amp;
+	long fd, rc, secs, freq, amp, rate;
 	unsigned int i, phase = 0, total, written = 0;
 	unsigned char *p;
 
@@ -112,6 +112,7 @@ void c_main(long *sp)
 	secs = num(argc > 3 ? argv[3] : 0, 2);
 	freq = num(argc > 4 ? argv[4] : 0, 440);
 	amp = num(argc > 5 ? argv[5] : 0, 10);
+	rate = num(argc > 6 ? argv[6] : 0, 48000);
 
 	fd = sc(SYS_openat, AT_FDCWD, (long)path, O_RDWR, 0, 0);
 	say("open", fd);
@@ -137,7 +138,7 @@ void c_main(long *sp)
 	mask_set(&hw.masks[SNDRV_PCM_HW_PARAM_FORMAT], SNDRV_PCM_FORMAT_S16_LE);
 	mask_set(&hw.masks[SNDRV_PCM_HW_PARAM_SUBFORMAT], SNDRV_PCM_SUBFORMAT_STD);
 	ival(&hw.intervals[SNDRV_PCM_HW_PARAM_CHANNELS - SNDRV_PCM_HW_PARAM_FIRST_INTERVAL], 2);
-	ival(&hw.intervals[SNDRV_PCM_HW_PARAM_RATE - SNDRV_PCM_HW_PARAM_FIRST_INTERVAL], 48000);
+	ival(&hw.intervals[SNDRV_PCM_HW_PARAM_RATE - SNDRV_PCM_HW_PARAM_FIRST_INTERVAL], rate);
 	ival(&hw.intervals[SNDRV_PCM_HW_PARAM_PERIOD_SIZE - SNDRV_PCM_HW_PARAM_FIRST_INTERVAL], 1024);
 	ival(&hw.intervals[SNDRV_PCM_HW_PARAM_PERIODS - SNDRV_PCM_HW_PARAM_FIRST_INTERVAL], 4);
 	hw.rmask = ~0u;
@@ -160,13 +161,13 @@ void c_main(long *sp)
 	rc = sc(SYS_ioctl, fd, SNDRV_PCM_IOCTL_PREPARE, 0, 0, 0);
 	say("prepare", rc);
 
-	total = secs * 48000;
+	total = secs * rate;
 	while (written < total) {
 		for (i = 0; i < 1024; i++) {
 			int s = (wave(phase >> 8 & 4095) * (int)amp) / 100;
 
 			buf[i * 2] = buf[i * 2 + 1] = s;
-			phase += (unsigned int)((long)freq * 4096 * 256 / 48000);
+			phase += (unsigned int)((long)freq * 4096 * 256 / rate);
 		}
 		xf.buf = buf;
 		xf.frames = 1024;

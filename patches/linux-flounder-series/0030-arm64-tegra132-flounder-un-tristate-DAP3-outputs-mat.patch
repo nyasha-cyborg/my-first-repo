@@ -1,0 +1,51 @@
+From ab17b420da59da71ecd3cebb20472901e68e88d3 Mon Sep 17 00:00:00 2001
+From: nyasha <nmushambi@proton.me>
+Date: Thu, 22 Oct 2026 08:34:33 +1300
+Subject: [PATCH] arm64: tegra132: flounder: un-tristate DAP3 outputs, match
+ Android drive_dap3
+
+The vendor kernel un-tristates the DAP3 pads around playback and programs
+drive_dap3 = 0x00605008; mirror both in the DT.
+---
+ .../arm64/boot/dts/nvidia/tegra132-flounder.dts | 17 ++++++++++++++++-
+ 1 file changed, 16 insertions(+), 1 deletion(-)
+
+diff --git a/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts b/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
+index 098870fd1..04c5d2984 100644
+--- a/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
++++ b/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
+@@ -370,15 +370,30 @@ dap3_din_pp1 {
+ 				nvidia,tristate = <TEGRA_PIN_ENABLE>;
+ 				nvidia,enable-input = <TEGRA_PIN_ENABLE>;
+ 			};
++			/* The vendor kernel un-tristates the DAP pads around
++			 * playback (tegra_asoc_utils_tristate_dap); mainline has
++			 * no such hook, so leave the Tegra-driven outputs
++			 * enabled. */
+ 			dap3_dout_pp2 {
+ 				nvidia,pins = "dap3_dout_pp2",
+ 					      "dap3_fs_pp0",
+ 					      "dap3_sclk_pp3";
+ 				nvidia,function = "i2s2";
+ 				nvidia,pull = <TEGRA_PIN_PULL_NONE>;
+-				nvidia,tristate = <TEGRA_PIN_ENABLE>;
++				nvidia,tristate = <TEGRA_PIN_DISABLE>;
+ 				nvidia,enable-input = <TEGRA_PIN_DISABLE>;
+ 			};
++			/* Same pad drive as Android (drive_dap3 = 0x00605008). */
++			drive_dap3 {
++				nvidia,pins = "drive_dap3";
++				nvidia,high-speed-mode = <TEGRA_PIN_DISABLE>;
++				nvidia,schmitt = <TEGRA_PIN_ENABLE>;
++				nvidia,low-power-mode = <TEGRA_PIN_LP_DRIVE_DIV_8>;
++				nvidia,pull-down-strength = <5>;
++				nvidia,pull-up-strength = <6>;
++				nvidia,slew-rate-rising = <TEGRA_PIN_SLEW_RATE_FASTEST>;
++				nvidia,slew-rate-falling = <TEGRA_PIN_SLEW_RATE_FASTEST>;
++			};
+ 			/* TODO: I2S 3 */
+ 			dap4_din_pp5 {
+ 				nvidia,pins = "dap4_din_pp5";
+-- 
+2.56.0
+

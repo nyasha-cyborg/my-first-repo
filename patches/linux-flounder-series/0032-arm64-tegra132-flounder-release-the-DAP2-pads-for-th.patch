@@ -1,0 +1,31 @@
+From 96949bf28c4cc4a1ff846c5c07e3d048471a3a20 Mon Sep 17 00:00:00 2001
+From: nyasha <nmushambi@proton.me>
+Date: Thu, 22 Oct 2026 09:04:20 +1300
+Subject: [PATCH] arm64: tegra132: flounder: release the DAP2 pads for the
+ codec card too
+
+Same bootloader GPIO-mode leftover as DAP3: PA2-PA5 have GPIO_CNF set.
+---
+ arch/arm64/boot/dts/nvidia/tegra132-flounder.dts | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts b/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
+index a8369032f..24a700fb0 100644
+--- a/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
++++ b/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
+@@ -1422,6 +1422,12 @@ sound {
+ 		nvidia,i2s-controller = <&tegra_i2s1>;
+ 		nvidia,audio-codec = <&rt5677>;
+ 
++		/* DAP2 pads are left as GPIOs by the bootloader, see above. */
++		nvidia,i2s-pad-gpios = <&gpio TEGRA_GPIO(A, 2) GPIO_ACTIVE_HIGH>,
++				       <&gpio TEGRA_GPIO(A, 3) GPIO_ACTIVE_HIGH>,
++				       <&gpio TEGRA_GPIO(A, 4) GPIO_ACTIVE_HIGH>,
++				       <&gpio TEGRA_GPIO(A, 5) GPIO_ACTIVE_HIGH>;
++
+ 		clocks = <&tegra_car TEGRA124_CLK_PLL_A>,
+ 			 <&tegra_car TEGRA124_CLK_PLL_A_OUT0>,
+ 			 <&tegra_pmc TEGRA_PMC_CLK_OUT_1>;
+-- 
+2.56.0
+

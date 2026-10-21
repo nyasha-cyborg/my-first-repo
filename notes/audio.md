@@ -657,3 +657,61 @@ Idle (stream stopped): R0 still 001d, R9=0201 (PWDN). R3=0x12 = TFA9895.
 - Wi-Fi: Android's calibration files found: `/system/etc/wifi/bcmdhd.cal`
   and `bcmdhd_lte.cal` (BCM94354 WLBGA, xtalfreq=37400); copied to
   `~/Downloads/nexus9/firmware-extracted/wifi/` (not in the repo).
+
+## 2026-10-22 09:10 — ROOT CAUSE FOUND: bootloader leaves DAP pads in GPIO mode
+
+**Fix works on hardware**: with the stock mainline `tfa989x` driver and no
+manual register writes, both amps report `R0 = 0xd05f / 0xd85f` (PLLS, CLKS,
+AMPS... = the Android playing value) during a 1 % tone. Kernel
+`6.19.0-htc-flounder-g96949bf28c4c`, image `n9ampL`. Not yet heard by ear (user
+away); tone kept at 1 %.
+
+Cause: Tegra `GPIO_CNF` for PP0-PP3 (DAP3 = I2S2 to the amps) was `0xf` =
+**GPIO mode**, with PP0/PP2/PP3 as outputs driving low (`OE=0xd`). GPIO mode
+overrides the pinmux's I2S2 function, so the amps never saw BCLK/LRCK. The
+pinmux registers, I2S2 registers, clocks and amp registers all matched Android
+exactly, which is why nothing in the earlier register-level work found it.
+Port A (PA2-PA5 = DAP2 = I2S1 for rt5677/headphones) had the same leftover
+(`CNF=0xbd`).
+
+How it was found (evidence, trimmed):
+- Android playing vs mainline playing: I2S2 CTRL/TIMING/OFFSET/CIF identical,
+  pad regs `0x70003030-3c` = 0 (I2S2 mux, not tristated) identical, `drive_dap3`
+  `0x00605008` identical, amp regs R4/R9/RA identical after writing Android's
+  values, `i2s2` clock identical, PMC IO-DPD audio pad powered. Only the amps'
+  R0 (and the MTP/trim regs 0x70/0x71/0x80-0x8d that appear after lock) differed.
+- Bit-banging PP0/PP3 as plain GPIOs (`tools/miniroot/regdump/bitbang.c`,
+  ~150 kHz BCLK, nowhere near 8 kHz fs) changed R0 to `0x801d` (AMPS) while
+  real I2S2 never changed R0: the amps do listen to those pads, I2S2's output
+  just wasn't reaching them.
+- `GPIO_CNF` read (`regdump.ko`) showed `0x0f`; clearing it (`sfio.ko`) gave
+  `R0=0xd05f` immediately.
+- Fix = release the pads: `gpiod_get(ASIS)` + `gpiod_put()` runs
+  `tegra_gpio_free()` which clears CNF. Implemented as optional DT property
+  `nvidia,i2s-pad-gpios` read by `tegra_asoc_machine_probe()`.
+
+Dead ends now explained / dropped:
+- The `nvidia,i2s-bclk-1x` patch is NOT needed: default 64fs (3.072 MHz)
+  locks too. Reverted (`d202c7477`), not in the patch series.
+- Boost (DCA), R6/R8 bits, R4 vendor value: not needed for lock. R9 stays
+  `0x0208` with the stock driver and the amps still lock.
+- Kept: DAP3 pads un-tristated in DT (vendor un-tristates around playback),
+  `drive_dap3` = Android's value (never tested whether it matters).
+
+Tools added: `tools/miniroot/regdump/` (out-of-tree modules: `regdump.ko`
+reads physical registers even where STRICT_DEVMEM blocks `/dev/mem`,
+`padsample.ko`, `bitbang.ko`, `sfio.ko`; build recipe in the Makefile),
+`tools/miniroot/tone-min` now takes a 6th arg = sample rate. Note: GPIO_IN does
+NOT show SFIO pad levels (I2C pads read 0), so it cannot sample I2S pads.
+
+Android reference (playing, both amps): R0 `d05f`, R4 `8853` (0x34) / `880b`
+(0x35), R9 `0618`, RA `38d2`, 0x41 `0308`, 0x47 `5be1`, 0x48 `0180`, 0x49
+`0e82`, 0x4b `181e`, 0x70 `0002`, 0x71 `0001`, 0x73 `00ff`, 0x80 `0003`.
+Android during playback: `i2s2` on at 1.536 MHz, `i2s1` off, `extern1` off.
+
+Next steps:
+1. Let the user listen (tone-min, keep amplitude <= 10 %; both channels).
+2. If quiet/distorted: R9 DCA boost, RA/R8 tuning, per-device config blob.
+3. Headphones: rt5506 driver (not started); the DAP2 pad release is in but
+   unverified by ear.
+4. Check other pads the bootloader may have left as GPIO (BT UART, etc.).

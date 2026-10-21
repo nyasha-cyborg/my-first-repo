@@ -1,0 +1,1 @@
+obj-m := regdump.o padsample.o bitbang.o sfio.o
