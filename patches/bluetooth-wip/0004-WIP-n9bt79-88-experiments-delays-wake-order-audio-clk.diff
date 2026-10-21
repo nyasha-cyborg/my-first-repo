@@ -1,0 +1,63 @@
+diff --git a/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts b/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
+index a31a67ef6..2e294af04 100644
+--- a/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
++++ b/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
+@@ -706,7 +706,7 @@ bluetooth {
+ 			compatible = "brcm,bcm4335a0";
+ 			max-speed = <3000000>;
+ 			shutdown-gpios = <&gpio TEGRA_GPIO(R, 1) GPIO_ACTIVE_HIGH>;
+-			device-wakeup-gpios = <&gpio TEGRA_GPIO(EE, 1) GPIO_ACTIVE_LOW>;
++			device-wakeup-gpios = <&gpio TEGRA_GPIO(EE, 1) GPIO_ACTIVE_HIGH>;
+ 			/* HOST_WAKE (PU6) is left out until its polarity is
+ 			 * measured; without it hci_bcm skips runtime PM. */
+ 			clocks = <&palmas_clk32kg>;
+@@ -948,6 +948,14 @@ palmas_clk32kg: clock {
+ 				ti,clock-boot-enable;
+ 			};
+ 
++			/* The vendor DT boot-enables the audio 32 kHz output too
++			 * (n9bt87 test: is the BT LPO on this output?). */
++			palmas_clk32kgaudio: clock-audio {
++				compatible = "ti,palmas-clk32kgaudio";
++				#clock-cells = <0>;
++				ti,clock-boot-enable;
++			};
++
+ 			pmic {
+ 				compatible = "ti,tps65913-pmic", "ti,palmas-pmic";
+ 
+diff --git a/drivers/bluetooth/hci_bcm.c b/drivers/bluetooth/hci_bcm.c
+index 558b21a4e..abbbb5d9c 100644
+--- a/drivers/bluetooth/hci_bcm.c
++++ b/drivers/bluetooth/hci_bcm.c
+@@ -280,8 +280,10 @@ static int bcm_gpio_set_power(struct bcm_device *dev, bool powered)
+ 	/* n9dbg: flounder test. btwake (which works) powers the chip with
+ 	 * BT_WAKE deasserted and asserts it ~500 ms after boot; upstream
+ 	 * asserts it together with REG_ON. Reproduce btwake's order. */
++	/* n9bt80: Android boots the chip with BT_WAKE raw high and keeps it
++	 * high while awake (bluedroid_pm REA), so assert before REG_ON. */
+ 	if (powered)
+-		dev->set_device_wakeup(dev, false);
++		dev->set_device_wakeup(dev, true);
+ 
+ 	err = dev->set_shutdown(dev, powered);
+ 	if (err)
+@@ -627,13 +629,17 @@ static int bcm_setup(struct hci_uart *hu)
+ 	{
+ 		struct sk_buff *skb;
+ 
+-		msleep(100);
++		/* n9bt79: the chip answers ~4 s after Launch RAM (n9bt76-78) */
++		msleep(5000);
+ 		skb = __hci_cmd_sync(hu->hdev, HCI_OP_RESET, 0, NULL,
+ 				     HCI_INIT_TIMEOUT);
+ 		pr_info("n9dbg post-launch Reset: %ld\n",
+ 			IS_ERR(skb) ? PTR_ERR(skb) : 0L);
+ 		if (!IS_ERR(skb))
+ 			kfree_skb(skb);
++		/* n9bt81: commands right after a Reset reply were lost
++		 * (n9bt79/80); give the firmware time to finish. */
++		msleep(2000);
+ 	}
+ 
+ 	/* Operational speed if any */
