@@ -565,3 +565,36 @@ Root causes found on the way (all on the consistent kernel `...g6988accc2d82`):
    have software volume only).
 Open: whether anything is audible (needs a human ear), amp gain/protection
 tuning, the headphone path (rt5506), mixer controls.
+
+## 2026-10-22 00:45 — PARKED: speakers play "successfully" but are silent
+
+State when parked (user heard nothing on 440 Hz / 880 Hz tones at 10 %, 3 s):
+- PCM stream is clean: hw_params/sw_params/prepare ok, all frames written,
+  drain 0, no xruns, no kernel errors. Kernel `...g6988accc2d82`
+  (`tegra_asoc_machine` ENOTSUPP fix); images `n9dbgK` / `n9dbgL`.
+- DAPM during playback is fully **On**: `Speakers`, both amps' `POWER`
+  (R9 bit 0) and `AMPE` (R9 bit 3), amp input mux "Left".
+- Rails enabled: `spk-ldo` (PX5), `vdd-aud-1v8`, `vdd-io-1v8`; `vdd-audio`
+  reads 3.1 V (suspicious: the codec notes say 1.2 V, but it feeds the
+  rt5677, not the amps).
+- Pinmux: DAP3 pins PP0-PP3 = function `i2s2` (correct). Clocks running:
+  pll_a 368.64 MHz -> pll_a_out0 12.288 MHz (extern1) -> i2s2 BCLK
+  3.072 MHz (enable counts 1).
+- NOT yet checked (next steps, in order):
+  1. Read the amps' registers during playback with
+     `tools/miniroot/i2cget-min` (now in `n9dbgL`): bus 1, slaves 0x34 and
+     0x35, regs 00..0f. Status R0 (CLKS/PLLS/AMPS/SWS bits), REV R3 (0x18 for
+     TFA9895), I2S control R4, SYS_CTRL R9. If CLKS/PLLS are 0 the amps are
+     not seeing a valid BCLK.
+  2. Pad properties of the DAP3 pins: tristate/enable-input in
+     `pinconf-groups` (a muxed pad can still be tri-stated).
+  3. I2S2 data path: AHUB routing and the tegra30 I2S2 TX enable (regmap
+     `70301200.i2s`), DAI format/master mode set by the machine driver.
+  4. Android's side: REA of `/vendor/lib64/hw/audio.primary*` and the
+     downstream tfa9895 driver (it applies a config/patch over ioctl; the
+     mainline driver is bypass-only and may need unmute/volume registers).
+  5. Amp mixer controls (no `amixer` in the ramdisk; add a tiny control tool).
+- Harness: console must be a piped non-interactive shell
+  (`/etc/n9-plainsh`); `tools/n9boot.sh <img> load-audio` boots and waits;
+  `tools/n9sh.sh '<cmd>' <secs>` runs a command (output of a long command can
+  arrive one call late; send `echo x` to flush).

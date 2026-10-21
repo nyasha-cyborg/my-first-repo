@@ -274,7 +274,7 @@ static void watchdog_ping_loop(long fd)
 {
 	static const char b = 0;
 	int n = 0;
-	/* /etc/n9-selfreset: soak/debug images stop pinging after ~160 s so a
+	/* /etc/n9-selfreset: soak/debug images stop pinging after ~800 s so a
 	 * dead shell cannot hold the board up; the 120 s hardware timeout then
 	 * resets it to Android without a power cycle. */
 	int selfreset = sc(SYS_openat, AT_FDCWD, (long)"/etc/n9-selfreset",
@@ -282,7 +282,7 @@ static void watchdog_ping_loop(long fd)
 
 	for (;;) {
 		sleep_ms(20000);
-		if (selfreset && ++n > 8)
+		if (selfreset && ++n > 40)
 			break;
 		/* /stop-ping: the harness asked the test to end; drop the magic
 		 * keepalive so the hardware resets us back to Android. */
