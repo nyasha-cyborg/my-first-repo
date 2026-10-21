@@ -385,6 +385,11 @@ void _start(void)
 			/* Palmas CLK32KG_CTRL/CLK32KGAUDIO_CTRL (page 1, 0xd4/0xd5);
 			 * Android reads 07/00 whether BT is on or off. */
 			"echo '<6>n9bt: palmas '$(busybox grep ^d[45] /sys/kernel/debug/regmap/4-0059/registers) > /dev/kmsg; "
+			/* /etc/bt-pm-on: keep the Tegra UARTs out of runtime PM so an
+			 * idle, clock-gated UART cannot drop the chip's replies. */
+			"for f in /sys/devices/platform/*.serial/power/control; do "
+			"[ -e /etc/bt-pm-on ] && echo on > $f; done; "
+			"echo '<6>n9bt: serial pm '$(busybox cat /sys/devices/platform/70006200.serial/power/control /sys/devices/platform/70006200.serial/power/runtime_status 2>&1) > /dev/kmsg; "
 			/* /etc/bt-wifi-first: Android's fast BT bring-up always had
 			 * the combo chip's WLAN side up (n9bt83 test). */
 			"if [ -e /etc/bt-wifi-first ]; then "

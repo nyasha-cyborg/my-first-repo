@@ -855,3 +855,27 @@ Conclusions:
 - Reproducible init build: `clang --target=aarch64-linux-gnu -nostdlib
   -static -O2 -fuse-ld=lld -DN9BUILD=<n> -o init tools/miniroot/init-auto.c`
   gives a byte-identical binary to the shipped init.
+
+### 2026-10-21 18:10–18:20: n9bt85/86 and the full libbt-vendor state machine (REA)
+
+REA (Ghidra) decompile of `hw_config_cback` in `/vendor/lib64/libbt-vendor.so`
+(sha256 `5890605f…`) gives Android's exact order:
+`Reset(115200) -> fc18 -> 3M -> 0c14 -> fc2e -> records (last record = Launch RAM)
+-> host 115200 -> 100 ms (table default for BCM4350C0) -> Reset -> fc18 -> host 3M
+-> fc01 bdaddr -> done`. No other command is sent in that window. The kernel
+sequence (n9bt79–81) now matches it, so command order is **not** the difference.
+
+- n9bt85: `/sys/devices/platform/70006200.serial/power/control` already reads
+  `on` and runtime_status `unsupported` -> UART runtime PM was never active.
+  **Dead.** Behaviour identical (Reset ok, fc18 and 0x1001 lost).
+- n9bt86: gpio dump shows `gpio-191 regulator-wifi-reg-on out hi` during the
+  BT run, same as Android (`wlan_power out hi`). **Dead:** "WLAN power off".
+- Still true: only the post-launch Reset is ever answered; chip needs ~4–5 s
+  after Launch RAM (Android: ~100 ms).
+- Remaining Android-vs-mainline differences to test: WLAN card actually
+  enumerated/driven (SDIO never comes up in these images), UART pinmux /
+  RTS-CTS pad state after the chip reboots, serdev vs raw tty on the same
+  post-launch path (never tried past Launch RAM with the tty path),
+  Android's `0x8003/0x8005` wake ioctls (= BT_WAKE assert/get only).
+- 3 of 4 n9bt85 attempts stalled without a record; the early-stall problem
+  remains.
