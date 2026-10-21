@@ -598,3 +598,30 @@ State when parked (user heard nothing on 440 Hz / 880 Hz tones at 10 %, 3 s):
   (`/etc/n9-plainsh`); `tools/n9boot.sh <img> load-audio` boots and waits;
   `tools/n9sh.sh '<cmd>' <secs>` runs a command (output of a long command can
   arrive one call late; send `echo x` to flush).
+
+## 2026-10-22 02:15 — REA of Android's TFA9895 driver: what mainline is missing
+
+Artifact: running Android kernel (sha256 `b26351cb…`, LNX partition), symbols
+recovered from its own address table (see `stability-debug.md`), window
+`ffffffc0008293c0-ffffffc00082b000`. Functions: `tfa9895_probe` 0x8294dc,
+`set_tfa9895_spkamp` 0x829df4 (+ `tfa9895l_*` for the left amp), `tfa9895_ioctl`
+0x8297dc. Registers are 16-bit big-endian.
+
+Vendor bypass/"mode 0" recipe (probe and power-on), bytes read from the Image:
+```
+R4  = 0x8853     I2S register: I2SSR=8 (48 kHz), CHSA/format bits
+R9  = 0x0619     SYS_CTRL: PWDN=1, AMPE=1, DCA=1 (boost), + bits 9,10
+R9  = 0x0618     PWDN=0 (powered), AMPE=1, DCA=1
+R8 |= 0x0400     speaker block (high byte bit 2)
+power-off: R9 = 0x0619
+other mode (flag != 0): R9&=~1, R6&=~0x20, then R9|=8   /   off: R6|=0x20, R9&=~8, R9|=1
+```
+Mainline `sound/soc/codecs/tfa989x.c` differs: it **clears DCA/CFE/AMPC**
+(boost off), never writes R6 or R8, and only sets R4 sample-rate/channel
+fields. Hypotheses for the silence, cheapest first (test with
+`tools/amp-probe.sh`, image `n9ampA`, which prints R0 status incl.
+CLKS/PLLS/AMPS after each step; no listener needed):
+1. boost (DCA) off  2. R6 bit 5 (vendor clears it when enabling)  3. R8
+bit 10  4. R4 I2S format/sample rate wrong for our 64fs BCLK.
+Android also loads per-device tuning over `TFA9895_WRITE_CONFIG` ioctl from
+the HAL; mainline runs the hardware defaults.
