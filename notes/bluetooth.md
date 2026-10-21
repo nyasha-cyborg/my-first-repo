@@ -879,3 +879,17 @@ sequence (n9bt79–81) now matches it, so command order is **not** the differenc
   Android's `0x8003/0x8005` wake ioctls (= BT_WAKE assert/get only).
 - 3 of 4 n9bt85 attempts stalled without a record; the early-stall problem
   remains.
+
+### n9bt87 (18:23): audio 32 kHz clock node added — did not take effect
+
+Android's DT boot-enables both `clk32k_kg` and `clk32k_kg_audio` (pinmux
+identical to ours: gpio5 -> clk32kgaudio). Added a `ti,palmas-clk32kgaudio`
+node (`ti,clock-boot-enable`) to the flounder DTS; the DTB shows it, but the
+init still reads `CLK32KGAUDIO_CTRL d5 = 00` and the log has no probe line
+for it. So the test did not exercise an enabled audio clock; post-launch
+behaviour identical. n9bt88 (init now prints `ls debugfs/clk | grep 32k`,
+`clk32kgaudio` enable count, platform devices matching clk) hung the tablet
+once (power cycle) and its re-run was not executed (blocked by the
+permission classifier, 18:35). Next: run n9bt88, then find why the second
+clock is not probed or enabled (check `palmas_clks_prepare` for
+`CLK32KGAUDIO`, regmap page for reg 0x01).

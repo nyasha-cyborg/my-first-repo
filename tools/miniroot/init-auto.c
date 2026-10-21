@@ -382,6 +382,8 @@ void _start(void)
 			 * wedged tty, so a hang still ends in a reset to Android. */
 			"busybox touch /stop-ping; "
 			"echo '<6>n9bt: clk32kg '$(busybox cat /sys/kernel/debug/clk/clk32kg/clk_enable_count 2>&1) > /dev/kmsg; "
+			"echo '<6>n9bt: clks '$(busybox ls /sys/kernel/debug/clk 2>&1 | busybox grep 32k) 'audio-en='$(busybox cat /sys/kernel/debug/clk/clk32kgaudio/clk_enable_count 2>&1) > /dev/kmsg; "
+			"echo '<6>n9bt: palmas-devs '$(busybox ls /sys/bus/platform/devices 2>&1 | busybox grep -i -E 'clk|clock') > /dev/kmsg; "
 			/* Palmas CLK32KG_CTRL/CLK32KGAUDIO_CTRL (page 1, 0xd4/0xd5);
 			 * Android reads 07/00 whether BT is on or off. */
 			"echo '<6>n9bt: palmas '$(busybox grep ^d[45] /sys/kernel/debug/regmap/4-0059/registers) > /dev/kmsg; "
