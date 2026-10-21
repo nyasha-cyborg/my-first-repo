@@ -217,7 +217,18 @@ Supersedes every earlier "Next actions" list. Full evidence: `bluetooth.md`.
   `/tmp/n9build` is tmpfs: ramdisk templates are lost on host reboot (rebuild
   from `n9bt100-stripped.img`: `bootimg-split.py` + `cpio`).
 
-## STATE at 2026-10-22 ~02:00 (overnight) — read this first
+## STATE at 2026-10-22 ~02:30 (overnight) — read this first
+
+**First thing in the morning:** power-cycle the tablet (hold power ~15 s) and let
+it charge, then run `tools/overnight.sh` (it waits for the tablet, then pulls
+Wi-Fi calibration from Android, reads the Android PMIC irq registers, runs the
+TFA9895 amp probe `tools/amp-probe.sh` on image `n9ampA` (REA-derived vendor
+register recipe, prints amp status bits so no listener is needed), checks PMIC
+irq delivery with an RTC alarm, and soaks 20 boots). Results land in
+`/tmp/n9build/overnight/` (tmpfs: copy what matters into `notes/`). An
+unattended launch of this script was blocked by the permission check, so it
+was left for you to start.
+
 
 - **Tablet is off USB** (no adb/fastboot/gadget) since ~01:35 during a soak run:
   needs a power cycle (hold power ~15 s) and probably charging (battery was
