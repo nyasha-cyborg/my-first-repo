@@ -951,3 +951,25 @@ up at 7.2 s (BCM4354 37.4MHz WLBGA Google T1-0319 build 0690), no timeouts.
 So the requirement is the WLAN side being powered and enumerated with the
 LPO-first pwrseq (WL_REG_ON after the 32 kHz clock), not a running Wi-Fi
 driver.
+
+### n9bt92/93 (21:43–21:46): cleanup — what is actually required
+
+- n9bt92: baseline `45145e3cf` drivers (still contain local 3 Mbaud init_speed
+  and tty-speed hacks) + new DT -> **fails** (`fc18 tx timeout`) although SDIO
+  was up (card enumerates at ~2.7 s, after the init's early `n9bt: sdio`
+  sample). So some driver change is needed.
+- n9bt93: **upstream** `hci_bcm.c`/`btbcm.c` (from `42ba32230^`) + only the
+  probe-time `bcm_gpio_set_power(true)` + the new DT -> **hci0 up**, firmware
+  build 0690, no timeouts, no n9dbg traces, no extra delays. 
+- Committed in linux-flounder as `3706fe92e` (local only, never push);
+  exported as `patches/bluetooth-wip/0004-...patch`. All earlier WIP hacks
+  (1 s btbcm delay, 500 ms power-up waits, early baud/bcm4335a0 data,
+  post-launch Reset, traces) are **not needed**.
+- The pieces that matter: (1) DT pwrseq with LPO-first WL_REG_ON so the SDIO
+  card enumerates; (2) chip powered at probe, before serdev opens the UART.
+  Still unablated: BT_WAKE active-high + assert-before-REG_ON (n9bt80), the
+  audio 32 kHz node (n9bt87) and compatible `brcm,bcm4335a0`.
+
+Next: stability repeats, ablate those three, BlueZ scan/pair, then the
+WiFi note (pwrseq fix may close the SDIO enumeration bug), then an upstream
+series.

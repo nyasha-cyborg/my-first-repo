@@ -1,0 +1,221 @@
+From 3706fe92eea0897d56931cdc04c7f801536df4fa Mon Sep 17 00:00:00 2001
+From: nyasha <nmushambi@proton.me>
+Date: Wed, 21 Oct 2026 21:46:13 +1300
+Subject: [PATCH] Bluetooth: flounder - order WLAN power and power the chip
+ before serdev
+
+The BCM4354 combo chip's Bluetooth firmware only runs properly when the
+WLAN core is alive. The WLAN SDIO card used to race the 32 kHz LPO (an
+always-on regulator raised WL_REG_ON at boot, the SDIO scan ran once).
+
+- DT: mmc-pwrseq-simple with the Palmas clk32kg as ext_clock, then WL_REG_ON,
+  300 ms, then the SDIO scan; drop the always-on wifi-reg-on regulator
+- DT: boot-enable the Palmas audio 32 kHz output like the vendor DT; assert
+  BT_WAKE (active high) with REG_ON
+- hci_bcm: power the chip in probe, before serdev opens the UART
+- hci_bcm/btbcm: back to the upstream code (drop the local tty speed and
+  3 Mbaud init hacks and all n9dbg traces)
+
+Tested on hardware: hci0 up with firmware build 0690 (n9bt93).
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+---
+ .../boot/dts/nvidia/tegra132-flounder.dts     | 28 ++++-----
+ drivers/bluetooth/btbcm.c                     |  4 +-
+ drivers/bluetooth/hci_bcm.c                   | 62 ++-----------------
+ 3 files changed, 20 insertions(+), 74 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts b/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
+index a31a67ef6..657e6743f 100644
+--- a/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
++++ b/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
+@@ -706,7 +706,7 @@ bluetooth {
+ 			compatible = "brcm,bcm4335a0";
+ 			max-speed = <3000000>;
+ 			shutdown-gpios = <&gpio TEGRA_GPIO(R, 1) GPIO_ACTIVE_HIGH>;
+-			device-wakeup-gpios = <&gpio TEGRA_GPIO(EE, 1) GPIO_ACTIVE_LOW>;
++			device-wakeup-gpios = <&gpio TEGRA_GPIO(EE, 1) GPIO_ACTIVE_HIGH>;
+ 			/* HOST_WAKE (PU6) is left out until its polarity is
+ 			 * measured; without it hci_bcm skips runtime PM. */
+ 			clocks = <&palmas_clk32kg>;
+@@ -948,6 +948,14 @@ palmas_clk32kg: clock {
+ 				ti,clock-boot-enable;
+ 			};
+ 
++			/* The vendor DT boot-enables the audio 32 kHz output too
++			 * (n9bt87 test: is the BT LPO on this output?). */
++			palmas_clk32kgaudio: clock-audio {
++				compatible = "ti,palmas-clk32kgaudio";
++				#clock-cells = <0>;
++				ti,clock-boot-enable;
++			};
++
+ 			pmic {
+ 				compatible = "ti,tps65913-pmic", "ti,palmas-pmic";
+ 
+@@ -1221,20 +1229,12 @@ usb2-0 {
+ 	/* BT_REG_ON (PR1) and BT_WAKE (PEE1) belong to the bluetooth node
+ 	 * under serial@70006200; hci_bcm drives both. */
+ 
+-	wifi_reg_on: regulator-wifi-reg-on {
+-		compatible = "regulator-fixed";
+-		regulator-name = "wifi-reg-on";
+-		/* pwrseq drives this rail on at physical high; model the line
+-		 * as active-high so the regulator's enable does the same. */
+-		gpio = <&gpio TEGRA_GPIO(X, 7) GPIO_ACTIVE_HIGH>;
+-		enable-active-high;
+-		regulator-always-on;
+-		regulator-boot-on;
+-	};
+-
+ 	pwrseq_wifi: pwrseq-wifi {
+ 		compatible = "mmc-pwrseq-simple";
+-		status = "disabled";
++		/* n9bt89: LPO first, then WL_REG_ON, then 300 ms, then the
++		 * SDIO scan (was an always-on regulator racing the LPO). */
++		clocks = <&palmas_clk32kg>;
++		clock-names = "ext_clock";
+ 		reset-gpios = <&gpio TEGRA_GPIO(X, 7) GPIO_ACTIVE_LOW>;
+ 		post-power-on-delay-ms = <300>;
+ 		power-off-delay-us = <300>;
+@@ -1247,7 +1247,7 @@ mmc@700b0000 {
+ 		sd-uhs-sdr104;
+ 		nvidia,only-1-8v;
+ 		non-removable;
+-		/* rail held by wifi_reg_on */
++		mmc-pwrseq = <&pwrseq_wifi>;
+ 		vqmmc-supply = <&vdd_1v8>;
+ 		#address-cells = <1>;
+ 		#size-cells = <0>;
+diff --git a/drivers/bluetooth/btbcm.c b/drivers/bluetooth/btbcm.c
+index adedf0b33..d33cc70ee 100644
+--- a/drivers/bluetooth/btbcm.c
++++ b/drivers/bluetooth/btbcm.c
+@@ -285,9 +285,7 @@ static int btbcm_reset(struct hci_dev *hdev)
+ 	kfree_skb(skb);
+ 
+ 	/* 100 msec delay for module to complete reset process */
+-	/* n9dbg: flounder BCM4350C0 ignores commands sent 100 ms after
+-	 * Reset (n9bt67/68); test with a long settle, then tune. */
+-	msleep(1000);
++	msleep(100);
+ 
+ 	return 0;
+ }
+diff --git a/drivers/bluetooth/hci_bcm.c b/drivers/bluetooth/hci_bcm.c
+index 558b21a4e..2c1eca717 100644
+--- a/drivers/bluetooth/hci_bcm.c
++++ b/drivers/bluetooth/hci_bcm.c
+@@ -277,26 +277,14 @@ static int bcm_gpio_set_power(struct bcm_device *dev, bool powered)
+ 			goto err_lpo_clk_disable;
+ 	}
+ 
+-	/* n9dbg: flounder test. btwake (which works) powers the chip with
+-	 * BT_WAKE deasserted and asserts it ~500 ms after boot; upstream
+-	 * asserts it together with REG_ON. Reproduce btwake's order. */
+-	if (powered)
+-		dev->set_device_wakeup(dev, false);
+-
+ 	err = dev->set_shutdown(dev, powered);
+ 	if (err)
+ 		goto err_txco_clk_disable;
+ 
+-	if (powered)
+-		msleep(500);
+-
+ 	err = dev->set_device_wakeup(dev, powered);
+ 	if (err)
+ 		goto err_revert_shutdown;
+ 
+-	if (powered)
+-		msleep(50);
+-
+ 	if (!powered && dev->res_enabled) {
+ 		clk_disable_unprepare(dev->txco_clk);
+ 		clk_disable_unprepare(dev->lpo_clk);
+@@ -620,22 +608,6 @@ static int bcm_setup(struct hci_uart *hu)
+ 	if (speed)
+ 		host_set_baudrate(hu, speed);
+ 
+-	/* n9dbg: flounder test (n9bt78). Android's order after Launch RAM:
+-	 * host 115200, 100 ms settle, HCI Reset, then fc18. Mainline sends
+-	 * fc18 first, which the freshly booted firmware leaves unanswered
+-	 * (n9bt76/77). */
+-	{
+-		struct sk_buff *skb;
+-
+-		msleep(100);
+-		skb = __hci_cmd_sync(hu->hdev, HCI_OP_RESET, 0, NULL,
+-				     HCI_INIT_TIMEOUT);
+-		pr_info("n9dbg post-launch Reset: %ld\n",
+-			IS_ERR(skb) ? PTR_ERR(skb) : 0L);
+-		if (!IS_ERR(skb))
+-			kfree_skb(skb);
+-	}
+-
+ 	/* Operational speed if any */
+ 	if (hu->oper_speed)
+ 		speed = hu->oper_speed;
+@@ -718,21 +690,10 @@ static const struct h4_recv_pkt bcm_recv_pkts[] = {
+ 	{ BCM_RECV_TYPE52,  .recv = hci_recv_diag  },
+ };
+ 
+-/* n9dbg: quiet while patch records (fc4c) are in flight, so the boot
+- * record keeps what happens after Launch RAM instead of ~800 ack lines. */
+-static bool n9dbg_quiet;
+-static unsigned int n9dbg_records;
+-
+ static int bcm_recv(struct hci_uart *hu, const void *data, int count)
+ {
+ 	struct bcm_data *bcm = hu->priv;
+ 
+-	/* n9dbg: temporary raw RX trace for the flounder bring-up */
+-	if (!n9dbg_quiet)
+-		pr_info("n9dbg bcm rx %d%s: %*ph\n", count,
+-			test_bit(HCI_UART_REGISTERED, &hu->flags) ? "" : " (unregistered)",
+-			min(count, 32), data);
+-
+ 	if (!test_bit(HCI_UART_REGISTERED, &hu->flags))
+ 		return -EUNATCH;
+ 
+@@ -764,19 +725,6 @@ static int bcm_enqueue(struct hci_uart *hu, struct sk_buff *skb)
+ 
+ 	/* Prepend skb with frame type */
+ 	memcpy(skb_push(skb, 1), &hci_skb_pkt_type(skb), 1);
+-	/* n9dbg: temporary raw TX trace for the flounder bring-up */
+-	if (skb->len >= 3 && skb->data[1] == 0x4c && skb->data[2] == 0xfc) {
+-		if (!n9dbg_quiet)
+-			pr_info("n9dbg bcm tx: patch records start (quiet)\n");
+-		n9dbg_quiet = true;
+-		n9dbg_records++;
+-	} else {
+-		if (n9dbg_quiet)
+-			pr_info("n9dbg bcm: %u patch records sent\n", n9dbg_records);
+-		n9dbg_quiet = false;
+-		pr_info("n9dbg bcm tx %u: %*ph\n", skb->len,
+-			min_t(int, skb->len, 16), skb->data);
+-	}
+ 	skb_queue_tail(&bcm->txq, skb);
+ 
+ 	return 0;
+@@ -1595,12 +1543,12 @@ static int bcm_serdev_probe(struct serdev_device *serdev)
+ 	if (err)
+ 		dev_err(&serdev->dev, "Failed to power down\n");
+ 
+-	/* n9dbg: flounder test (n9bt75). serdev opens the UART before
+-	 * bcm_open powers the chip, so the port sees the unpowered chip's
+-	 * TX low (break/framing errors) during boot. The working tty paths
+-	 * power the chip first. Power it here, before the port opens. */
++	/* The flounder chip must be powered before serdev opens the UART:
++	 * the port otherwise sees the unpowered chip's TX held low and only
++	 * one reply gets through. */
+ 	err = bcm_gpio_set_power(bcmdev, true);
+-	pr_info("n9dbg probe: chip powered before serdev open (%d)\n", err);
++	if (err)
++		dev_err(&serdev->dev, "Failed to power up\n");
+ 
+ 	data = device_get_match_data(bcmdev->dev);
+ 	if (data) {
+-- 
+2.56.0
+
