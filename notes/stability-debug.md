@@ -513,3 +513,28 @@ python3 tools/bootimg-repack.py --stock old-stripped.img \
 ```
 `--stock` may itself be a wrapper-stripped image; the tool warns and writes a
 bare `ANDROID!` image, which is what `fastboot boot` wants.
+
+## 2026-10-21 22:40 — ROOT CAUSE CANDIDATE: Palmas VBUS interrupt storm starves the PMIC I2C bus
+
+Found while chasing the `modprobe snd-soc-tfa989x` hang (audio.md). On the
+consistent kernel `6.19.0-htc-flounder-gbd93f7930b07` (image `n9dbgA`), with a
+serial shell and `/proc/<pid>/stack`:
+
+- `modprobe` blocks (state D) in `tfa989x_i2c_probe -> devm_regulator_get ->
+  regulator_dev_lookup` (a mutex), not in the amp itself.
+- Other D-state tasks: `mmc_rescan -> mmc_sdio_init_card ->
+  mmc_regulator_set_vqmmc` (regulator lock), `regulator_late_cleanup`, and a
+  kworker on `i2c_adapter_lock_bus`. The holder is **`irq/72-palmas`**, always
+  inside `tegra_i2c_wait_completion` reading Palmas registers.
+- `/proc/interrupts` (3 s apart): palmas 190369 -> 193636 (~1000/s), the
+  `7000d000.i2c` controller 1.90M -> 1.94M (~10k/s), and every Palmas
+  interrupt is `palmas_usb_vbus` (child irq 23, identical counts).
+  => the PMIC bus (i2c4) is saturated by a VBUS interrupt storm, so every
+  regulator operation (SDIO vqmmc, audio rails, ...) queues behind it.
+- This matches mode B (USB enumerated, userspace blocked, no watchdog reset
+  because the machine is alive) and the "early stall" of ~1 in 3 boots; the
+  gadget's VBUS (host-powered) is the trigger candidate.
+
+Next: read the Palmas INT3 / VBUS state registers while storming; check the
+IRQ trigger type (DT says edge; palmas INT is level-low), the local
+`palmas-usb` n9 changes, and whether the storm starts at gadget connect.
