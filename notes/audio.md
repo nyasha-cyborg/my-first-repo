@@ -625,3 +625,35 @@ CLKS/PLLS/AMPS after each step; no listener needed):
 bit 10  4. R4 I2S format/sample rate wrong for our 64fs BCLK.
 Android also loads per-device tuning over `TFA9895_WRITE_CONFIG` ioctl from
 the HAL; mainline runs the hardware defaults.
+
+## 2026-10-22 07:45 — amp probe on hardware (image n9ampA/B, kernel ...g6988accc2d82)
+
+Read-only first (both amps 0x34/0x35 on i2c bus 1, tone playing):
+`R0=001d R1=02fe/02ff R2=0100 R3=0012 R4=880b R5=13ab R6=001f R7=0fe6 R8=3c4e R9=0208 R10=06c3`.
+Idle (stream stopped): R0 still 001d, R9=0201 (PWDN). R3=0x12 = TFA9895.
+- R0 never changes between idle and playing -> PLL/clock-stable bits never
+  asserted; R1/R2 (battery voltage / temperature) read plausibly, so the
+  analog side is alive and our register writes land.
+- Ruled out as the cause (each tried with a single write, tone playing):
+  R6 bit 5 (already 0), R8 bit 10 (already 1), R4=0x8853 vendor value
+  (took, R0 unchanged), R9 DCA boost on (0x0218, R0 unchanged).
+- Pad tri-state: the DT had the DAP3 pads (dout/fs/sclk) with
+  `nvidia,tristate = <ENABLE>` (tri-stated). Changed to DISABLE/enable-input
+  ENABLE in the working tree (uncommitted, image n9ampB): **R0 unchanged**,
+  so not sufficient on its own (may still be required).
+- I2S2 (70301200) registers during playback: CTRL=0x80000403 (TX enabled,
+  MASTER_ENABLE, 16-bit), TIMING=0x1f (32-bit slots -> BCLK 3.072 MHz = 64fs).
+  Machine driver dai_fmt for the speaker link = I2S|NB_NF|CBC_CFC (Tegra is
+  clock provider). Clock tree: pll_a 368.64 MHz -> pll_a_out0 12.288 MHz ->
+  extern1 / i2s2 (3.072 MHz) all enabled.
+- Other facts: `dap_mclk1_pw4` = extperiph1, driven; amps need no MCLK per DT.
+- Still open: do pins PP0-PP3 (DAP3) physically reach the amps? (downstream
+  `board-flounder.c` + the two-source agreement in this note say yes); is
+  R0 a latched/other-meaning register on this part; did the user hear anything
+  during the boost toggle (07:41:12-07:41:31)? Next: per-pad register check,
+  scope-free test by routing a GPIO-bit-banged BCLK/LRCK on PP3/PP0 and
+  watching R0, and REA of the downstream pinmux table (nameless data array
+  in the Android kernel; callers `tegra_pinmux_set_*`).
+- Wi-Fi: Android's calibration files found: `/system/etc/wifi/bcmdhd.cal`
+  and `bcmdhd_lte.cal` (BCM94354 WLBGA, xtalfreq=37400); copied to
+  `~/Downloads/nexus9/firmware-extracted/wifi/` (not in the repo).
