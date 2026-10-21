@@ -1,0 +1,38 @@
+From 65429d8f78f5d63c67ffc0132b839b44a5c67ca6 Mon Sep 17 00:00:00 2001
+From: nyasha <nmushambi@proton.me>
+Date: Mon, 19 Oct 2026 00:17:42 +1300
+Subject: [PATCH 15/29] usb: chipidea: tegra: gate the diagnostic reset timer
+
+- n9_trace_init armed an 8 s PMC reset unconditionally. Any boot whose
+  userspace had not reached SYSTEM_RUNNING by then was reset mid-boot,
+  which looked like an intermittent kernel hang a few seconds in.
+- Arm it only when the command line contains n9.hangreset.
+
+Co-Authored-By: Claude Code with DeepSeek Flash v4.1 <noreply@anthropic.com>
+---
+ drivers/usb/chipidea/ci_hdrc_tegra.c | 9 ++++++++-
+ 1 file changed, 8 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/usb/chipidea/ci_hdrc_tegra.c b/drivers/usb/chipidea/ci_hdrc_tegra.c
+index edb7f799f..d60f0a937 100644
+--- a/drivers/usb/chipidea/ci_hdrc_tegra.c
++++ b/drivers/usb/chipidea/ci_hdrc_tegra.c
+@@ -194,7 +194,14 @@ static int __init n9_trace_init(void)
+ 	for (i = N9_FIRST_CODE; i <= N9_LAST_CODE; i++)
+ 		writel(0, base + N9_SCRATCH0 + (N9_MAG_SLOT + i) * 4);
+ 
+-	mod_timer(&n9_reset, jiffies + 8 * HZ);
++	/*
++	 * Only arm the watchdog when a diagnostic run asked for it. It used
++	 * to be unconditional, and because it fires 8 s after core_initcall
++	 * any boot whose userspace was slightly slow got its machine reset
++	 * mid-boot -- which looked like an intermittent kernel hang.
++	 */
++	if (saved_command_line && strstr(saved_command_line, "n9.hangreset"))
++		mod_timer(&n9_reset, jiffies + 8 * HZ);
+ 
+ 	return 0;
+ }
+-- 
+2.56.0
+

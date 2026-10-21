@@ -1,0 +1,54 @@
+From d172932fc43b75878beaac55f9e2c415cbbb9a9e Mon Sep 17 00:00:00 2001
+From: nyasha <nmushambi@proton.me>
+Date: Tue, 20 Oct 2026 17:31:38 +1300
+Subject: [PATCH 20/29] watchdog: tegra: allow arming at probe time
+
+- add early_start module param: start the timer in probe instead of
+  waiting for a userspace open()
+- bring-up images use it so a hang before init still ends in a reset
+  instead of a manual power cycle
+- default stays off; normal boots keep the /dev/watchdog handover
+
+Co-Authored-By: Claude Code <noreply@anthropic.com>
+---
+ drivers/watchdog/tegra_wdt.c | 17 +++++++++++++++++
+ 1 file changed, 17 insertions(+)
+
+diff --git a/drivers/watchdog/tegra_wdt.c b/drivers/watchdog/tegra_wdt.c
+index d5de6c065..50cc89ae7 100644
+--- a/drivers/watchdog/tegra_wdt.c
++++ b/drivers/watchdog/tegra_wdt.c
+@@ -179,6 +179,18 @@ static const struct watchdog_ops tegra_wdt_ops = {
+ 	.get_timeleft = tegra_wdt_get_timeleft,
+ };
+ 
++/*
++ * Start the watchdog as soon as the driver probes, without waiting for a
++ * userspace open().  Bring-up images use this so that a hang before init is
++ * still followed by a reset instead of requiring a manual power cycle; a
++ * normal boot reaches userspace well inside the timeout and takes over via
++ * /dev/watchdog.
++ */
++static bool early_start;
++module_param(early_start, bool, 0);
++MODULE_PARM_DESC(early_start,
++	"Start the watchdog at probe time (default = false)");
++
+ static int tegra_wdt_probe(struct platform_device *pdev)
+ {
+ 	struct device *dev = &pdev->dev;
+@@ -227,6 +239,11 @@ static int tegra_wdt_probe(struct platform_device *pdev)
+ 	dev_info(dev, "initialized (heartbeat = %d sec, nowayout = %d)\n",
+ 		 heartbeat, nowayout);
+ 
++	if (early_start) {
++		dev_info(dev, "early start enabled, arming at probe\n");
++		tegra_wdt_start(wdd);
++	}
++
+ 	return 0;
+ }
+ 
+-- 
+2.56.0
+

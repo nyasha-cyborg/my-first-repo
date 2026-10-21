@@ -1,0 +1,42 @@
+From 78e0362aa65186cd46a99943afe206ba5c86c611 Mon Sep 17 00:00:00 2001
+From: nyasha <nmushambi@proton.me>
+Date: Mon, 19 Oct 2026 23:41:43 +1300
+Subject: [PATCH 17/29] arm64: tegra132: flounder: wire Bluetooth control pins
+
+- downstream board-flounder.c bluedroid_pm gives BT_REG_ON=PR1,
+  BT_WAKE=PEE1, HOST_WAKE=PU6
+- add shutdown-gpios, device-wakeup-gpios and host-wakeup-gpios to the
+  brcm,bcm43540-bt serdev child on serial@70006200
+- hci_bcm treats shutdown-gpios as a power enable, matching BT_REG_ON
+
+Co-Authored-By: Claude Code <noreply@anthropic.com>
+---
+ arch/arm64/boot/dts/nvidia/tegra132-flounder.dts | 12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts b/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
+index 327ba7f3e..7bd1b907a 100644
+--- a/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
++++ b/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
+@@ -683,6 +683,18 @@ serial@70006200 {
+ 
+ 		bluetooth {
+ 			compatible = "brcm,bcm43540-bt";
++			/*
++			 * Downstream board-flounder.c (bluedroid_pm
++			 * resources): BT_REG_ON = PR1, BT_WAKE = PEE1,
++			 * HOST_WAKE = PU6. The driver treats
++			 * shutdown-gpios as a power enable (1 = on).
++			 */
++			shutdown-gpios =
++				<&gpio TEGRA_GPIO(R, 1) GPIO_ACTIVE_HIGH>;
++			device-wakeup-gpios =
++				<&gpio TEGRA_GPIO(EE, 1) GPIO_ACTIVE_HIGH>;
++			host-wakeup-gpios =
++				<&gpio TEGRA_GPIO(U, 6) GPIO_ACTIVE_HIGH>;
+ 		};
+ 	};
+ 
+-- 
+2.56.0
+

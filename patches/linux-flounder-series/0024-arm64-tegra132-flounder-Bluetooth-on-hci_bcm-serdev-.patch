@@ -1,0 +1,196 @@
+From 6499bae9e9de01f9b8d86cc6bbfdc2a769232030 Mon Sep 17 00:00:00 2001
+From: nyasha <nmushambi@proton.me>
+Date: Tue, 20 Oct 2026 23:34:54 +1300
+Subject: [PATCH 24/29] arm64: tegra132: flounder: Bluetooth on hci_bcm serdev
+ (WIP)
+
+- DT: bluetooth child of serial@70006200 (brcm,bcm43540-bt, max-speed
+  3000000); BT_REG_ON PR1 active high, BT_WAKE PEE1 active low, palmas
+  clk32kg as lpo; drop the rfkill-gpio node that claimed PR1 active low
+- hci_bcm: drop the tty-path 3 Mbaud init_speed hack (ROM speaks 115200)
+- WIP/test only: n9dbg raw rx/tx trace in hci_bcm, 500 ms power-on settle
+  and 1 s post-Reset settle in btbcm; the BCM4350C0 ignores commands sent
+  ~100 ms after it boots
+- to do: tune the delays, drop the trace, then split for upstream
+
+Co-Authored-By: Claude Code <noreply@anthropic.com>
+---
+ .../boot/dts/nvidia/tegra132-flounder.dts     | 57 +++++++------------
+ drivers/bluetooth/btbcm.c                     |  4 +-
+ drivers/bluetooth/hci_bcm.c                   | 26 ++++-----
+ 3 files changed, 36 insertions(+), 51 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts b/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
+index 49be155a3..8b18d10b7 100644
+--- a/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
++++ b/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
+@@ -678,18 +678,16 @@ serial@70006000 {
+ 	 * the second UART sits at +0x40 rather than +0x100, so the addresses
+ 	 * are not evenly spaced.
+ 	 *
+-	 * Android drove the chip through an rfkill, so a control pin exists
+-	 * somewhere, but it is not established and none is declared. See
+-	 * notes/bluetooth.md. The firmware the driver will ask for,
+-	 * brcm/BCM4354.hcd, is in the ROM's vendor partition.
++	 * The module is a BCM4350C0. Its ROM answers HCI at 115200 with
++	 * RTS/CTS and switches to 3 Mbaud on VSC 0xfc18, exactly the sequence
++	 * hci_bcm runs. Control pins, from live Android (/d/gpio, BT on/off):
++	 * BT_REG_ON (PR1) is active high, BT_WAKE (PEE1) is active low.
++	 * btbcm has no subver entry for the chip, so it loads the vendor
++	 * bcm4350c0.hcd under its fallback name brcm/BCM.hcd.
++	 * See notes/bluetooth.md in the nexus9 repo.
+ 	 */
+ 	serial@70006200 {
+-		/*
+-		 * Android drives this port with the Tegra HSUART driver and
+-		 * the N_HCI line discipline (ttyTHS2), which answers HCI while
+-		 * the 8250 serdev path times out. Use the hsuart compatible so
+-		 * a tty exists; hciattach-min attaches it.
+-		 */
++		/* The Tegra HSUART driver, as Android uses (ttyTHS2). */
+ 		compatible = "nvidia,tegra124-hsuart", "nvidia,tegra30-hsuart";
+ 		/delete-property/ reg-shift;
+ 		reset-names = "serial";
+@@ -698,6 +696,17 @@ serial@70006200 {
+ 		nvidia,adjust-baud-rates = <0 9600 100>,
+ 					   <9600 115200 200>,
+ 					   <1000000 4000000 136>;
++
++		bluetooth {
++			compatible = "brcm,bcm43540-bt";
++			max-speed = <3000000>;
++			shutdown-gpios = <&gpio TEGRA_GPIO(R, 1) GPIO_ACTIVE_HIGH>;
++			device-wakeup-gpios = <&gpio TEGRA_GPIO(EE, 1) GPIO_ACTIVE_LOW>;
++			/* HOST_WAKE (PU6) is left out until its polarity is
++			 * measured; without it hci_bcm skips runtime PM. */
++			clocks = <&palmas_clk32kg>;
++			clock-names = "lpo";
++		};
+ 	};
+ 
+ 	/* TODO: UARTD */
+@@ -926,7 +935,7 @@ palmas_usb: palmas-usb {
+ 				ti,enable-vbus-detection;
+ 			};
+ 
+-			clock {
++			palmas_clk32kg: clock {
+ 				compatible = "ti,palmas-clk32kg";
+ 				#clock-cells = <0>;
+ 				/* LPO for the BCM4354; the vendor kernel
+@@ -1204,30 +1213,8 @@ usb2-0 {
+ 		};
+ 	};
+ 
+-
+-	/* BT_REG_ON (PR1) exposed as an rfkill switch, the same interface
+-	 * Android's libbt-vendor writes ("BT_VND_PWR_ON forces power-off
+-	 * first").  Userspace writes /sys/class/rfkill/rfkillN/state to
+-	 * power-cycle the section.  BT_WAKE (PEE1) is deliberately not
+-	 * claimed here; btwake drives it per transaction.
+-	 */
+-	bt_rfkill: bluetooth-rfkill {
+-		compatible = "rfkill-gpio";
+-		label = "bluetooth";
+-		radio-type = "bluetooth";
+-		/* rfkill-gpio probes reset before shutdown and aborts on a
+-		 * NULL reset line, so point both at PR1.  The vendor DTB
+-		 * lists PR1 in gpio-output-low and bluedroid_pm powers the
+-		 * section on by setting shutdown to 0: the line is active
+-		 * low (low = powered, high = shutdown). */
+-		reset-gpios = <&gpio TEGRA_GPIO(R, 1) GPIO_ACTIVE_LOW>;
+-		shutdown-gpios = <&gpio TEGRA_GPIO(R, 1) GPIO_ACTIVE_LOW>;
+-	};
+-
+-	/* BT_WAKE (PEE1) is deliberately not claimed here: Android's
+-	 * bluedroid_pm drives it dynamically (low on idle, high to wake).
+-	 * Userspace tools in the diagnostic ramdisk own the line instead.
+-	 */
++	/* BT_REG_ON (PR1) and BT_WAKE (PEE1) belong to the bluetooth node
++	 * under serial@70006200; hci_bcm drives both. */
+ 
+ 	wifi_reg_on: regulator-wifi-reg-on {
+ 		compatible = "regulator-fixed";
+diff --git a/drivers/bluetooth/btbcm.c b/drivers/bluetooth/btbcm.c
+index d33cc70ee..adedf0b33 100644
+--- a/drivers/bluetooth/btbcm.c
++++ b/drivers/bluetooth/btbcm.c
+@@ -285,7 +285,9 @@ static int btbcm_reset(struct hci_dev *hdev)
+ 	kfree_skb(skb);
+ 
+ 	/* 100 msec delay for module to complete reset process */
+-	msleep(100);
++	/* n9dbg: flounder BCM4350C0 ignores commands sent 100 ms after
++	 * Reset (n9bt67/68); test with a long settle, then tune. */
++	msleep(1000);
+ 
+ 	return 0;
+ }
+diff --git a/drivers/bluetooth/hci_bcm.c b/drivers/bluetooth/hci_bcm.c
+index f0a25f4b2..0c98bec2d 100644
+--- a/drivers/bluetooth/hci_bcm.c
++++ b/drivers/bluetooth/hci_bcm.c
+@@ -298,7 +298,8 @@ static int bcm_gpio_set_power(struct bcm_device *dev, bool powered)
+ 	}
+ 
+ 	/* wait for device to power on and come out of reset */
+-	usleep_range(100000, 120000);
++	/* n9dbg: flounder needs longer than 100 ms; test value, tune later */
++	msleep(500);
+ 
+ 	dev->res_enabled = powered;
+ 
+@@ -507,13 +508,6 @@ static int bcm_open(struct hci_uart *hu)
+ 
+ 		if (err)
+ 			goto err_unset_hu;
+-	} else if (hu->tty && hu->tty->termios.c_ospeed) {
+-		/*
+-		 * No platform/DT device (N_HCI tty path). Honour the speed
+-		 * userspace configured on the port instead of the protocol
+-		 * default; some modules come out of reset at 3 Mbaud.
+-		 */
+-		hu->init_speed = hu->tty->termios.c_ospeed;
+ 	}
+ 
+ 	mutex_unlock(&bcm_device_lock);
+@@ -701,6 +695,11 @@ static int bcm_recv(struct hci_uart *hu, const void *data, int count)
+ {
+ 	struct bcm_data *bcm = hu->priv;
+ 
++	/* n9dbg: temporary raw RX trace for the flounder bring-up */
++	pr_info("n9dbg bcm rx %d%s: %*ph\n", count,
++		test_bit(HCI_UART_REGISTERED, &hu->flags) ? "" : " (unregistered)",
++		min(count, 32), data);
++
+ 	if (!test_bit(HCI_UART_REGISTERED, &hu->flags))
+ 		return -EUNATCH;
+ 
+@@ -732,6 +731,9 @@ static int bcm_enqueue(struct hci_uart *hu, struct sk_buff *skb)
+ 
+ 	/* Prepend skb with frame type */
+ 	memcpy(skb_push(skb, 1), &hci_skb_pkt_type(skb), 1);
++	/* n9dbg: temporary raw TX trace for the flounder bring-up */
++	pr_info("n9dbg bcm tx %u: %*ph\n", skb->len, min_t(int, skb->len, 16),
++		skb->data);
+ 	skb_queue_tail(&bcm->txq, skb);
+ 
+ 	return 0;
+@@ -1302,13 +1304,7 @@ static const struct hci_uart_proto bcm_proto = {
+ 	.id		= HCI_UART_BCM,
+ 	.name		= "Broadcom",
+ 	.manufacturer	= 15,
+-	/*
+-	 * The flounder module (BCM4350C0) comes out of reset at 3 Mbaud;
+-	 * Android's HAL opens the port at 3000000. The tty layer does not
+-	 * preserve a custom termios speed for us to read back, so set it
+-	 * here for this port.
+-	 */
+-	.init_speed	= 3000000,
++	.init_speed	= 115200,
+ 	.open		= bcm_open,
+ 	.close		= bcm_close,
+ 	.flush		= bcm_flush,
+-- 
+2.56.0
+

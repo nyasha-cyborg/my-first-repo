@@ -1,0 +1,46 @@
+From 76ac253bdf670581c66ad5f1a573c95b8d08b103 Mon Sep 17 00:00:00 2001
+From: nyasha <nmushambi@proton.me>
+Date: Tue, 20 Oct 2026 18:55:18 +1300
+Subject: [PATCH 21/29] arm64: tegra132: flounder: free BT_REG_ON for userspace
+ power cycling
+
+- drop the always-on bt-reg-on fixed regulator
+- Android's BT_VND_PWR_ON forces a power-off before power-on, which a
+  boot-on rail can never produce; userspace now owns PR1 and PEE1
+
+Co-Authored-By: Claude Code <noreply@anthropic.com>
+---
+ arch/arm64/boot/dts/nvidia/tegra132-flounder.dts | 16 +++++-----------
+ 1 file changed, 5 insertions(+), 11 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts b/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
+index 129e23978..3771d6937 100644
+--- a/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
++++ b/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
+@@ -1202,18 +1202,12 @@ usb2-0 {
+ 	};
+ 
+ 
+-	/*
+-	 * BT_REG_ON (PR1): the BT section's own enable. Android's
+-	 * bluedroid_pm asserts this before opening the UART.
++	/* BT_REG_ON (PR1) and BT_WAKE (PEE1) are deliberately not claimed
++	 * here: Android powers the section off and on again before every
++	 * init (BT_VND_PWR_ON forces power-off first) and drives BT_WAKE
++	 * per transaction.  Userspace tools in the diagnostic ramdisk own
++	 * both lines so they can reproduce that sequence.
+ 	 */
+-	bt_reg_on: regulator-bt-reg-on {
+-		compatible = "regulator-fixed";
+-		regulator-name = "bt-reg-on";
+-		gpio = <&gpio TEGRA_GPIO(R, 1) GPIO_ACTIVE_HIGH>;
+-		enable-active-high;
+-		regulator-always-on;
+-		regulator-boot-on;
+-	};
+ 
+ 	/* BT_WAKE (PEE1) is deliberately not claimed here: Android's
+ 	 * bluedroid_pm drives it dynamically (low on idle, high to wake).
+-- 
+2.56.0
+

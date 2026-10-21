@@ -1,0 +1,56 @@
+From 786ab5cb6e7a746977bbc0f311e694a3068e4fa5 Mon Sep 17 00:00:00 2001
+From: nyasha <nmushambi@proton.me>
+Date: Mon, 19 Oct 2026 23:14:02 +1300
+Subject: [PATCH 16/29] arm64: tegra132: flounder: enable rt5677 supply gates
+
+- the codec's ID register read 0x0 because PK0 (V_IO_1V8) and PV3
+  (V_AUD_1V8) were never enabled; downstream enables them before reset
+- model both as always-on fixed regulators next to the existing spk_ldo
+- with these the rt5677 binds and the G9 sound card registers
+
+Co-Authored-By: Claude Code <noreply@anthropic.com>
+---
+ .../boot/dts/nvidia/tegra132-flounder.dts     | 27 +++++++++++++++++++
+ 1 file changed, 27 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts b/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
+index 5c9c854c0..327ba7f3e 100644
+--- a/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
++++ b/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
+@@ -1267,6 +1267,33 @@ spk_ldo: regulator-spk-ldo {
+ 		enable-active-high;
+ 	};
+ 
++	/*
++	 * The rt5677's supply gates, taken from the downstream machine driver's
++	 * power sequence (tegra_rt5677.c). Neither mainline codec driver nor the
++	 * binding knows them, so they are modelled as always-on fixed
++	 * regulators: without V_IO_1V8 the codec's I2C side is dead and its ID
++	 * register reads 0x0 ("Device with ID register 0x0 is not rt5677").
++	 * Downstream order: PK0, then palmas LDO2 (vdd_audio), then PV3, then
++	 * reset PX4.
++	 */
++	vdd_io_1v8: regulator-rt5677-io {
++		compatible = "regulator-fixed";
++		regulator-name = "vdd-io-1v8";
++		gpio = <&gpio TEGRA_GPIO(K, 0) GPIO_ACTIVE_HIGH>;
++		enable-active-high;
++		regulator-always-on;
++		regulator-boot-on;
++	};
++
++	vdd_aud_1v8: regulator-rt5677-aud {
++		compatible = "regulator-fixed";
++		regulator-name = "vdd-aud-1v8";
++		gpio = <&gpio TEGRA_GPIO(V, 3) GPIO_ACTIVE_HIGH>;
++		enable-active-high;
++		regulator-always-on;
++		regulator-boot-on;
++	};
++
+ 	/*
+ 	 * Speaker card: one I2S and two amplifiers on a single stereo link.
+ 	 * No generic card driver expresses that shape, so the link is declared
+-- 
+2.56.0
+

@@ -1,0 +1,557 @@
+From 8dd7d30cba938e20635b24c46e080177d501e05e Mon Sep 17 00:00:00 2001
+From: nyasha <nmushambi@proton.me>
+Date: Sun, 18 Oct 2026 12:36:38 +1300
+Subject: [PATCH 06/29] Remove the display bring-up diagnostics
+
+- Drop the register dumps, boot-state snapshots, forced values and delayed
+  work added while chasing the black panel
+- Delete the unused panel retry work and the stale brightness-latching
+  comment and flag left from the host-mode workaround
+- No functional change: console then full white still confirmed on hardware
+
+Co-Authored-By: Claude Code with DeepSeek Flash v4.1 <noreply@anthropic.com>
+---
+ drivers/gpu/drm/panel/panel-jdi-lpm089a128a.c |  37 +---
+ drivers/gpu/drm/tegra/dc.c                    |  56 ------
+ drivers/gpu/drm/tegra/dc.h                    |   2 -
+ drivers/gpu/drm/tegra/drm.c                   |   9 -
+ drivers/gpu/drm/tegra/dsi.c                   | 174 +-----------------
+ drivers/gpu/drm/tegra/gem.c                   |   9 -
+ drivers/gpu/drm/tegra/plane.c                 |   5 -
+ drivers/iommu/tegra-smmu.c                    |   4 -
+ 8 files changed, 6 insertions(+), 290 deletions(-)
+
+diff --git a/drivers/gpu/drm/panel/panel-jdi-lpm089a128a.c b/drivers/gpu/drm/panel/panel-jdi-lpm089a128a.c
+index be3bc88ad..ca35c09f4 100644
+--- a/drivers/gpu/drm/panel/panel-jdi-lpm089a128a.c
++++ b/drivers/gpu/drm/panel/panel-jdi-lpm089a128a.c
+@@ -61,14 +61,8 @@ struct jdi_panel {
+ 	struct gpio_desc *dcdc_en_gpio;
+ 	struct gpio_desc *reset_gpio;
+ 
+-	/*
+-	 * Brightness has to be written while the link is idle: once the DC is
+-	 * streaming, a command cannot be injected into the stream and the host
+-	 * trigger never completes (-110). The value is therefore latched and
+-	 * only ever written from prepare().
+-	 */
++	/* Initial brightness, written from prepare(). */
+ 	u8 brightness;
+-	bool streaming;
+ 
+ 	struct backlight_device *backlight;
+ 
+@@ -81,7 +75,6 @@ struct jdi_panel {
+ 
+ 	const struct drm_display_mode *mode;
+ 
+-	struct delayed_work retry_work;
+ };
+ 
+ static inline struct jdi_panel *to_panel_jdi(struct drm_panel *panel)
+@@ -250,13 +243,6 @@ static int jdi_panel_prepare(struct drm_panel *panel)
+ 	mipi_dsi_dual(mipi_dsi_dcs_set_display_on_multi,
+ 		      &dsi_ctx, jdi->link1, jdi->link2);
+ 
+-	/*
+-	 * The commands are injected into the running video stream, so there is
+-	 * no BTA path to read panel state back. Log only the write result.
+-	 */
+-	dev_err(panel->dev, "DIAG panel prep: accum_err=%d\n",
+-		dsi_ctx.accum_err);
+-
+ 	if (dsi_ctx.accum_err < 0) {
+ 		err = dsi_ctx.accum_err;
+ 		goto poweroff;
+@@ -265,7 +251,6 @@ static int jdi_panel_prepare(struct drm_panel *panel)
+ 	jdi->link1->mode_flags &= ~MIPI_DSI_MODE_LPM;
+ 	jdi->link2->mode_flags &= ~MIPI_DSI_MODE_LPM;
+ 
+-	jdi->streaming = true;
+ 	jdi->prepared = true;
+ 
+ 	return 0;
+@@ -282,25 +267,6 @@ static int jdi_panel_prepare(struct drm_panel *panel)
+ 	return err;
+ }
+ 
+-static void jdi_retry_cmd_work(struct work_struct *work)
+-{
+-	struct jdi_panel *jdi = container_of(to_delayed_work(work),
+-					     struct jdi_panel, retry_work);
+-	struct mipi_dsi_multi_context ctx = {};
+-	u8 payload[2] = { MIPI_DCS_SET_DISPLAY_BRIGHTNESS, 0xff };
+-
+-	mipi_dsi_dual(mipi_dsi_dcs_exit_sleep_mode_multi, &ctx,
+-		      jdi->link1, jdi->link2);
+-	mipi_dsi_dual(mipi_dsi_dcs_set_display_on_multi, &ctx,
+-		      jdi->link1, jdi->link2);
+-	mipi_dsi_dual_dcs_write_buffer_multi(&ctx, jdi->link1, jdi->link2,
+-					     payload, sizeof(payload));
+-
+-	dev_err(&jdi->link1->dev,
+-		"DIAG stream cmds accum_err=%d streaming=%d\n",
+-		ctx.accum_err, jdi->streaming);
+-}
+-
+ static int jdi_panel_enable(struct drm_panel *panel)
+ {
+ 	struct jdi_panel *jdi = to_panel_jdi(panel);
+@@ -415,7 +381,6 @@ static int jdi_panel_add(struct jdi_panel *jdi)
+ {
+ 	struct device *dev = &jdi->link1->dev;
+ 
+-	INIT_DELAYED_WORK(&jdi->retry_work, jdi_retry_cmd_work);
+ 	struct backlight_properties props = {
+ 		.type = BACKLIGHT_RAW,
+ 		.max_brightness = 255,
+diff --git a/drivers/gpu/drm/tegra/dc.c b/drivers/gpu/drm/tegra/dc.c
+index 0edd5c940..c4004ee4f 100644
+--- a/drivers/gpu/drm/tegra/dc.c
++++ b/drivers/gpu/drm/tegra/dc.c
+@@ -531,22 +531,6 @@ static void tegra_dc_setup_window(struct tegra_plane *plane,
+ 
+ 	tegra_plane_writel(plane, value, DC_WIN_WIN_OPTIONS);
+ 
+-	/*
+-	 * DIAG: read the window block back while it is definitely clocked
+-	 * (reads from a delayed work hang). This proves whether the block is
+-	 * alive and what address/stride the DC was actually given.
+-	 */
+-	dev_err(dc->dev,
+-		"DIAG win setup: winopt=%08x start=%08x stride=%08x size=%08x "
+-		"prescaled=%08x fmt=%08x base=%08x\n",
+-		tegra_plane_readl(plane, DC_WIN_WIN_OPTIONS),
+-		tegra_plane_readl(plane, DC_WINBUF_START_ADDR),
+-		tegra_plane_readl(plane, DC_WIN_LINE_STRIDE),
+-		tegra_plane_readl(plane, DC_WIN_SIZE),
+-		tegra_plane_readl(plane, DC_WIN_PRESCALED_SIZE),
+-		tegra_plane_readl(plane, DC_WIN_COLOR_DEPTH),
+-		window->base[0]);
+-
+ 	if (dc->soc->has_legacy_blending)
+ 		tegra_plane_setup_blending_legacy(plane);
+ 	else
+@@ -2182,11 +2166,6 @@ static void tegra_crtc_atomic_enable(struct drm_crtc *crtc,
+ 	u32 value;
+ 	int err;
+ 
+-	/* DIAG: read the clock rates the bootloader left us, before changing. */
+-	dev_err(dc->dev, "DIAG boot clk: dc=%lu parent=%lu\n",
+-		clk_get_rate(dc->clk),
+-		clk_get_rate(clk_get_parent(dc->clk)));
+-
+ 	/* apply PLL changes */
+ 	tegra_dc_set_clock_rate(dc, crtc_state);
+ 
+@@ -2196,14 +2175,6 @@ static void tegra_crtc_atomic_enable(struct drm_crtc *crtc,
+ 		return;
+ 	}
+ 
+-	/* DIAG: snapshot the bootloader's DC state before we reprogram it. */
+-	dev_err(dc->dev,
+-		"DIAG boot dc: clkctl=%08x winopt=%08x dispcmd=%08x pwr=%08x\n",
+-		tegra_dc_readl(dc, DC_DISP_DISP_CLOCK_CONTROL),
+-		tegra_dc_readl(dc, DC_DISP_DISP_WIN_OPTIONS),
+-		tegra_dc_readl(dc, DC_CMD_DISPLAY_COMMAND),
+-		tegra_dc_readl(dc, DC_CMD_DISPLAY_POWER_CONTROL));
+-
+ 	/* initialize display controller */
+ 	if (dc->syncpt) {
+ 		u32 syncpt = host1x_syncpt_id(dc->syncpt), enable;
+@@ -2327,17 +2298,6 @@ static void tegra_crtc_atomic_enable(struct drm_crtc *crtc,
+ 
+ 	tegra_dc_commit(dc);
+ 
+-	dev_err(dc->dev,
+-		"DIAG dc-enable: winopt=%08x dispcmd=%08x state=%08x intstat=%08x clkctl=%08x div=%u pclk=%lu rate=%lu\n",
+-		tegra_dc_readl(dc, DC_DISP_DISP_WIN_OPTIONS),
+-		tegra_dc_readl(dc, DC_CMD_DISPLAY_COMMAND),
+-		tegra_dc_readl(dc, DC_CMD_STATE_CONTROL),
+-		tegra_dc_readl(dc, DC_CMD_INT_STATUS),
+-		tegra_dc_readl(dc, DC_DISP_DISP_CLOCK_CONTROL),
+-		crtc_state->div, crtc_state->pclk, clk_get_rate(dc->clk));
+-
+-	schedule_delayed_work(&dc->diag_work, msecs_to_jiffies(2000));
+-
+ 	drm_crtc_vblank_on(crtc);
+ }
+ 
+@@ -2662,20 +2622,6 @@ static int tegra_dc_early_init(struct host1x_client *client)
+ 	return 0;
+ }
+ 
+-static void tegra_dc_diag_work(struct work_struct *work)
+-{
+-	struct tegra_dc *dc = container_of(to_delayed_work(work),
+-					   struct tegra_dc, diag_work);
+-
+-	dev_err(dc->dev,
+-		"DIAG dc-late: winopt=%08x dispcmd=%08x state=%08x intstat=%08x pwr=%08x\n",
+-		tegra_dc_readl(dc, DC_DISP_DISP_WIN_OPTIONS),
+-		tegra_dc_readl(dc, DC_CMD_DISPLAY_COMMAND),
+-		tegra_dc_readl(dc, DC_CMD_STATE_CONTROL),
+-		tegra_dc_readl(dc, DC_CMD_INT_STATUS),
+-		tegra_dc_readl(dc, DC_CMD_DISPLAY_POWER_CONTROL));
+-}
+-
+ static int tegra_dc_init(struct host1x_client *client)
+ {
+ 	struct drm_device *drm = dev_get_drvdata(client->host);
+@@ -2686,8 +2632,6 @@ static int tegra_dc_init(struct host1x_client *client)
+ 	struct drm_plane *cursor = NULL;
+ 	int err;
+ 
+-	INIT_DELAYED_WORK(&dc->diag_work, tegra_dc_diag_work);
+-
+ 	/*
+ 	 * DC has been reset by now, so VBLANK syncpoint can be released
+ 	 * for general use.
+diff --git a/drivers/gpu/drm/tegra/dc.h b/drivers/gpu/drm/tegra/dc.h
+index 31fe4b6ec..0559fa6b1 100644
+--- a/drivers/gpu/drm/tegra/dc.h
++++ b/drivers/gpu/drm/tegra/dc.h
+@@ -103,8 +103,6 @@ struct tegra_dc {
+ 	const struct tegra_dc_soc_info *soc;
+ 
+ 	bool has_opp_table;
+-
+-	struct delayed_work diag_work;
+ };
+ 
+ static inline struct tegra_dc *
+diff --git a/drivers/gpu/drm/tegra/drm.c b/drivers/gpu/drm/tegra/drm.c
+index 21b754795..1d18d4329 100644
+--- a/drivers/gpu/drm/tegra/drm.c
++++ b/drivers/gpu/drm/tegra/drm.c
+@@ -985,10 +985,6 @@ int host1x_client_iommu_attach(struct host1x_client *client)
+ 
+ 	client->group = group;
+ 
+-	dev_err(client->dev,
+-		"DIAG iommu-attach: domain=%p tegra_domain=%p group=%p explicit=%d\n",
+-		domain, tegra->domain, group, tegra->use_explicit_iommu);
+-
+ 	return 0;
+ }
+ 
+@@ -1226,11 +1222,6 @@ static int host1x_drm_probe(struct host1x_device *dev)
+ 		drm_mm_init(&tegra->mm, gem_start, gem_end - gem_start + 1);
+ 		mutex_init(&tegra->mm_lock);
+ 
+-		dev_err(drm->dev,
+-			"DIAG apertures: gem=%#llx-%#llx carveout=%#llx-%#llx mask=%#llx\n",
+-			gem_start, gem_end, carveout_start, carveout_end,
+-			dma_mask);
+-
+ 		DRM_DEBUG_DRIVER("IOMMU apertures:\n");
+ 		DRM_DEBUG_DRIVER("  GEM: %#llx-%#llx\n", gem_start, gem_end);
+ 		DRM_DEBUG_DRIVER("  Carveout: %#llx-%#llx\n", carveout_start,
+diff --git a/drivers/gpu/drm/tegra/dsi.c b/drivers/gpu/drm/tegra/dsi.c
+index 35836c88c..c45e348cf 100644
+--- a/drivers/gpu/drm/tegra/dsi.c
++++ b/drivers/gpu/drm/tegra/dsi.c
+@@ -84,14 +84,12 @@ struct tegra_dsi {
+ 	struct tegra_dsi *master;
+ 	struct tegra_dsi *slave;
+ 
+-	struct delayed_work diag_work;
+-
+ 	/*
+ 	 * While set, transfers are injected into the running video stream at
+ 	 * the next vblank (DSI_VIDEO_MODE_CONTROL) instead of using the host
+ 	 * trigger. The vendor driver sends the panel init this way.
+ 	 */
+-	bool video_pkt_mode;
++	bool video_running;
+ };
+ 
+ static inline struct tegra_dsi *
+@@ -895,9 +893,9 @@ static void tegra_dsi_encoder_disable(struct drm_encoder *encoder)
+ 	if (output->panel)
+ 		drm_panel_disable(output->panel);
+ 
+-	dsi->video_pkt_mode = false;
++	dsi->video_running = false;
+ 	if (dsi->slave)
+-		dsi->slave->video_pkt_mode = false;
++		dsi->slave->video_running = false;
+ 
+ 	tegra_dsi_video_disable(dsi);
+ 
+@@ -927,48 +925,6 @@ static void tegra_dsi_encoder_disable(struct drm_encoder *encoder)
+ 	tegra_dsi_unprepare(dsi);
+ }
+ 
+-struct tegra_dsi_snapshot {
+-	struct work_struct work;
+-	struct tegra_dsi *dsi;
+-};
+-
+-static void tegra_dsi_snapshot_work(struct work_struct *work)
+-{
+-	struct tegra_dsi_snapshot *snap =
+-		container_of(work, struct tegra_dsi_snapshot, work);
+-	struct tegra_dsi *dsi = snap->dsi;
+-
+-	dev_err(dsi->dev,
+-		"DIAG boot dsi %s: status=%08x ctrl=%08x pwr=%08x host=%08x\n",
+-		dev_name(dsi->dev),
+-		tegra_dsi_readl(dsi, DSI_STATUS),
+-		tegra_dsi_readl(dsi, DSI_CONTROL),
+-		tegra_dsi_readl(dsi, DSI_POWER_CONTROL),
+-		tegra_dsi_readl(dsi, DSI_HOST_CONTROL));
+-	dev_err(dsi->dev,
+-		"DIAG boot dsi %s: ganged ctl=%08x start=%08x size=%08x\n",
+-		dev_name(dsi->dev),
+-		tegra_dsi_readl(dsi, DSI_GANGED_MODE_CONTROL),
+-		tegra_dsi_readl(dsi, DSI_GANGED_MODE_START),
+-		tegra_dsi_readl(dsi, DSI_GANGED_MODE_SIZE));
+-	dev_err(dsi->dev,
+-		"DIAG boot dsi %s: pktlen %08x %08x %08x %08x\n",
+-		dev_name(dsi->dev),
+-		tegra_dsi_readl(dsi, DSI_PKT_LEN_0_1),
+-		tegra_dsi_readl(dsi, DSI_PKT_LEN_2_3),
+-		tegra_dsi_readl(dsi, DSI_PKT_LEN_4_5),
+-		tegra_dsi_readl(dsi, DSI_PKT_LEN_6_7));
+-	dev_err(dsi->dev,
+-		"DIAG boot dsi %s: pktseq %08x %08x %08x %08x %08x %08x\n",
+-		dev_name(dsi->dev),
+-		tegra_dsi_readl(dsi, DSI_PKT_SEQ_0_LO),
+-		tegra_dsi_readl(dsi, DSI_PKT_SEQ_0_HI),
+-		tegra_dsi_readl(dsi, DSI_PKT_SEQ_1_LO),
+-		tegra_dsi_readl(dsi, DSI_PKT_SEQ_1_HI),
+-		tegra_dsi_readl(dsi, DSI_PKT_SEQ_2_LO),
+-		tegra_dsi_readl(dsi, DSI_PKT_SEQ_2_HI));
+-}
+-
+ static int tegra_dsi_prepare(struct tegra_dsi *dsi)
+ {
+ 	int err;
+@@ -979,52 +935,6 @@ static int tegra_dsi_prepare(struct tegra_dsi *dsi)
+ 		return err;
+ 	}
+ 
+-	/*
+-	 * DIAG: snapshot what the bootloader left behind, before our reset
+-	 * toggle wipes it. At boot hboot drives this exact panel through the
+-	 * same controller, so these values are a known-good reference for the
+-	 * PHY timing, packet sequence, SOL delay and pad settings.
+-	 */
+-	dev_err(dsi->dev,
+-		"DIAG boot dsi %s: ctrl=%08x host=%08x pwr=%08x status=%08x\n",
+-		dev_name(dsi->dev),
+-		tegra_dsi_readl(dsi, DSI_CONTROL),
+-		tegra_dsi_readl(dsi, DSI_HOST_CONTROL),
+-		tegra_dsi_readl(dsi, DSI_POWER_CONTROL),
+-		tegra_dsi_readl(dsi, DSI_STATUS));
+-	dev_err(dsi->dev,
+-		"DIAG boot dsi %s: sol=%08x phy=%08x %08x %08x pad2=%08x pad3=%08x\n",
+-		dev_name(dsi->dev),
+-		tegra_dsi_readl(dsi, DSI_SOL_DELAY),
+-		tegra_dsi_readl(dsi, DSI_PHY_TIMING_0),
+-		tegra_dsi_readl(dsi, DSI_PHY_TIMING_1),
+-		tegra_dsi_readl(dsi, DSI_PHY_TIMING_2),
+-		tegra_dsi_readl(dsi, DSI_PAD_CONTROL_2),
+-		tegra_dsi_readl(dsi, DSI_PAD_CONTROL_3));
+-	dev_err(dsi->dev,
+-		"DIAG boot dsi %s: pktlen=%08x %08x %08x %08x videomode=%08x\n",
+-		dev_name(dsi->dev),
+-		tegra_dsi_readl(dsi, DSI_PKT_LEN_0_1),
+-		tegra_dsi_readl(dsi, DSI_PKT_LEN_2_3),
+-		tegra_dsi_readl(dsi, DSI_PKT_LEN_4_5),
+-		tegra_dsi_readl(dsi, DSI_PKT_LEN_6_7),
+-		tegra_dsi_readl(dsi, DSI_VIDEO_MODE_CONTROL));
+-	dev_err(dsi->dev,
+-		"DIAG boot dsi %s: pktseq=%08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x\n",
+-		dev_name(dsi->dev),
+-		tegra_dsi_readl(dsi, DSI_PKT_SEQ_0_LO),
+-		tegra_dsi_readl(dsi, DSI_PKT_SEQ_0_HI),
+-		tegra_dsi_readl(dsi, DSI_PKT_SEQ_1_LO),
+-		tegra_dsi_readl(dsi, DSI_PKT_SEQ_1_HI),
+-		tegra_dsi_readl(dsi, DSI_PKT_SEQ_2_LO),
+-		tegra_dsi_readl(dsi, DSI_PKT_SEQ_2_HI),
+-		tegra_dsi_readl(dsi, DSI_PKT_SEQ_3_LO),
+-		tegra_dsi_readl(dsi, DSI_PKT_SEQ_3_HI),
+-		tegra_dsi_readl(dsi, DSI_PKT_SEQ_4_LO),
+-		tegra_dsi_readl(dsi, DSI_PKT_SEQ_4_HI),
+-		tegra_dsi_readl(dsi, DSI_PKT_SEQ_5_LO),
+-		tegra_dsi_readl(dsi, DSI_PKT_SEQ_5_HI));
+-
+ 	/*
+ 	 * Toggle the module reset before configuring anything. The bootloader
+ 	 * leaves the DSI programmed for its own logo (ganged, streaming), and a
+@@ -1055,71 +965,6 @@ static int tegra_dsi_prepare(struct tegra_dsi *dsi)
+ 	return 0;
+ }
+ 
+-static void tegra_dsi_diag_work(struct work_struct *work)
+-{
+-	struct tegra_dsi *dsi = container_of(to_delayed_work(work),
+-					     struct tegra_dsi, diag_work);
+-	struct tegra_dc *dc = NULL;
+-
+-	if (dsi->output.encoder.crtc)
+-		dc = to_tegra_dc(dsi->output.encoder.crtc);
+-
+-	dev_err(dsi->dev,
+-		"DIAG dsi-late %s: status=%08x ctrl=%08x pwr=%08x ganged=%08x\n",
+-		dev_name(dsi->dev),
+-		tegra_dsi_readl(dsi, DSI_STATUS),
+-		tegra_dsi_readl(dsi, DSI_CONTROL),
+-		tegra_dsi_readl(dsi, DSI_POWER_CONTROL),
+-		tegra_dsi_readl(dsi, DSI_GANGED_MODE_CONTROL));
+-
+-	dev_err(dsi->dev,
+-		"DIAG dsi-late ganged: start=%08x size=%08x\n",
+-		tegra_dsi_readl(dsi, DSI_GANGED_MODE_START),
+-		tegra_dsi_readl(dsi, DSI_GANGED_MODE_SIZE));
+-
+-	dev_err(dsi->dev,
+-		"DIAG dsi-late err: int_status=%08x int_mask=%08x host=%08x cd=%08x pad0=%08x pad1=%08x pad2=%08x pad3=%08x\n",
+-		tegra_dsi_readl(dsi, DSI_INT_STATUS),
+-		tegra_dsi_readl(dsi, DSI_INT_MASK),
+-		tegra_dsi_readl(dsi, DSI_HOST_CONTROL),
+-		tegra_dsi_readl(dsi, DSI_PAD_CD_STATUS),
+-		tegra_dsi_readl(dsi, DSI_PAD_CONTROL_0),
+-		tegra_dsi_readl(dsi, DSI_PAD_CONTROL_1),
+-		tegra_dsi_readl(dsi, DSI_PAD_CONTROL_2),
+-		tegra_dsi_readl(dsi, DSI_PAD_CONTROL_3));
+-
+-	dev_err(dsi->dev,
+-		"DIAG dsi-late cfg: sol=%08x phy=%08x %08x %08x pktlen=%08x %08x %08x %08x vm=%08x\n",
+-		tegra_dsi_readl(dsi, DSI_SOL_DELAY),
+-		tegra_dsi_readl(dsi, DSI_PHY_TIMING_0),
+-		tegra_dsi_readl(dsi, DSI_PHY_TIMING_1),
+-		tegra_dsi_readl(dsi, DSI_PHY_TIMING_2),
+-		tegra_dsi_readl(dsi, DSI_PKT_LEN_0_1),
+-		tegra_dsi_readl(dsi, DSI_PKT_LEN_2_3),
+-		tegra_dsi_readl(dsi, DSI_PKT_LEN_4_5),
+-		tegra_dsi_readl(dsi, DSI_PKT_LEN_6_7),
+-		tegra_dsi_readl(dsi, DSI_VIDEO_MODE_CONTROL));
+-
+-	if (dsi->slave)
+-		dev_err(dsi->dev,
+-			"DIAG dsi-late slave %s: status=%08x ctrl=%08x pwr=%08x ganged=%08x start=%08x size=%08x\n",
+-			dev_name(dsi->slave->dev),
+-			tegra_dsi_readl(dsi->slave, DSI_STATUS),
+-			tegra_dsi_readl(dsi->slave, DSI_CONTROL),
+-			tegra_dsi_readl(dsi->slave, DSI_POWER_CONTROL),
+-			tegra_dsi_readl(dsi->slave, DSI_GANGED_MODE_CONTROL),
+-			tegra_dsi_readl(dsi->slave, DSI_GANGED_MODE_START),
+-			tegra_dsi_readl(dsi->slave, DSI_GANGED_MODE_SIZE));
+-
+-	if (dc)
+-		dev_err(dsi->dev,
+-			"DIAG dsi-late dc: intstat=%08x dispcmd=%08x clkctl=%08x rate=%lu\n",
+-			tegra_dc_readl(dc, DC_CMD_INT_STATUS),
+-			tegra_dc_readl(dc, DC_CMD_DISPLAY_COMMAND),
+-			tegra_dc_readl(dc, DC_DISP_DISP_CLOCK_CONTROL),
+-			clk_get_rate(dc->clk));
+-}
+-
+ static void tegra_dsi_encoder_enable(struct drm_encoder *encoder)
+ {
+ 	struct drm_display_mode *mode = &encoder->crtc->state->adjusted_mode;
+@@ -1173,7 +1018,7 @@ static void tegra_dsi_encoder_enable(struct drm_encoder *encoder)
+ 		msleep(50);
+ 
+ 		for (s = dsi; s; s = s->slave)
+-			s->video_pkt_mode = true;
++			s->video_running = true;
+ 
+ 		drm_panel_prepare(output->panel);
+ 
+@@ -1184,7 +1029,6 @@ static void tegra_dsi_encoder_enable(struct drm_encoder *encoder)
+ 		drm_panel_enable(output->panel);
+ 	}
+ 
+-	schedule_delayed_work(&dsi->diag_work, msecs_to_jiffies(2000));
+ }
+ 
+ static int
+@@ -1262,12 +1106,6 @@ tegra_dsi_encoder_atomic_check(struct drm_encoder *encoder,
+ 	 */
+ 	scdiv = ((8 * state->mul) / (state->div * state->lanes)) - 2;
+ 
+-	dev_err(dsi->dev,
+-		"DIAG clk: mode=%lu lanes=%u mul=%u div=%u plld=%lu scdiv=%u slave=%d master=%d\n",
+-		(unsigned long)crtc_state->mode.clock * 1000, state->lanes,
+-		state->mul, state->div, plld, scdiv,
+-		dsi->slave != NULL, dsi->master != NULL);
+-
+ 	err = tegra_dc_state_setup_clock(dc, crtc_state, dsi->clk_parent,
+ 					 plld, scdiv);
+ 	if (err < 0) {
+@@ -1598,7 +1436,7 @@ static ssize_t tegra_dsi_host_transfer(struct mipi_dsi_host *host,
+ 	 *
+ 	 * No BTA is possible on this path, so reads cannot use it.
+ 	 */
+-	if (dsi->video_pkt_mode) {
++	if (dsi->video_running) {
+ 		u32 saved = tegra_dsi_readl(dsi, DSI_VIDEO_MODE_CONTROL);
+ 
+ 		tegra_dsi_writel(dsi, saved | 0x1, DSI_VIDEO_MODE_CONTROL);
+@@ -1843,8 +1681,6 @@ static int tegra_dsi_probe(struct platform_device *pdev)
+ 	dsi->video_fifo_depth = 1920;
+ 	dsi->host_fifo_depth = 64;
+ 
+-	INIT_DELAYED_WORK(&dsi->diag_work, tegra_dsi_diag_work);
+-
+ 	err = tegra_dsi_ganged_probe(dsi);
+ 	if (err < 0)
+ 		return err;
+diff --git a/drivers/gpu/drm/tegra/gem.c b/drivers/gpu/drm/tegra/gem.c
+index dd6f12abf..6b14f1e91 100644
+--- a/drivers/gpu/drm/tegra/gem.c
++++ b/drivers/gpu/drm/tegra/gem.c
+@@ -263,15 +263,6 @@ static int tegra_bo_iommu_map(struct tegra_drm *tegra, struct tegra_bo *bo)
+ 		goto remove;
+ 	}
+ 
+-	{
+-		phys_addr_t diag_phys =
+-			iommu_iova_to_phys(tegra->domain, bo->iova);
+-
+-		dev_err(tegra->drm->dev,
+-			"DIAG gem-map: size=%zu iova=%pad mapped=%zu iovaphys=%pa\n",
+-			bo->gem.size, &bo->iova, bo->size, &diag_phys);
+-	}
+-
+ 	mutex_unlock(&tegra->mm_lock);
+ 
+ 	return 0;
+diff --git a/drivers/gpu/drm/tegra/plane.c b/drivers/gpu/drm/tegra/plane.c
+index b296367f1..ffe5f06b7 100644
+--- a/drivers/gpu/drm/tegra/plane.c
++++ b/drivers/gpu/drm/tegra/plane.c
+@@ -170,11 +170,6 @@ static int tegra_dc_pin(struct tegra_dc *dc, struct tegra_plane_state *state)
+ 		}
+ 
+ 		state->map[i] = map;
+-
+-		dev_err(dc->dev,
+-			"DIAG pin%u: group=%d phys=%pad bo_iova=%pad chunks=%u size=%zu\n",
+-			i, dc->client.group, &map->phys, &bo->iova,
+-			map->chunks, map->size);
+ 	}
+ 
+ 	return 0;
+diff --git a/drivers/iommu/tegra-smmu.c b/drivers/iommu/tegra-smmu.c
+index b653bcb34..c391e7f2c 100644
+--- a/drivers/iommu/tegra-smmu.c
++++ b/drivers/iommu/tegra-smmu.c
+@@ -370,10 +370,6 @@ static void tegra_smmu_enable(struct tegra_smmu *smmu, unsigned int swgroup,
+ 		value |= SMMU_ASID_VALUE(asid);
+ 		value |= SMMU_ASID_ENABLE;
+ 		smmu_writel(smmu, value, group->reg);
+-
+-		dev_err(smmu->dev,
+-			"DIAG smmu-enable: %s swgroup=%u asid=%u reg=%#x val=%#x\n",
+-			group->name, swgroup, asid, group->reg, value);
+ 	} else {
+ 		pr_warn("%s group from swgroup %u not found\n", __func__,
+ 				swgroup);
+-- 
+2.56.0
+

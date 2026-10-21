@@ -1,0 +1,655 @@
+From 24f3878ae99afa7814c49b6c634f5e6e3b01ee8e Mon Sep 17 00:00:00 2001
+From: nyasha <nmushambi@proton.me>
+Date: Sun, 18 Oct 2026 18:17:28 +1300
+Subject: [PATCH 10/29] usb: tegra124: force VBUS and trace the device-mode
+ bring-up
+
+- tegra124-udc now uses CI_HDRC_DUAL_ROLE_NOT_OTG plus
+  CI_HDRC_FORCE_VBUS_ACTIVE_ALWAYS: VBUS lives in the palmas PMIC, not
+  the controller's OTGSC register, so the OTG path never saw a session
+- re-add the palmas and gpio extcons to usb@7d000000 with dr_mode
+  peripheral; both now resolve after the palmas MFD fix
+- add n9trace breadcrumbs in PMC scratch registers, a 8s hang timer and
+  an n9.reader pass that prints them; a userspace trigger (n9.trigger)
+  defers the probe so the log can be captured while it runs
+- step prints in the glue, phy and UDC paths; raw PORT_CAP poke in
+  ci_udc_pullup shows the padctl never set up the port
+- remains diagnostic: the controller reaches device mode and sets the
+  pull-up, but the host still sees no device
+
+Co-Authored-By: Claude Code with DeepSeek Flash v4.1 <noreply@anthropic.com>
+---
+ .../boot/dts/nvidia/tegra132-flounder.dts     |   3 +-
+ drivers/extcon/extcon-palmas.c                |   1 +
+ drivers/usb/chipidea/ci.h                     |   6 +
+ drivers/usb/chipidea/ci_hdrc_tegra.c          | 173 +++++++++++++++++-
+ drivers/usb/chipidea/core.c                   |  27 +++
+ drivers/usb/chipidea/otg.c                    |   4 +-
+ drivers/usb/chipidea/udc.c                    |  45 +++++
+ drivers/usb/phy/phy-tegra-usb.c               |   8 +
+ 8 files changed, 264 insertions(+), 3 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts b/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
+index 060ea10e4..066cd89e9 100644
+--- a/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
++++ b/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
+@@ -1351,7 +1351,8 @@ extcon_usb_otg: extcon-usb-gpio {
+ 	usb@7d000000 {
+ 		compatible = "nvidia,tegra124-udc";
+ 		status = "okay";
+-		dr_mode = "host";
++		dr_mode = "peripheral";
++		extcon = <&palmas_usb>, <&extcon_usb_otg>;
+ 		vbus-supply = <&vbus_usb_otg>;
+ 	};
+ 
+diff --git a/drivers/extcon/extcon-palmas.c b/drivers/extcon/extcon-palmas.c
+index d339b8680..8f6e89ea5 100644
+--- a/drivers/extcon/extcon-palmas.c
++++ b/drivers/extcon/extcon-palmas.c
+@@ -264,6 +264,7 @@ static int palmas_usb_probe(struct platform_device *pdev)
+ 		dev_err(&pdev->dev, "failed to register extcon device\n");
+ 		return status;
+ 	}
++	dev_info(&pdev->dev, "n9: extcon device registered\n");
+ 
+ 	if (palmas_usb->enable_id_detection) {
+ 		palmas_usb->id_otg_irq = regmap_irq_get_virq(palmas->irq_data,
+diff --git a/drivers/usb/chipidea/ci.h b/drivers/usb/chipidea/ci.h
+index 97437de52..a2b19179e 100644
+--- a/drivers/usb/chipidea/ci.h
++++ b/drivers/usb/chipidea/ci.h
+@@ -492,4 +492,10 @@ void ci_platform_configure(struct ci_hdrc *ci);
+ void dbg_create_files(struct ci_hdrc *ci);
+ 
+ void dbg_remove_files(struct ci_hdrc *ci);
++
++/* temporary N9 USB bring-up trace */
++extern bool n9_reader_mode;
++void n9_mark(unsigned int code, unsigned long val);
++void n9_step(unsigned int step);
++
+ #endif	/* __DRIVERS_USB_CHIPIDEA_CI_H */
+diff --git a/drivers/usb/chipidea/ci_hdrc_tegra.c b/drivers/usb/chipidea/ci_hdrc_tegra.c
+index 372788f0f..c066ac62d 100644
+--- a/drivers/usb/chipidea/ci_hdrc_tegra.c
++++ b/drivers/usb/chipidea/ci_hdrc_tegra.c
+@@ -4,12 +4,15 @@
+  */
+ 
+ #include <linux/clk.h>
++#include <linux/init.h>
+ #include <linux/io.h>
+ #include <linux/module.h>
+ #include <linux/of.h>
+ #include <linux/platform_device.h>
+ #include <linux/pm_runtime.h>
+ #include <linux/reset.h>
++#include <linux/string.h>
++#include <linux/timer.h>
+ 
+ #include <linux/usb.h>
+ #include <linux/usb/chipidea.h>
+@@ -23,6 +26,129 @@
+ 
+ #include "ci.h"
+ 
++/*
++ * Temporary N9 USB bring-up trace.
++ *
++ * The controller wedges the machine in device mode, sometimes before
++ * userspace runs, so there is no log to read.  Breadcrumbs go into PMC
++ * scratch registers, which survive a warm reset.  The next boot detects the
++ * magic, prints the breadcrumbs into the kernel log (visible in the init
++ * dump) and skips USB entirely so that it can reach userspace.  Every
++ * tracing boot arms a 30 s timer that hard-resets into the bootloader if the
++ * checkpoints stall.
++ */
++#define N9_PMC_PHYS	0x7000e400UL
++#define N9_PMC_CNTRL	0x000
++#define N9_SCRATCH0	0x050
++#define N9_MAGIC	0x4e395452	/* "N9TR" */
++#define N9_MAG_SLOT	8
++#define N9_FIRST_CODE	1
++#define N9_LAST_CODE	22
++#define N9_DONE_CODE	15
++
++static void __iomem *n9_pmc;
++bool n9_reader_mode;
++
++static void __iomem *n9_pmc_base(void)
++{
++	if (!n9_pmc)
++		n9_pmc = ioremap(N9_PMC_PHYS, 0x400);
++
++	return n9_pmc;
++}
++
++void n9_mark(unsigned int code, unsigned long val)
++{
++	void __iomem *base = n9_pmc_base();
++
++	if (n9_reader_mode || !base)
++		return;
++	if (code < N9_FIRST_CODE || code > N9_LAST_CODE)
++		return;
++
++	writel(N9_MAGIC, base + N9_SCRATCH0 + N9_MAG_SLOT * 4);
++	writel(0x4e000000 | (val & 0x00ffffff),
++	       base + N9_SCRATCH0 + (N9_MAG_SLOT + code) * 4);
++}
++EXPORT_SYMBOL_GPL(n9_mark);
++
++/*
++ * Fine-grained progress: a single known-writable scratch register holding the
++ * number of the last step reached.  Some of the PMC scratch registers are
++ * used by the bootloader and appear not to keep our writes, so this sticks to
++ * one slot that is known to work.
++ */
++#define N9_STEP_SLOT	(N9_MAG_SLOT + 16)
++
++void n9_step(unsigned int step)
++{
++	void __iomem *base = n9_pmc_base();
++
++	if (n9_reader_mode || !base)
++		return;
++
++	writel(N9_MAGIC, base + N9_SCRATCH0 + N9_MAG_SLOT * 4);
++	writel(0x4e000000 | (step & 0xff),
++	       base + N9_SCRATCH0 + N9_STEP_SLOT * 4);
++}
++EXPORT_SYMBOL_GPL(n9_step);
++
++static void n9_reset_timer(struct timer_list *t)
++{
++	void __iomem *base = n9_pmc_base();
++
++	if (!base)
++		return;
++
++	/* Userspace is running, so the probe did not wedge the machine. */
++	if (system_state >= SYSTEM_RUNNING)
++		return;
++
++	pr_emerg("n9trace: checkpoints stalled, resetting to bootloader\n");
++
++	/* Same effect as reboot(RB_RESTART2, "bootloader"), without the
++	 * reboot framework: hboot reads SCRATCH0 bit 30 and enters fastboot.
++	 */
++	writel(readl(base + N9_SCRATCH0) | BIT(30), base + N9_SCRATCH0);
++	writel(readl(base + N9_PMC_CNTRL) | BIT(4), base + N9_PMC_CNTRL);
++}
++static DEFINE_TIMER(n9_reset, n9_reset_timer);
++
++static int __init n9_trace_init(void)
++{
++	void __iomem *base = n9_pmc_base();
++	bool trigger = saved_command_line &&
++		       strstr(saved_command_line, "n9.trigger");
++	unsigned int i;
++
++	if (!base)
++		return 0;
++
++	if (!trigger &&
++	    (strstr(boot_command_line, "n9.reader") ||
++	     readl(base + N9_SCRATCH0 + N9_MAG_SLOT * 4) == N9_MAGIC)) {
++		n9_reader_mode = true;
++		pr_info("n9trace: breadcrumbs from the previous boot:\n");
++		for (i = N9_FIRST_CODE; i <= N9_LAST_CODE; i++) {
++			u32 v = readl(base + N9_SCRATCH0 +
++				      (N9_MAG_SLOT + i) * 4);
++
++			if (v)
++				pr_info("n9trace: %2u: 0x%08x\n", i, v);
++		}
++		writel(0, base + N9_SCRATCH0 + N9_MAG_SLOT * 4);
++		return 0;
++	}
++
++	for (i = N9_FIRST_CODE; i <= N9_LAST_CODE; i++)
++		writel(0, base + N9_SCRATCH0 + (N9_MAG_SLOT + i) * 4);
++
++	mod_timer(&n9_reset, jiffies + 8 * HZ);
++
++	return 0;
++}
++core_initcall(n9_trace_init);
++
+ struct tegra_usb {
+ 	struct ci_hdrc_platform_data data;
+ 	struct platform_device *dev;
+@@ -72,6 +198,22 @@ static const struct tegra_usb_soc_info tegra30_udc_soc_info = {
+ 	.txfifothresh = 16,
+ };
+ 
++/*
++ * Tegra124's VBUS state comes from the PMIC (palmas) through extcon, not from
++ * the controller's OTGSC register, so the ChipIdea OTG path never sees a
++ * session.  Treat this controller as non-OTG with VBUS permanently active;
++ * the gadget can then connect when it is bound.
++ */
++static const struct tegra_usb_soc_info tegra124_udc_soc_info = {
++	.flags = CI_HDRC_REQUIRES_ALIGNED_DMA |
++		 CI_HDRC_OVERRIDE_PHY_CONTROL |
++		 CI_HDRC_SUPPORTS_RUNTIME_PM |
++		 CI_HDRC_DUAL_ROLE_NOT_OTG |
++		 CI_HDRC_FORCE_VBUS_ACTIVE_ALWAYS,
++	.dr_mode = USB_DR_MODE_UNKNOWN,
++	.txfifothresh = 16,
++};
++
+ static const struct of_device_id tegra_usb_of_match[] = {
+ 	{
+ 		.compatible = "nvidia,tegra20-ehci",
+@@ -90,7 +232,7 @@ static const struct of_device_id tegra_usb_of_match[] = {
+ 		.data = &tegra30_udc_soc_info,
+ 	}, {
+ 		.compatible = "nvidia,tegra124-udc",
+-		.data = &tegra30_udc_soc_info,
++		.data = &tegra124_udc_soc_info,
+ 	}, {
+ 		/* sentinel */
+ 	}
+@@ -274,10 +416,28 @@ static void tegra_usb_enter_lpm(struct ci_hdrc *ci, bool enable)
+ 
+ static int tegra_usb_probe(struct platform_device *pdev)
+ {
++	static bool n9_trigger_done;
+ 	const struct tegra_usb_soc_info *soc;
+ 	struct tegra_usb *usb;
+ 	int err;
+ 
++	if (n9_reader_mode)
++		return -ENODEV;
++
++	/*
++	 * Diagnostic mode: skip the probe at boot so userspace can trigger it
++	 * after the console is up (and keep a log monitor running).
++	 */
++	if (!n9_trigger_done && saved_command_line &&
++	    strstr(saved_command_line, "n9.trigger")) {
++		n9_trigger_done = true;
++		dev_info(&pdev->dev, "n9: probe deferred to userspace\n");
++		return -ENODEV;
++	}
++	n9_trigger_done = true;
++
++	n9_mark(1, 0);
++
+ 	usb = devm_kzalloc(&pdev->dev, sizeof(*usb), GFP_KERNEL);
+ 	if (!usb)
+ 		return -ENOMEM;
+@@ -290,20 +450,25 @@ static int tegra_usb_probe(struct platform_device *pdev)
+ 		return -EINVAL;
+ 	}
+ 
++	dev_info(&pdev->dev, "n9: step phy\n");
+ 	usb->phy = devm_usb_get_phy_by_phandle(&pdev->dev, "nvidia,phy", 0);
+ 	if (IS_ERR(usb->phy))
+ 		return dev_err_probe(&pdev->dev, PTR_ERR(usb->phy),
+ 				     "failed to get PHY");
++	n9_mark(2, 0);
+ 
++	dev_info(&pdev->dev, "n9: step clk\n");
+ 	usb->clk = devm_clk_get(&pdev->dev, NULL);
+ 	if (IS_ERR(usb->clk))
+ 		return dev_err_probe(&pdev->dev, PTR_ERR(usb->clk),
+ 				     "failed to get clock");
+ 
++	dev_info(&pdev->dev, "n9: step opp\n");
+ 	err = devm_tegra_core_dev_init_opp_table_common(&pdev->dev);
+ 	if (err)
+ 		return err;
+ 
++	dev_info(&pdev->dev, "n9: step pm\n");
+ 	pm_runtime_enable(&pdev->dev);
+ 	err = pm_runtime_resume_and_get(&pdev->dev);
+ 	if (err)
+@@ -312,6 +477,7 @@ static int tegra_usb_probe(struct platform_device *pdev)
+ 	if (device_property_present(&pdev->dev, "nvidia,needs-double-reset"))
+ 		usb->needs_double_reset = true;
+ 
++	dev_info(&pdev->dev, "n9: step reset\n");
+ 	err = tegra_usb_reset_controller(&pdev->dev);
+ 	if (err) {
+ 		dev_err_probe(&pdev->dev, err, "failed to reset controller");
+@@ -323,9 +489,12 @@ static int tegra_usb_probe(struct platform_device *pdev)
+ 	 * initialized, otherwise CPU will hang because clocks are gated.
+ 	 * PHY driver controls gating of internal USB clocks on Tegra.
+ 	 */
++	dev_info(&pdev->dev, "n9: step phy_init\n");
+ 	err = usb_phy_init(usb->phy);
+ 	if (err)
+ 		goto fail_power_off;
++	n9_mark(3, err);
++	dev_info(&pdev->dev, "n9: step add_device\n");
+ 
+ 	/* setup and register ChipIdea HDRC device */
+ 	usb->soc = soc;
+@@ -342,8 +511,10 @@ static int tegra_usb_probe(struct platform_device *pdev)
+ 	if (of_usb_get_phy_mode(pdev->dev.of_node) == USBPHY_INTERFACE_MODE_ULPI)
+ 		usb->data.flags &= ~CI_HDRC_SUPPORTS_RUNTIME_PM;
+ 
++	n9_mark(4, 0);
+ 	usb->dev = ci_hdrc_add_device(&pdev->dev, pdev->resource,
+ 				      pdev->num_resources, &usb->data);
++	n9_mark(5, IS_ERR(usb->dev) ? (unsigned long)PTR_ERR(usb->dev) : 0);
+ 	if (IS_ERR(usb->dev)) {
+ 		err = dev_err_probe(&pdev->dev, PTR_ERR(usb->dev),
+ 				    "failed to add HDRC device");
+diff --git a/drivers/usb/chipidea/core.c b/drivers/usb/chipidea/core.c
+index fac11f20c..2241ce38b 100644
+--- a/drivers/usb/chipidea/core.c
++++ b/drivers/usb/chipidea/core.c
+@@ -482,11 +482,15 @@ int hw_device_reset(struct ci_hdrc *ci)
+ {
+ 	int ret;
+ 
++	n9_step(1);
++
+ 	/* should flush & stop before reset */
+ 	hw_write(ci, OP_ENDPTFLUSH, ~0, ~0);
+ 	hw_write(ci, OP_USBCMD, USBCMD_RS, 0);
++	n9_step(2);
+ 
+ 	ret = hw_controller_reset(ci);
++	n9_step(3);
+ 	if (ret) {
+ 		dev_err(ci->dev, "error resetting controller, ret=%d\n", ret);
+ 		return ret;
+@@ -498,12 +502,16 @@ int hw_device_reset(struct ci_hdrc *ci)
+ 		if (ret)
+ 			return ret;
+ 	}
++	n9_step(4);
+ 
+ 	/* USBMODE should be configured step by step */
+ 	hw_write(ci, OP_USBMODE, USBMODE_CM, USBMODE_CM_IDLE);
++	n9_step(5);
+ 	hw_write(ci, OP_USBMODE, USBMODE_CM, USBMODE_CM_DC);
++	n9_step(6);
+ 	/* HW >= 2.3 */
+ 	hw_write(ci, OP_USBMODE, USBMODE_SLOM, USBMODE_SLOM);
++	n9_step(7);
+ 
+ 	if (hw_read(ci, OP_USBMODE, USBMODE_CM) != USBMODE_CM_DC) {
+ 		dev_err(ci->dev, "cannot enter in %s device mode\n",
+@@ -511,8 +519,10 @@ int hw_device_reset(struct ci_hdrc *ci)
+ 		dev_err(ci->dev, "lpm = %i\n", ci->hw_bank.lpm);
+ 		return -ENODEV;
+ 	}
++	n9_step(8);
+ 
+ 	ci_platform_configure(ci);
++	n9_step(9);
+ 
+ 	return 0;
+ }
+@@ -769,10 +779,12 @@ static int ci_get_platdata(struct device *dev,
+ 	if (of_property_present(dev->of_node, "extcon")) {
+ 		/* Each one of them is not mandatory */
+ 		ext_vbus = extcon_get_edev_by_phandle(dev, 0);
++		dev_info(dev, "n9: extcon vbus = %pe\n", ext_vbus);
+ 		if (IS_ERR(ext_vbus) && PTR_ERR(ext_vbus) != -ENODEV)
+ 			return PTR_ERR(ext_vbus);
+ 
+ 		ext_id = extcon_get_edev_by_phandle(dev, 1);
++		dev_info(dev, "n9: extcon id = %pe\n", ext_id);
+ 		if (IS_ERR(ext_id) && PTR_ERR(ext_id) != -ENODEV)
+ 			return PTR_ERR(ext_id);
+ 	}
+@@ -1059,6 +1071,8 @@ static int ci_hdrc_probe(struct platform_device *pdev)
+ 		return -ENODEV;
+ 	}
+ 
++	n9_mark(6, 0);
++
+ 	base = devm_platform_get_and_ioremap_resource(pdev, 0, &res);
+ 	if (IS_ERR(base))
+ 		return PTR_ERR(base);
+@@ -1088,6 +1102,9 @@ static int ci_hdrc_probe(struct platform_device *pdev)
+ 		dev_err(dev, "can't initialize hardware\n");
+ 		return -ENODEV;
+ 	}
++	n9_mark(7, ret);
++	dev_info(dev, "n9: lpm=%u op_off=0x%lx\n", ci->hw_bank.lpm,
++		 (unsigned long)(ci->hw_bank.op - ci->hw_bank.abs));
+ 
+ 	ret = ci_ulpi_init(ci);
+ 	if (ret)
+@@ -1146,6 +1163,7 @@ static int ci_hdrc_probe(struct platform_device *pdev)
+ 		dev_err(dev, "unable to init phy: %d\n", ret);
+ 		goto ulpi_exit;
+ 	}
++	n9_mark(8, ret);
+ 
+ 	ci->hw_bank.phys = res->start;
+ 
+@@ -1170,7 +1188,9 @@ static int ci_hdrc_probe(struct platform_device *pdev)
+ 	}
+ 
+ 	if (dr_mode == USB_DR_MODE_OTG || dr_mode == USB_DR_MODE_PERIPHERAL) {
++		n9_mark(9, 0);
+ 		ret = ci_hdrc_gadget_init(ci);
++		n9_mark(10, ret);
+ 		if (ret) {
+ 			if (ret == -ENXIO)
+ 				dev_info(dev, "doesn't support gadget\n");
+@@ -1212,7 +1232,9 @@ static int ci_hdrc_probe(struct platform_device *pdev)
+ 			ci_handle_vbus_change(ci);
+ 		}
+ 
++		n9_mark(11, ci->role);
+ 		ret = ci_role_start(ci, ci->role);
++		n9_mark(12, ret);
+ 		if (ret) {
+ 			dev_err(dev, "can't start %s role\n",
+ 						ci_role(ci)->name);
+@@ -1222,10 +1244,12 @@ static int ci_hdrc_probe(struct platform_device *pdev)
+ 
+ 	ret = devm_request_irq(dev, ci->irq, ci_irq_handler, IRQF_SHARED,
+ 			ci->platdata->name, ci);
++	n9_mark(13, ret);
+ 	if (ret)
+ 		goto stop;
+ 
+ 	ret = ci_extcon_register(ci);
++	n9_mark(14, ret);
+ 	if (ret)
+ 		goto stop;
+ 
+@@ -1243,9 +1267,12 @@ static int ci_hdrc_probe(struct platform_device *pdev)
+ 	device_set_wakeup_capable(&pdev->dev, true);
+ 	dbg_create_files(ci);
+ 
++	n9_mark(15, 0);
++
+ 	return 0;
+ 
+ stop:
++	n9_mark(15, ret);
+ 	if (ci->role_switch)
+ 		usb_role_switch_unregister(ci->role_switch);
+ deinit_otg:
+diff --git a/drivers/usb/chipidea/otg.c b/drivers/usb/chipidea/otg.c
+index 647e98f4e..2f2ead715 100644
+--- a/drivers/usb/chipidea/otg.c
++++ b/drivers/usb/chipidea/otg.c
+@@ -131,8 +131,10 @@ enum ci_role ci_otg_role(struct ci_hdrc *ci)
+ void ci_handle_vbus_change(struct ci_hdrc *ci)
+ {
+ 	if (!ci->is_otg) {
+-		if (ci->platdata->flags & CI_HDRC_FORCE_VBUS_ACTIVE_ALWAYS)
++		if (ci->platdata->flags & CI_HDRC_FORCE_VBUS_ACTIVE_ALWAYS) {
++			dev_info(ci->dev, "n9: forcing vbus connect\n");
+ 			usb_gadget_vbus_connect(&ci->gadget);
++		}
+ 		return;
+ 	}
+ 
+diff --git a/drivers/usb/chipidea/udc.c b/drivers/usb/chipidea/udc.c
+index 64a421ae0..0c85cec39 100644
+--- a/drivers/usb/chipidea/udc.c
++++ b/drivers/usb/chipidea/udc.c
+@@ -12,6 +12,7 @@
+ #include <linux/dmapool.h>
+ #include <linux/dma-direct.h>
+ #include <linux/err.h>
++#include <linux/io.h>
+ #include <linux/irqreturn.h>
+ #include <linux/kernel.h>
+ #include <linux/slab.h>
+@@ -1848,13 +1849,20 @@ static void ci_hdrc_gadget_connect(struct usb_gadget *_gadget, int is_active)
+ 	struct ci_hdrc *ci = container_of(_gadget, struct ci_hdrc, gadget);
+ 
+ 	if (is_active) {
++		n9_step(13);
+ 		pm_runtime_get_sync(ci->dev);
+ 		hw_device_reset(ci);
++		n9_step(10);
+ 		spin_lock_irq(&ci->lock);
+ 		if (ci->driver) {
+ 			hw_device_state(ci, ci->ep0out->qh.dma);
+ 			usb_gadget_set_state(_gadget, USB_STATE_POWERED);
+ 			spin_unlock_irq(&ci->lock);
++			dev_info(ci->dev,
++				 "n9: connected usbmode=%08x usbcmd=%08x portsc=%08x\n",
++				 hw_read(ci, OP_USBMODE, ~0),
++				 hw_read(ci, OP_USBCMD, ~0),
++				 hw_read(ci, OP_PORTSC, ~0));
+ 			usb_udc_vbus_handler(_gadget, true);
+ 		} else {
+ 			spin_unlock_irq(&ci->lock);
+@@ -1965,11 +1973,36 @@ static int ci_udc_pullup(struct usb_gadget *_gadget, int is_on)
+ 	if (ci_otg_is_fsm_mode(ci) || ci->role == CI_ROLE_HOST)
+ 		return 0;
+ 
++	{
++		void __iomem *phy = ioremap(0x7d000000 + 0x400, 0x100);
++		void __iomem *pc = ioremap(0x7009f000, 0x1000);
++
++		if (phy) {
++			dev_info(ci->dev,
++				 "n9: phy susp=%08x vbus=%08x wake=%08x\n",
++				 readl(phy), readl(phy + 4), readl(phy + 8));
++			iounmap(phy);
++		}
++		if (pc) {
++			u32 old = readl(pc + 0x8);
++			u32 v = old & ~0x3u;
++
++			v |= 0x2;	/* USB2_PORT_CAP port 0: DEVICE */
++			writel(v, pc + 0x8);
++			dev_info(ci->dev, "n9: portcap %08x -> %08x\n",
++				 old, readl(pc + 0x8));
++			iounmap(pc);
++		}
++	}
++
+ 	pm_runtime_get_sync(ci->dev);
+ 	if (is_on)
+ 		hw_write(ci, OP_USBCMD, USBCMD_RS, USBCMD_RS);
+ 	else
+ 		hw_write(ci, OP_USBCMD, USBCMD_RS, 0);
++	dev_info(ci->dev, "n9: pullup on=%d role=%d usbcmd=%08x usbmode=%08x\n",
++		 is_on, ci->role, hw_read(ci, OP_USBCMD, ~0),
++		 hw_read(ci, OP_USBMODE, ~0));
+ 
+ 	if (ci->platdata->notify_event) {
+ 		_gadget->connected = is_on;
+@@ -2110,6 +2143,8 @@ static int ci_udc_start(struct usb_gadget *gadget,
+ 	struct ci_hdrc *ci = container_of(gadget, struct ci_hdrc, gadget);
+ 	int retval;
+ 
++	n9_step(0);
++
+ 	if (driver->disconnect == NULL)
+ 		return -EINVAL;
+ 
+@@ -2123,6 +2158,7 @@ static int ci_udc_start(struct usb_gadget *gadget,
+ 	if (retval)
+ 		return retval;
+ 
++	n9_mark(17, 0);
+ 	ci->driver = driver;
+ 
+ 	/* Start otg fsm for B-device */
+@@ -2131,6 +2167,7 @@ static int ci_udc_start(struct usb_gadget *gadget,
+ 		return retval;
+ 	}
+ 
++	dev_info(ci->dev, "n9: udc_start vbus_active=%d\n", ci->vbus_active);
+ 	if (ci->vbus_active)
+ 		ci_hdrc_gadget_connect(gadget, 1);
+ 	else
+@@ -2210,6 +2247,14 @@ static irqreturn_t udc_irq(struct ci_hdrc *ci)
+ 		}
+ 	}
+ 	intr = hw_test_and_clear_intr_active(ci);
++	if (intr) {
++		static int n9_irq_count;
++
++		if (n9_irq_count < 8) {
++			dev_info(ci->dev, "n9: udc irq %08x\n", intr);
++			n9_irq_count++;
++		}
++	}
+ 
+ 	if (intr) {
+ 		/* order defines priority - do NOT change it */
+diff --git a/drivers/usb/phy/phy-tegra-usb.c b/drivers/usb/phy/phy-tegra-usb.c
+index fb9031628..6bec34096 100644
+--- a/drivers/usb/phy/phy-tegra-usb.c
++++ b/drivers/usb/phy/phy-tegra-usb.c
+@@ -1015,10 +1015,12 @@ static int tegra_usb_phy_init(struct usb_phy *u_phy)
+ 	if (WARN_ON(phy->freq))
+ 		return 0;
+ 
++	dev_info(phy->u_phy.dev, "n9: phy step pll_u\n");
+ 	err = clk_prepare_enable(phy->pll_u);
+ 	if (err)
+ 		return err;
+ 
++	dev_info(phy->u_phy.dev, "n9: phy step rate\n");
+ 	parent_rate = clk_get_rate(clk_get_parent(phy->pll_u));
+ 	for (i = 0; i < ARRAY_SIZE(tegra_freq_table); i++) {
+ 		if (tegra_freq_table[i].freq == parent_rate) {
+@@ -1033,6 +1035,7 @@ static int tegra_usb_phy_init(struct usb_phy *u_phy)
+ 		goto disable_clk;
+ 	}
+ 
++	dev_info(phy->u_phy.dev, "n9: phy step vbus\n");
+ 	err = regulator_enable(phy->vbus);
+ 	if (err) {
+ 		dev_err(phy->u_phy.dev,
+@@ -1040,20 +1043,25 @@ static int tegra_usb_phy_init(struct usb_phy *u_phy)
+ 		goto disable_clk;
+ 	}
+ 
++	dev_info(phy->u_phy.dev, "n9: phy step pad_open\n");
+ 	if (!phy->is_ulpi_phy) {
+ 		err = utmip_pad_open(phy);
+ 		if (err)
+ 			goto disable_vbus;
+ 	}
+ 
++	dev_info(phy->u_phy.dev, "n9: phy step pmc\n");
+ 	err = tegra_usb_phy_configure_pmc(phy);
+ 	if (err)
+ 		goto close_phy;
+ 
++	dev_info(phy->u_phy.dev, "n9: phy step power_on\n");
+ 	err = tegra_usb_phy_power_on(phy);
+ 	if (err)
+ 		goto close_phy;
+ 
++	dev_info(phy->u_phy.dev, "n9: phy step done\n");
++
+ 	return 0;
+ 
+ close_phy:
+-- 
+2.56.0
+

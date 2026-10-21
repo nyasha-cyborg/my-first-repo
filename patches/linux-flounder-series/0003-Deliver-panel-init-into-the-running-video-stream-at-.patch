@@ -1,0 +1,220 @@
+From f00b1f6bf8db7b95737359fca3a08317a9f497e2 Mon Sep 17 00:00:00 2001
+From: nyasha <nmushambi@proton.me>
+Date: Sun, 18 Oct 2026 12:22:17 +1300
+Subject: [PATCH 03/29] Deliver panel init into the running video stream at
+ vblank
+
+- Queue DCS packets with DSI_VIDEO_MODE_CONTROL while video is running, the
+  way the vendor's tegra_dsi_start_host_cmd_v_blank_video() does
+- Stop sending panel init with the stream stopped in host/LP mode: the DSI
+  acknowledged those packets but the panel never executed them
+  (GET_PIXEL_FORMAT stayed 0x00)
+- Drop the host/LP switch and the stop/start dance; the panel now displays
+  the framebuffer, confirmed as console text followed by a white paint
+- Readings are no longer possible on this path (no BTA), so the panel driver
+  logs only the write result
+
+Co-Authored-By: Claude Code with DeepSeek Flash v4.1 <noreply@anthropic.com>
+---
+ drivers/gpu/drm/panel/panel-jdi-lpm089a128a.c |  25 +---
+ drivers/gpu/drm/tegra/dsi.c                   | 120 +++++++-----------
+ 2 files changed, 55 insertions(+), 90 deletions(-)
+
+diff --git a/drivers/gpu/drm/panel/panel-jdi-lpm089a128a.c b/drivers/gpu/drm/panel/panel-jdi-lpm089a128a.c
+index 670006359..72db02bef 100644
+--- a/drivers/gpu/drm/panel/panel-jdi-lpm089a128a.c
++++ b/drivers/gpu/drm/panel/panel-jdi-lpm089a128a.c
+@@ -250,25 +250,12 @@ static int jdi_panel_prepare(struct drm_panel *panel)
+ 	mipi_dsi_dual(mipi_dsi_dcs_set_display_on_multi,
+ 		      &dsi_ctx, jdi->link1, jdi->link2);
+ 
+-	{
+-		u8 power_mode = 0, pixel_fmt = 0, addr_mode = 0;
+-		int rerr, rfmt, raddr;
+-
+-		rerr = mipi_dsi_dcs_read(jdi->link1,
+-					 MIPI_DCS_GET_POWER_MODE,
+-					 &power_mode, 1);
+-		rfmt = mipi_dsi_dcs_read(jdi->link1,
+-					 MIPI_DCS_GET_PIXEL_FORMAT,
+-					 &pixel_fmt, 1);
+-		raddr = mipi_dsi_dcs_read(jdi->link1,
+-					  MIPI_DCS_GET_ADDRESS_MODE,
+-					  &addr_mode, 1);
+-
+-		dev_err(panel->dev,
+-			"DIAG panel prep: accum_err=%d power(%d)=%02x fmt(%d)=%02x addr(%d)=%02x\n",
+-			dsi_ctx.accum_err, rerr, power_mode,
+-			rfmt, pixel_fmt, raddr, addr_mode);
+-	}
++	/*
++	 * The commands are injected into the running video stream, so there is
++	 * no BTA path to read panel state back. Log only the write result.
++	 */
++	dev_err(panel->dev, "DIAG panel prep: accum_err=%d\n",
++		dsi_ctx.accum_err);
+ 
+ 	if (dsi_ctx.accum_err < 0) {
+ 		err = dsi_ctx.accum_err;
+diff --git a/drivers/gpu/drm/tegra/dsi.c b/drivers/gpu/drm/tegra/dsi.c
+index bb022b9f5..a5d3dad29 100644
+--- a/drivers/gpu/drm/tegra/dsi.c
++++ b/drivers/gpu/drm/tegra/dsi.c
+@@ -85,6 +85,13 @@ struct tegra_dsi {
+ 	struct tegra_dsi *slave;
+ 
+ 	struct delayed_work diag_work;
++
++	/*
++	 * While set, transfers are injected into the running video stream at
++	 * the next vblank (DSI_VIDEO_MODE_CONTROL) instead of using the host
++	 * trigger. The vendor driver sends the panel init this way.
++	 */
++	bool video_pkt_mode;
+ };
+ 
+ static inline struct tegra_dsi *
+@@ -457,45 +464,6 @@ static void tegra_dsi_ganged_enable(struct tegra_dsi *dsi, unsigned int start,
+ 	tegra_dsi_writel(dsi, value, DSI_GANGED_MODE_CONTROL);
+ }
+ 
+-/*
+- * The downstream driver never sends panel commands with the controller still
+- * in DC-driven video mode. Its tegra_dsi_set_to_lp_mode() stops the stream at
+- * a frame end, power-cycles the DSI block, switches the host to low speed and
+- * rewrites DSI_CONTROL with the host-driven bit set (video disabled). Only
+- * then does it transmit DCS.
+- *
+- * Mainline's transfer path leaves DSI_CONTROL in video mode, so the host
+- * trigger completes but the panel does not necessarily receive the packet.
+- * This mirrors the vendor's switch; tegra_dsi_configure() restores video mode
+- * afterwards.
+- */
+-static void tegra_dsi_enter_host_mode(struct tegra_dsi *dsi, unsigned int pipe)
+-{
+-	u32 value;
+-
+-	tegra_dsi_writel(dsi, 0, DSI_POWER_CONTROL);
+-	udelay(300);
+-
+-	value = tegra_dsi_readl(dsi, DSI_HOST_CONTROL);
+-	value &= ~DSI_HOST_CONTROL_HS;
+-	tegra_dsi_writel(dsi, value, DSI_HOST_CONTROL);
+-
+-	tegra_dsi_writel(dsi, DSI_POWER_CONTROL_ENABLE, DSI_POWER_CONTROL);
+-	udelay(300);
+-
+-	value = DSI_CONTROL_CHANNEL(0) |
+-		DSI_CONTROL_FORMAT(TEGRA_DSI_FORMAT_24P) |
+-		DSI_CONTROL_LANES(dsi->lanes - 1) |
+-		DSI_CONTROL_SOURCE(pipe) |
+-		DSI_CONTROL_HOST_ENABLE;
+-	tegra_dsi_writel(dsi, value, DSI_CONTROL);
+-
+-	tegra_dsi_writel(dsi, dsi->host_fifo_depth, DSI_MAX_THRESHOLD);
+-
+-	if (dsi->slave)
+-		tegra_dsi_enter_host_mode(dsi->slave, pipe);
+-}
+-
+ static void tegra_dsi_enable(struct tegra_dsi *dsi)
+ {
+ 	u32 value;
+@@ -1204,45 +1172,26 @@ static void tegra_dsi_encoder_enable(struct drm_encoder *encoder)
+ 	tegra_dsi_enable(dsi);
+ 
+ 	/*
+-	 * Bring the panel up the way the downstream driver does: let the
+-	 * video stream run for a couple of frames, stop it, switch the DSI to
+-	 * host/LP mode, send the panel's init commands while the link is idle,
+-	 * then restore the video configuration and restart the stream.
+-	 *
+-	 * Sending DCS in the middle of a running stream is accepted by the
+-	 * host and never transmitted, which produced the -110 timeouts
+-	 * earlier. The host/LP switch (tegra_dsi_enter_host_mode) mirrors the
+-	 * vendor's tegra_dsi_set_to_lp_mode().
++	 * Bring the panel up while the video stream keeps running. The vendor
++	 * never stops it for the init sequence: its DSI_CMD_VBLANK_SHORT
++	 * commands are queued into the stream and inserted by the controller
++	 * at vblank (tegra_dsi_start_host_cmd_v_blank_video). Stopping the
++	 * stream and sending in host/LP mode produced protocol ACKs but the
++	 * panel never executed the commands -- GET_PIXEL_FORMAT stayed 0x00.
+ 	 */
+ 	if (output->panel) {
+-		msleep(50);
++		struct tegra_dsi *s;
+ 
+-		tegra_dc_writel(dc, DISP_CTRL_MODE_STOP,
+-				DC_CMD_DISPLAY_COMMAND);
+-		tegra_dc_writel(dc, 0, DC_DISP_DISP_WIN_OPTIONS);
+-		tegra_dc_writel(dc, GENERAL_ACT_REQ, DC_CMD_STATE_CONTROL);
+-		udelay(2000);
++		/* let a couple of frames go out first */
++		msleep(50);
+ 
+-		tegra_dsi_enter_host_mode(dsi, dc->pipe);
++		for (s = dsi; s; s = s->slave)
++			s->video_pkt_mode = true;
+ 
+ 		drm_panel_prepare(output->panel);
+ 
+-		/*
+-		 * The host path leaves DSI_CONTROL in host mode with video
+-		 * disabled; restore the video configuration before restarting
+-		 * the DC, as the vendor's set-to-HS path does.
+-		 */
+-		tegra_dsi_configure(dsi, dc->pipe, mode);
+-
+-		value = tegra_dc_readl(dc, DC_CMD_DISPLAY_COMMAND);
+-		value = (value & ~DISP_CTRL_MODE_MASK) | DISP_CTRL_MODE_C_DISPLAY;
+-		tegra_dc_writel(dc, value, DC_CMD_DISPLAY_COMMAND);
+-
+-		value = tegra_dc_readl(dc, DC_DISP_DISP_WIN_OPTIONS);
+-		value |= DSI_ENABLE;
+-		tegra_dc_writel(dc, value, DC_DISP_DISP_WIN_OPTIONS);
+-
+-		tegra_dc_commit(dc);
++		for (s = dsi; s; s = s->slave)
++			s->video_pkt_mode = false;
+ 
+ 		drm_panel_enable(output->panel);
+ 	}
+@@ -1652,6 +1601,35 @@ static ssize_t tegra_dsi_host_transfer(struct mipi_dsi_host *host,
+ 	if (packet.size > dsi->video_fifo_depth * 4)
+ 		return -ENOSPC;
+ 
++	/*
++	 * Inject the packet into the running video stream. DSI_VIDEO_MODE_CONTROL
++	 * makes the controller insert the queued host packet at the next
++	 * vblank; the vendor driver (tegra_dsi_start_host_cmd_v_blank_video)
++	 * delivers the whole panel init this way, and the bootloader leaves
++	 * the register at 0x9 while streaming.
++	 *
++	 * No BTA is possible on this path, so reads cannot use it.
++	 */
++	if (dsi->video_pkt_mode) {
++		u32 saved = tegra_dsi_readl(dsi, DSI_VIDEO_MODE_CONTROL);
++
++		tegra_dsi_writel(dsi, saved | 0x1, DSI_VIDEO_MODE_CONTROL);
++
++		value = header[2] << 16 | header[1] << 8 | header[0];
++		tegra_dsi_writel(dsi, value, DSI_WR_DATA);
++
++		if (packet.payload_length > 0)
++			tegra_dsi_writesl(dsi, DSI_WR_DATA, packet.payload,
++					  packet.payload_length);
++
++		/* give the controller at least two frames to insert it */
++		msleep(40);
++
++		tegra_dsi_writel(dsi, saved, DSI_VIDEO_MODE_CONTROL);
++
++		return packet.size;
++	}
++
+ 	/* reset underflow/overflow flags */
+ 	value = tegra_dsi_readl(dsi, DSI_STATUS);
+ 	if (value & (DSI_STATUS_UNDERFLOW | DSI_STATUS_OVERFLOW)) {
+-- 
+2.56.0
+

@@ -1,0 +1,137 @@
+From ac093f0b73a3d27ec4a654c02013f53c0f247b56 Mon Sep 17 00:00:00 2001
+From: nyasha <nmushambi@proton.me>
+Date: Sun, 18 Oct 2026 18:33:51 +1300
+Subject: [PATCH 11/29] usb: power the Tegra124 pad and set DEVLC.STS for
+ device mode
+
+- ci_udc_pullup now powers the USB2 OTG pad directly (bias/ctl0/ctl1
+  power-down bits) and sets PORT_CAP=DEVICE, because nothing on this
+  board consumes the padctl lane phy
+- clear DEVLC PTS and set DEVLC.STS before the run bit, matching the
+  vendor tegra3_usb_phy driver; mainline skips this via
+  CI_HDRC_OVERRIDE_PHY_CONTROL
+- log extcon state, padctl register contents, lane mux programming and
+  the phy step sequence so blocked probes stay diagnosable
+- still does not enumerate on the host; the padctl sees no VBUS on its
+  own sensor even though the palmas extcon reports state=1
+
+Co-Authored-By: Claude Code with DeepSeek Flash v4.1 <noreply@anthropic.com>
+---
+ drivers/phy/tegra/xusb.c    |  5 ++++
+ drivers/usb/chipidea/core.c |  3 +++
+ drivers/usb/chipidea/udc.c  | 50 ++++++++++++++++++++++++++++++-------
+ 3 files changed, 49 insertions(+), 9 deletions(-)
+
+diff --git a/drivers/phy/tegra/xusb.c b/drivers/phy/tegra/xusb.c
+index c89df95aa..13f84f2e7 100644
+--- a/drivers/phy/tegra/xusb.c
++++ b/drivers/phy/tegra/xusb.c
+@@ -332,9 +332,12 @@ static void tegra_xusb_lane_program(struct tegra_xusb_lane *lane)
+ 
+ 	/* choose function */
+ 	value = padctl_readl(padctl, soc->offset);
++	dev_info(padctl->dev, "n9: lane %s func %d mux %08x -> ",
++		 soc->name, lane->function, value);
+ 	value &= ~(soc->mask << soc->shift);
+ 	value |= lane->function << soc->shift;
+ 	padctl_writel(padctl, value, soc->offset);
++	dev_info(padctl->dev, "%08x\n", padctl_readl(padctl, soc->offset));
+ 
+ 	if (lane->pad->ops->iddq_disable)
+ 		lane->pad->ops->iddq_disable(lane);
+@@ -1261,6 +1264,8 @@ static int tegra_xusb_padctl_probe(struct platform_device *pdev)
+ 		goto remove_pads;
+ 	}
+ 
++	dev_info(&pdev->dev, "n9: padctl ports up\n");
++
+ 	return 0;
+ 
+ remove_pads:
+diff --git a/drivers/usb/chipidea/core.c b/drivers/usb/chipidea/core.c
+index 2241ce38b..c2c58ce6e 100644
+--- a/drivers/usb/chipidea/core.c
++++ b/drivers/usb/chipidea/core.c
+@@ -780,6 +780,9 @@ static int ci_get_platdata(struct device *dev,
+ 		/* Each one of them is not mandatory */
+ 		ext_vbus = extcon_get_edev_by_phandle(dev, 0);
+ 		dev_info(dev, "n9: extcon vbus = %pe\n", ext_vbus);
++		if (!IS_ERR(ext_vbus))
++			dev_info(dev, "n9: extcon vbus state=%d\n",
++				 extcon_get_state(ext_vbus, EXTCON_USB));
+ 		if (IS_ERR(ext_vbus) && PTR_ERR(ext_vbus) != -ENODEV)
+ 			return PTR_ERR(ext_vbus);
+ 
+diff --git a/drivers/usb/chipidea/udc.c b/drivers/usb/chipidea/udc.c
+index 0c85cec39..f80319e96 100644
+--- a/drivers/usb/chipidea/udc.c
++++ b/drivers/usb/chipidea/udc.c
+@@ -1977,24 +1977,56 @@ static int ci_udc_pullup(struct usb_gadget *_gadget, int is_on)
+ 		void __iomem *phy = ioremap(0x7d000000 + 0x400, 0x100);
+ 		void __iomem *pc = ioremap(0x7009f000, 0x1000);
+ 
+-		if (phy) {
++		if (phy)
+ 			dev_info(ci->dev,
+ 				 "n9: phy susp=%08x vbus=%08x wake=%08x\n",
+ 				 readl(phy), readl(phy + 4), readl(phy + 8));
+-			iounmap(phy);
+-		}
++
+ 		if (pc) {
+-			u32 old = readl(pc + 0x8);
+-			u32 v = old & ~0x3u;
++			u32 cap = readl(pc + 0x08);
++			u32 bias = readl(pc + 0xb8);
++			u32 ctl0 = readl(pc + 0xa0);
++			u32 ctl1 = readl(pc + 0xac);
+ 
+-			v |= 0x2;	/* USB2_PORT_CAP port 0: DEVICE */
+-			writel(v, pc + 0x8);
+-			dev_info(ci->dev, "n9: portcap %08x -> %08x\n",
+-				 old, readl(pc + 0x8));
++			dev_info(ci->dev,
++				 "n9: padctl mux=%08x cap=%08x bias=%08x ctl0=%08x ctl1=%08x\n",
++				 readl(pc + 0x04), cap, bias, ctl0, ctl1);
++
++			/* Power the USB2 OTG pad: the padctl lane PHY has no
++			 * consumer on this board, so nothing else does it.
++			 */
++			writel((cap & ~0x3u) | 0x2, pc + 0x08);
++			writel(bias & ~BIT(12), pc + 0xb8);
++			writel(ctl0 & ~(BIT(21) | BIT(20) | BIT(19)), pc + 0xa0);
++			writel(ctl1 & ~(BIT(2) | BIT(1) | BIT(0)), pc + 0xac);
++
++			dev_info(ci->dev,
++				 "n9: padctl2 cap=%08x bias=%08x ctl0=%08x ctl1=%08x\n",
++				 readl(pc + 0x08), readl(pc + 0xb8),
++				 readl(pc + 0xa0), readl(pc + 0xac));
+ 			iounmap(pc);
+ 		}
++
++		if (phy) {
++			dev_info(ci->dev,
++				 "n9: phy2 susp=%08x vbus=%08x wake=%08x\n",
++				 readl(phy), readl(phy + 4), readl(phy + 8));
++			iounmap(phy);
++		}
+ 	}
+ 
++	/*
++	 * The vendor PHY driver clears PTS and sets STS in DEVLC for both
++	 * modes; mainline skips it because Tegra sets
++	 * CI_HDRC_OVERRIDE_PHY_CONTROL.
++	 */
++	dev_info(ci->dev, "n9: devlc before=%08x\n",
++		 hw_read(ci, OP_DEVLC, ~0));
++	hw_write(ci, OP_DEVLC, DEVLC_PTS(7) | DEVLC_PTW, 0);
++	hw_write(ci, OP_DEVLC, DEVLC_STS, DEVLC_STS);
++	dev_info(ci->dev, "n9: devlc after=%08x\n",
++		 hw_read(ci, OP_DEVLC, ~0));
++
+ 	pm_runtime_get_sync(ci->dev);
+ 	if (is_on)
+ 		hw_write(ci, OP_USBCMD, USBCMD_RS, USBCMD_RS);
+-- 
+2.56.0
+

@@ -1,0 +1,162 @@
+From 677ffc61fe7a08598083707c4114ab86c940b307 Mon Sep 17 00:00:00 2001
+From: nyasha <nmushambi@proton.me>
+Date: Sun, 18 Oct 2026 22:27:22 +1300
+Subject: [PATCH 13/29] usb: chipidea: tegra: force VBUS comparators for
+ PMIC-based VBUS
+
+- Tegra124 (flounder) reports VBUS through the PMIC via extcon, not
+  through OTGSC or the UTMIP comparators, so the core never saw
+  A-valid/A-session-valid and never drove the D+ pull-up.
+- Add a per-SoC pmu_vbus flag and set the 0x404 software override on
+  CONTROLLER_RESET_EVENT, matching the vendor tegra_udc driver
+  (dr_controller_run with support_pmu_vbus).
+- Leave SLOM clear at pullup, as hboot does in device mode.
+- Verified on hardware: g_serial now enumerates (0525:a4a7, ttyACM0)
+  and PORTSC/DEVLC match hboot's handoff state.
+- Extends the early register dump to the full UTMIP block.
+
+Co-Authored-By: Claude Code with DeepSeek Flash v4.1 <noreply@anthropic.com>
+---
+ drivers/usb/chipidea/ci_hdrc_tegra.c | 36 ++++++++++++++++++++--
+ drivers/usb/chipidea/udc.c           | 46 +++-------------------------
+ 2 files changed, 37 insertions(+), 45 deletions(-)
+
+diff --git a/drivers/usb/chipidea/ci_hdrc_tegra.c b/drivers/usb/chipidea/ci_hdrc_tegra.c
+index 36f338d1c..edb7f799f 100644
+--- a/drivers/usb/chipidea/ci_hdrc_tegra.c
++++ b/drivers/usb/chipidea/ci_hdrc_tegra.c
+@@ -127,9 +127,14 @@ static void n9_dump_regs(void)
+ 	pr_info("n9dump: devlc=%08x mode=%08x susp=%08x vbus=%08x wake=%08x\n",
+ 		readl(usb + 0x1b4), readl(usb + 0x1f8), readl(usb + 0x400),
+ 		readl(usb + 0x404), readl(usb + 0x408));
+-	pr_info("n9dump: bias=%08x xcvr0=%08x tx=%08x misc=%08x spare=%08x xcvr1=%08x\n",
+-		readl(usb + 0x800), readl(usb + 0x808), readl(usb + 0x820),
+-		readl(usb + 0x824), readl(usb + 0x834), readl(usb + 0x838));
++	pr_info("n9dump: u00=%08x u04=%08x u08=%08x u0c=%08x u10=%08x u14=%08x u18=%08x u1c=%08x\n",
++		readl(usb + 0x800), readl(usb + 0x804), readl(usb + 0x808),
++		readl(usb + 0x80c), readl(usb + 0x810), readl(usb + 0x814),
++		readl(usb + 0x818), readl(usb + 0x81c));
++	pr_info("n9dump: u20=%08x u24=%08x u28=%08x u2c=%08x u30=%08x u34=%08x u38=%08x u3c=%08x\n",
++		readl(usb + 0x820), readl(usb + 0x824), readl(usb + 0x828),
++		readl(usb + 0x82c), readl(usb + 0x830), readl(usb + 0x834),
++		readl(usb + 0x838), readl(usb + 0x83c));
+ 	iounmap(usb);
+ 
+ 	{
+@@ -206,10 +211,18 @@ struct tegra_usb {
+ 	bool needs_double_reset;
+ };
+ 
++/* USB_PHY_VBUS_SENSORS: software override of the VBUS comparators */
++#define USB_PHY_VBUS_SENSORS			0x404
++#define  VBUS_ASESSION_VLD_SW_EN		BIT(19)
++#define  VBUS_ASESSION_VLD_SW_VALUE		BIT(20)
++#define  VBUS_A_VLD_SW_EN			BIT(27)
++#define  VBUS_A_VLD_SW_VALUE			BIT(28)
++
+ struct tegra_usb_soc_info {
+ 	unsigned long flags;
+ 	unsigned int txfifothresh;
+ 	enum usb_dr_mode dr_mode;
++	bool pmu_vbus;
+ };
+ 
+ static const struct tegra_usb_soc_info tegra20_ehci_soc_info = {
+@@ -258,6 +271,7 @@ static const struct tegra_usb_soc_info tegra124_udc_soc_info = {
+ 		 CI_HDRC_FORCE_VBUS_ACTIVE_ALWAYS,
+ 	.dr_mode = USB_DR_MODE_UNKNOWN,
+ 	.txfifothresh = 16,
++	.pmu_vbus = true,
+ };
+ 
+ static const struct of_device_id tegra_usb_of_match[] = {
+@@ -345,6 +359,22 @@ static int tegra_usb_notify_event(struct ci_hdrc *ci, unsigned int event)
+ 
+ 	switch (event) {
+ 	case CI_HDRC_CONTROLLER_RESET_EVENT:
++		/*
++		 * On Tegra124 the VBUS state comes from the PMIC (palmas)
++		 * through extcon, not from the controller's OTGSC or the PHY
++		 * comparators, so the core never sees A-valid or
++		 * A-session-valid and refuses to drive the D+ pull-up.
++		 * tegra_udc.c on the vendor kernel forces the same two
++		 * comparators for the same reason (support_pmu_vbus).
++		 */
++		if (usb->soc->pmu_vbus) {
++			u32 v = readl(ci->hw_bank.abs + USB_PHY_VBUS_SENSORS);
++
++			v |= VBUS_A_VLD_SW_VALUE | VBUS_A_VLD_SW_EN |
++			     VBUS_ASESSION_VLD_SW_VALUE |
++			     VBUS_ASESSION_VLD_SW_EN;
++			writel(v, ci->hw_bank.abs + USB_PHY_VBUS_SENSORS);
++		}
+ 		if (ci->hcd) {
+ 			ehci = hcd_to_ehci(ci->hcd);
+ 			ehci->has_tdi_phy_lpm = false;
+diff --git a/drivers/usb/chipidea/udc.c b/drivers/usb/chipidea/udc.c
+index 64ccebca4..da2cec006 100644
+--- a/drivers/usb/chipidea/udc.c
++++ b/drivers/usb/chipidea/udc.c
+@@ -1973,55 +1973,17 @@ static int ci_udc_pullup(struct usb_gadget *_gadget, int is_on)
+ 	if (ci_otg_is_fsm_mode(ci) || ci->role == CI_ROLE_HOST)
+ 		return 0;
+ 
+-	{
+-		void __iomem *phy = ioremap(0x7d000000 + 0x400, 0x500);
+-
+-		if (phy) {
+-			dev_info(ci->dev,
+-				 "n9: utmi before bias=%08x xcvr0=%08x misc=%08x xcvr1=%08x\n",
+-				 readl(phy + 0x400), readl(phy + 0x408),
+-				 readl(phy + 0x424), readl(phy + 0x438));
+-
+-			/* Clone hboot's known-good device-mode tuning, captured
+-			 * with n9.dump while it was running fastboot.
+-			 */
+-			writel(0x06002a3e, phy + 0x408);	/* XCVR_CFG0 */
+-			writel(0x03e00078, phy + 0x424);	/* MISC_CFG0 */
+-			writel(0x00188201, phy + 0x438);	/* XCVR_CFG1 */
+-
+-			dev_info(ci->dev,
+-				 "n9: utmi after  bias=%08x xcvr0=%08x misc=%08x xcvr1=%08x\n",
+-				 readl(phy + 0x400), readl(phy + 0x408),
+-				 readl(phy + 0x424), readl(phy + 0x438));
+-			iounmap(phy);
+-		}
+-	}
+-
+-	{
+-		void __iomem *pmc = ioremap(0x7000e400, 0x400);
+-
+-		if (pmc) {
+-			dev_info(ci->dev,
+-				 "n9: pmc ao=%08x sleep=%08x master=%08x\n",
+-				 readl(pmc + 0xf0), readl(pmc + 0x1fc),
+-				 readl(pmc + 0x310));
+-			iounmap(pmc);
+-		}
+-	}
+-
+-	/* hboot leaves SLOM clear in device mode. */
++	/*
++	 * hboot leaves SLOM clear in device mode; the core's default of
++	 * lockout-on-setup breaks some host stacks.
++	 */
+ 	hw_write(ci, OP_USBMODE, USBMODE_SLOM, 0);
+-	dev_info(ci->dev, "n9: devlc=%08x usbmode=%08x\n",
+-		 hw_read(ci, OP_DEVLC, ~0), hw_read(ci, OP_USBMODE, ~0));
+ 
+ 	pm_runtime_get_sync(ci->dev);
+ 	if (is_on)
+ 		hw_write(ci, OP_USBCMD, USBCMD_RS, USBCMD_RS);
+ 	else
+ 		hw_write(ci, OP_USBCMD, USBCMD_RS, 0);
+-	dev_info(ci->dev, "n9: pullup on=%d role=%d usbcmd=%08x usbmode=%08x\n",
+-		 is_on, ci->role, hw_read(ci, OP_USBCMD, ~0),
+-		 hw_read(ci, OP_USBMODE, ~0));
+ 
+ 	if (ci->platdata->notify_event) {
+ 		_gadget->connected = is_on;
+-- 
+2.56.0
+

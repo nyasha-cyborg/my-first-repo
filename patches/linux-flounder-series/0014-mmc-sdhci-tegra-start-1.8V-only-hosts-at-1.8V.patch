@@ -1,0 +1,40 @@
+From 6fe55d564bdc103864d671d4521211c1f558ea9d Mon Sep 17 00:00:00 2001
+From: nyasha <nmushambi@proton.me>
+Date: Sun, 18 Oct 2026 23:57:40 +1300
+Subject: [PATCH 14/29] mmc: sdhci-tegra: start 1.8V-only hosts at 1.8V
+
+- The vendor binding marks 1.8V-only controllers with nvidia,only-1-8v;
+  mainline parsed it nowhere and started every host at 3.3V signalling.
+- On flounder's SDIO port (a 1.8V-only BCM4354) that switch fails, which
+  correlates with boots where the card is not enumerated.
+- Set ios.signal_voltage to 1.8V at probe for such nodes.
+- Unproven as a complete fix: the card has also enumerated without it.
+
+Co-Authored-By: Claude Code with DeepSeek Flash v4.1 <noreply@anthropic.com>
+---
+ drivers/mmc/host/sdhci-tegra.c | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+diff --git a/drivers/mmc/host/sdhci-tegra.c b/drivers/mmc/host/sdhci-tegra.c
+index 820ce4dae..eb3995148 100644
+--- a/drivers/mmc/host/sdhci-tegra.c
++++ b/drivers/mmc/host/sdhci-tegra.c
+@@ -1698,6 +1698,15 @@ static int sdhci_tegra_probe(struct platform_device *pdev)
+ 	if (tegra_host->soc_data->nvquirks & NVQUIRK_ENABLE_DDR50)
+ 		host->mmc->caps |= MMC_CAP_1_8V_DDR;
+ 
++	/*
++	 * The vendor binding marks 1.8V-only controllers with
++	 * nvidia,only-1-8v.  The core otherwise starts every host at 3.3V
++	 * signalling; on flounder's SDIO port (a 1.8V-only BCM4354) that
++	 * switch fails and the card is frequently left unenumerated.
++	 */
++	if (device_property_read_bool(&pdev->dev, "nvidia,only-1-8v"))
++		host->mmc->ios.signal_voltage = MMC_SIGNAL_VOLTAGE_180;
++
+ 	/* HW busy detection is supported, but R1B responses are required. */
+ 	host->mmc->caps |= MMC_CAP_WAIT_WHILE_BUSY | MMC_CAP_NEED_RSP_BUSY;
+ 
+-- 
+2.56.0
+

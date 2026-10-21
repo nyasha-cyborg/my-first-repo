@@ -1,0 +1,35 @@
+From bc43a4477646f077e8afbaef7d127cdb89516992 Mon Sep 17 00:00:00 2001
+From: nyasha <nmushambi@proton.me>
+Date: Sun, 18 Oct 2026 16:13:07 +1300
+Subject: [PATCH 09/29] usb: bring up the ChipIdea host controller on flounder
+
+- Drop the extcon property and force dr_mode = "host"; with OTG/peripheral
+  mode the controller defers until extcon resolves, and once it does the
+  system can wedge
+- Host mode registers cleanly: "ci_hdrc.0: EHCI Host Controller" and a new
+  USB bus
+- Test configuration: device/gadget mode (needed for adb/serial over USB)
+  still hangs and is the remaining problem
+
+Co-Authored-By: Claude Code with DeepSeek Flash v4.1 <noreply@anthropic.com>
+---
+ arch/arm64/boot/dts/nvidia/tegra132-flounder.dts | 3 +--
+ 1 file changed, 1 insertion(+), 2 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts b/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
+index 5f92f6f33..060ea10e4 100644
+--- a/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
++++ b/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
+@@ -1351,8 +1351,7 @@ extcon_usb_otg: extcon-usb-gpio {
+ 	usb@7d000000 {
+ 		compatible = "nvidia,tegra124-udc";
+ 		status = "okay";
+-		dr_mode = "otg";
+-		extcon = <&palmas_usb>, <&extcon_usb_otg>;
++		dr_mode = "host";
+ 		vbus-supply = <&vbus_usb_otg>;
+ 	};
+ 
+-- 
+2.56.0
+

@@ -1,0 +1,71 @@
+From 08bba23d9e4e2582d46b5117509ec4179ffced83 Mon Sep 17 00:00:00 2001
+From: nyasha <nmushambi@proton.me>
+Date: Sun, 18 Oct 2026 12:26:45 +1300
+Subject: [PATCH 04/29] Inject runtime backlight writes into the video stream
+ too
+
+- Keep video_pkt_mode set for the lifetime of the stream instead of only
+  around panel prepare, and clear it in encoder_disable
+- Send DCS 0x51 from the backlight device through the vblank injection path;
+  the old workaround skipped runtime writes because host mode timed out
+- Confirmed on hardware: console text with cursor, then full white at full
+  brightness
+
+Co-Authored-By: Claude Code with DeepSeek Flash v4.1 <noreply@anthropic.com>
+---
+ drivers/gpu/drm/panel/panel-jdi-lpm089a128a.c |  8 +++-----
+ drivers/gpu/drm/tegra/dsi.c                   | 11 ++++++++---
+ 2 files changed, 11 insertions(+), 8 deletions(-)
+
+diff --git a/drivers/gpu/drm/panel/panel-jdi-lpm089a128a.c b/drivers/gpu/drm/panel/panel-jdi-lpm089a128a.c
+index 72db02bef..be3bc88ad 100644
+--- a/drivers/gpu/drm/panel/panel-jdi-lpm089a128a.c
++++ b/drivers/gpu/drm/panel/panel-jdi-lpm089a128a.c
+@@ -397,12 +397,10 @@ static int jdi_panel_bl_update_status(struct backlight_device *bl)
+ 	jdi->brightness = payload[1];
+ 
+ 	/*
+-	 * While streaming, the write cannot reach the panel, so it is kept for
+-	 * the next prepare() rather than sent into the stream and timing out.
++	 * Once streaming, the tegra DSI transfer path injects this packet into
++	 * the video stream at vblank (DSI_VIDEO_MODE_CONTROL), so brightness
++	 * changes work while the panel is displaying.
+ 	 */
+-	if (jdi->streaming)
+-		return 0;
+-
+ 	mipi_dsi_dual_dcs_write_buffer_multi(&dsi_ctx, jdi->link1, jdi->link2,
+ 					     payload, sizeof(payload));
+ 
+diff --git a/drivers/gpu/drm/tegra/dsi.c b/drivers/gpu/drm/tegra/dsi.c
+index a5d3dad29..edd9e4391 100644
+--- a/drivers/gpu/drm/tegra/dsi.c
++++ b/drivers/gpu/drm/tegra/dsi.c
+@@ -895,6 +895,10 @@ static void tegra_dsi_encoder_disable(struct drm_encoder *encoder)
+ 	if (output->panel)
+ 		drm_panel_disable(output->panel);
+ 
++	dsi->video_pkt_mode = false;
++	if (dsi->slave)
++		dsi->slave->video_pkt_mode = false;
++
+ 	tegra_dsi_video_disable(dsi);
+ 
+ 	/*
+@@ -1190,9 +1194,10 @@ static void tegra_dsi_encoder_enable(struct drm_encoder *encoder)
+ 
+ 		drm_panel_prepare(output->panel);
+ 
+-		for (s = dsi; s; s = s->slave)
+-			s->video_pkt_mode = false;
+-
++		/*
++		 * Leave injection enabled: later DCS writes (backlight) must
++		 * also go through the video stream, not the host trigger.
++		 */
+ 		drm_panel_enable(output->panel);
+ 	}
+ 
+-- 
+2.56.0
+

@@ -1,0 +1,77 @@
+From 044d7f1b3eb074ab582eb20aeaebd2a6869ab4c6 Mon Sep 17 00:00:00 2001
+From: nyasha <nmushambi@proton.me>
+Date: Sun, 18 Oct 2026 13:47:44 +1300
+Subject: [PATCH 08/29] Fix the charger vbus regulator node and build palmas
+ extcon in
+
+- Attach the usb-otg-vbus child node when registering the vbus regulator;
+  the regulator core no longer resolves desc->of_match, so consumers could
+  never resolve vbus-supply and deferred forever
+- Build CONFIG_EXTCON_PALMAS in: the palmas USB extcon provider was a module
+  and the ChipIdea controller deferred on its extcon lookup
+- USB still returns -517 from ci_hdrc_add_device; the remaining deferred
+  dependency has not been identified yet
+
+Co-Authored-By: Claude Code with DeepSeek Flash v4.1 <noreply@anthropic.com>
+---
+ arch/arm64/configs/flounder_defconfig  |  2 +-
+ drivers/power/supply/bq24190_charger.c | 15 +++++++++++++++
+ 2 files changed, 16 insertions(+), 1 deletion(-)
+
+diff --git a/arch/arm64/configs/flounder_defconfig b/arch/arm64/configs/flounder_defconfig
+index 4f09586c2..0d29548e5 100644
+--- a/arch/arm64/configs/flounder_defconfig
++++ b/arch/arm64/configs/flounder_defconfig
+@@ -6482,7 +6482,7 @@ CONFIG_EXTCON=y
+ # CONFIG_EXTCON_LC824206XA is not set
+ # CONFIG_EXTCON_MAX3355 is not set
+ # CONFIG_EXTCON_MAX14526 is not set
+-CONFIG_EXTCON_PALMAS=m
++CONFIG_EXTCON_PALMAS=y
+ # CONFIG_EXTCON_PTN5150 is not set
+ # CONFIG_EXTCON_RT8973A is not set
+ # CONFIG_EXTCON_SM5502 is not set
+diff --git a/drivers/power/supply/bq24190_charger.c b/drivers/power/supply/bq24190_charger.c
+index ed0ceae8d..537cb6ee7 100644
+--- a/drivers/power/supply/bq24190_charger.c
++++ b/drivers/power/supply/bq24190_charger.c
+@@ -16,6 +16,7 @@
+ #include <linux/regulator/machine.h>
+ #include <linux/workqueue.h>
+ #include <linux/i2c.h>
++#include <linux/of.h>
+ #include <linux/extcon-provider.h>
+ 
+ #define	BQ24190_MANUFACTURER	"Texas Instruments"
+@@ -721,6 +722,7 @@ static const struct regulator_init_data bq24190_vbus_init_data = {
+ static int bq24190_register_vbus_regulator(struct bq24190_dev_info *bdi)
+ {
+ 	struct bq24190_platform_data *pdata = bdi->dev->platform_data;
++	struct device_node *np;
+ 	struct regulator_config cfg = { };
+ 	struct regulator_dev *reg;
+ 	int ret = 0;
+@@ -731,7 +733,20 @@ static int bq24190_register_vbus_regulator(struct bq24190_dev_info *bdi)
+ 	else
+ 		cfg.init_data = &bq24190_vbus_init_data;
+ 	cfg.driver_data = bdi;
++
++	/*
++	 * The regulator lives in a child node (e.g. usb-otg-vbus) and is
++	 * referenced by phandle from consumers such as the USB controller.
++	 * The core no longer matches the child node from desc->of_match, so
++	 * without this the supply cannot be resolved and every consumer
++	 * defers forever.
++	 */
++	np = of_get_child_by_name(bdi->dev->of_node,
++				  bdi->info->vbus_desc->of_match);
++	cfg.of_node = np;
++
+ 	reg = devm_regulator_register(bdi->dev, bdi->info->vbus_desc, &cfg);
++	of_node_put(np);
+ 	if (IS_ERR(reg)) {
+ 		ret = PTR_ERR(reg);
+ 		dev_err(bdi->dev, "Can't register regulator: %d\n", ret);
+-- 
+2.56.0
+

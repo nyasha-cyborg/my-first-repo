@@ -1,0 +1,146 @@
+From 42ba32230cac4490badcabe64c05f4bc007a3f1b Mon Sep 17 00:00:00 2001
+From: nyasha <nmushambi@proton.me>
+Date: Tue, 20 Oct 2026 09:57:08 +1300
+Subject: [PATCH 18/29] bluetooth: flounder tty/N_HCI attach and 3 Mbaud init
+
+- hci_bcm: on the tty path, take init speed from the tty instead of the
+  protocol default; BCM proto init_speed set to 3000000 for this board
+- tegra132-flounder: uartc as tegra124/30-hsuart with serialN aliases,
+  no reg-shift; adjust-baud-rates so 3 Mbaud lands on a 48 MHz uart clock
+- BT_REG_ON as an always-on fixed regulator and BT_WAKE as a gpio-hog,
+  because the tty path has no serdev device to drive them
+- HCI still times out; the hardware and Android stack are proven good
+
+Co-Authored-By: Claude Code <noreply@anthropic.com>
+---
+ .../boot/dts/nvidia/tegra132-flounder.dts     | 61 ++++++++++++++-----
+ drivers/bluetooth/hci_bcm.c                   | 15 ++++-
+ 2 files changed, 59 insertions(+), 17 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts b/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
+index 7bd1b907a..bff984dc9 100644
+--- a/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
++++ b/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
+@@ -11,6 +11,11 @@ / {
+ 	compatible = "google,flounder64_lte", "nvidia,tegra132";
+ 
+ 	aliases {
++		serial0 = "/serial@70006000";
++		serial1 = "/serial@70006040";
++		serial2 = "/serial@70006200";
++		serial3 = "/serial@70006300";
++
+ 		i2c0 = "/i2c@7000c000";
+ 		i2c1 = "/i2c@7000c400";
+ 		i2c2 = "/i2c@7000c500";
+@@ -679,23 +684,20 @@ serial@70006000 {
+ 	 * brcm/BCM4354.hcd, is in the ROM's vendor partition.
+ 	 */
+ 	serial@70006200 {
++		/*
++		 * Android drives this port with the Tegra HSUART driver and
++		 * the N_HCI line discipline (ttyTHS2), which answers HCI while
++		 * the 8250 serdev path times out. Use the hsuart compatible so
++		 * a tty exists; hciattach-min attaches it.
++		 */
++		compatible = "nvidia,tegra124-hsuart", "nvidia,tegra30-hsuart";
++		/delete-property/ reg-shift;
++		reset-names = "serial";
+ 		status = "okay";
+-
+-		bluetooth {
+-			compatible = "brcm,bcm43540-bt";
+-			/*
+-			 * Downstream board-flounder.c (bluedroid_pm
+-			 * resources): BT_REG_ON = PR1, BT_WAKE = PEE1,
+-			 * HOST_WAKE = PU6. The driver treats
+-			 * shutdown-gpios as a power enable (1 = on).
+-			 */
+-			shutdown-gpios =
+-				<&gpio TEGRA_GPIO(R, 1) GPIO_ACTIVE_HIGH>;
+-			device-wakeup-gpios =
+-				<&gpio TEGRA_GPIO(EE, 1) GPIO_ACTIVE_HIGH>;
+-			host-wakeup-gpios =
+-				<&gpio TEGRA_GPIO(U, 6) GPIO_ACTIVE_HIGH>;
+-		};
++		/* 3 Mbaud needs the clock trim from the Shield/Pixel C nodes. */
++		nvidia,adjust-baud-rates = <0 9600 100>,
++					   <9600 115200 200>,
++					   <1000000 4000000 136>;
+ 	};
+ 
+ 	/* TODO: UARTD */
+@@ -1306,6 +1308,20 @@ vdd_aud_1v8: regulator-rt5677-aud {
+ 		regulator-boot-on;
+ 	};
+ 
++	/*
++	 * BT_REG_ON (PR1). The tty/N_HCI path has no serdev device to drive
++	 * it (hci_bcm only does that in serdev mode), so hold it on from
++	 * boot; the chip then boots at 115200 and is ready for hciattach.
++	 */
++	bt_reg_on: regulator-bt-reg-on {
++		compatible = "regulator-fixed";
++		regulator-name = "bt-reg-on";
++		gpio = <&gpio TEGRA_GPIO(R, 1) GPIO_ACTIVE_HIGH>;
++		enable-active-high;
++		regulator-always-on;
++		regulator-boot-on;
++	};
++
+ 	/*
+ 	 * Speaker card: one I2S and two amplifiers on a single stereo link.
+ 	 * No generic card driver expresses that shape, so the link is declared
+@@ -1565,3 +1581,16 @@ pllx_throttle_trip {
+ 	};
+ 
+ };
++
++/*
++ * BT_WAKE (PEE1): held high from boot. Without serdev, hci_bcm does not touch
++ * it, and Android leaves it high from its probe.
++ */
++&gpio {
++	bt-wake-hog {
++		gpio-hog;
++		gpios = <TEGRA_GPIO(EE, 1) GPIO_ACTIVE_HIGH>;
++		output-high;
++		line-name = "bt-wake";
++	};
++};
+diff --git a/drivers/bluetooth/hci_bcm.c b/drivers/bluetooth/hci_bcm.c
+index 9286a5f40..f0a25f4b2 100644
+--- a/drivers/bluetooth/hci_bcm.c
++++ b/drivers/bluetooth/hci_bcm.c
+@@ -507,6 +507,13 @@ static int bcm_open(struct hci_uart *hu)
+ 
+ 		if (err)
+ 			goto err_unset_hu;
++	} else if (hu->tty && hu->tty->termios.c_ospeed) {
++		/*
++		 * No platform/DT device (N_HCI tty path). Honour the speed
++		 * userspace configured on the port instead of the protocol
++		 * default; some modules come out of reset at 3 Mbaud.
++		 */
++		hu->init_speed = hu->tty->termios.c_ospeed;
+ 	}
+ 
+ 	mutex_unlock(&bcm_device_lock);
+@@ -1295,7 +1302,13 @@ static const struct hci_uart_proto bcm_proto = {
+ 	.id		= HCI_UART_BCM,
+ 	.name		= "Broadcom",
+ 	.manufacturer	= 15,
+-	.init_speed	= 115200,
++	/*
++	 * The flounder module (BCM4350C0) comes out of reset at 3 Mbaud;
++	 * Android's HAL opens the port at 3000000. The tty layer does not
++	 * preserve a custom termios speed for us to read back, so set it
++	 * here for this port.
++	 */
++	.init_speed	= 3000000,
+ 	.open		= bcm_open,
+ 	.close		= bcm_close,
+ 	.flush		= bcm_flush,
+-- 
+2.56.0
+

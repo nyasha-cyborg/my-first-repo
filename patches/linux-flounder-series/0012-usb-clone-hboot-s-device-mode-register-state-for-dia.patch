@@ -1,0 +1,194 @@
+From b115c83ed0634f757ff78d438032fe682fd02fe5 Mon Sep 17 00:00:00 2001
+From: nyasha <nmushambi@proton.me>
+Date: Sun, 18 Oct 2026 21:45:31 +1300
+Subject: [PATCH 12/29] usb: clone hboot's device-mode register state for
+ diagnosis
+
+- add an n9.dump early dump of the USB, padctl and PMC blocks
+- capture hboot's known-good device-mode state: it leaves the padctl at
+  reset defaults and runs with USBMODE=0x5002 (SLOM clear), DEVLC
+  PSPD=2, and different UTMI tuning from mainline
+- clone that tuning at pullup (xcvr0/misc/xcvr1, SLOM clear) and stop the
+  padctl/STS/fuse experiments that hboot shows are unnecessary
+- drop the PHY vbus-supply to avoid an intermittent regulator deadlock
+  in usb_phy_init()
+
+Co-Authored-By: Claude Code with DeepSeek Flash v4.1 <noreply@anthropic.com>
+---
+ .../boot/dts/nvidia/tegra132-flounder.dts     |  4 +-
+ drivers/usb/chipidea/ci_hdrc_tegra.c          | 46 +++++++++++++
+ drivers/usb/chipidea/udc.c                    | 67 ++++++++-----------
+ 3 files changed, 76 insertions(+), 41 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts b/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
+index 066cd89e9..5c9c854c0 100644
+--- a/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
++++ b/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
+@@ -1359,7 +1359,9 @@ usb@7d000000 {
+ 	usb-phy@7d000000 {
+ 		status = "okay";
+ 		dr_mode = "otg";
+-		vbus-supply = <&avdd_usb>;
++		/* Leave the palmas AVDD_USB rail alone; hboot enables it and
++		 * enabling it here occasionally deadlocks the probe.
++		 */
+ 	};
+ 
+ 	clk32k_in: clock-32k {
+diff --git a/drivers/usb/chipidea/ci_hdrc_tegra.c b/drivers/usb/chipidea/ci_hdrc_tegra.c
+index c066ac62d..36f338d1c 100644
+--- a/drivers/usb/chipidea/ci_hdrc_tegra.c
++++ b/drivers/usb/chipidea/ci_hdrc_tegra.c
+@@ -114,6 +114,49 @@ static void n9_reset_timer(struct timer_list *t)
+ }
+ static DEFINE_TIMER(n9_reset, n9_reset_timer);
+ 
++static void n9_dump_regs(void)
++{
++	void __iomem *usb = ioremap(0x7d000000, 0x1000);
++
++	if (!usb)
++		return;
++
++	pr_info("n9dump: cap=%08x cmd=%08x sts=%08x portsc=%08x\n",
++		readl(usb + 0x100), readl(usb + 0x130),
++		readl(usb + 0x134), readl(usb + 0x174));
++	pr_info("n9dump: devlc=%08x mode=%08x susp=%08x vbus=%08x wake=%08x\n",
++		readl(usb + 0x1b4), readl(usb + 0x1f8), readl(usb + 0x400),
++		readl(usb + 0x404), readl(usb + 0x408));
++	pr_info("n9dump: bias=%08x xcvr0=%08x tx=%08x misc=%08x spare=%08x xcvr1=%08x\n",
++		readl(usb + 0x800), readl(usb + 0x808), readl(usb + 0x820),
++		readl(usb + 0x824), readl(usb + 0x834), readl(usb + 0x838));
++	iounmap(usb);
++
++	{
++		void __iomem *pc = ioremap(0x7009f000, 0x1000);
++
++		if (pc) {
++			pr_info("n9dump: pcmux=%08x pccap=%08x elpg=%08x ctl0=%08x ctl1=%08x bias=%08x vbusid=%08x\n",
++				readl(pc + 0x004), readl(pc + 0x008),
++				readl(pc + 0x01c), readl(pc + 0x0a0),
++				readl(pc + 0x0ac), readl(pc + 0x0b8),
++				readl(pc + 0xc60));
++			iounmap(pc);
++		}
++	}
++
++	{
++		void __iomem *pmc = ioremap(0x7000e400, 0x400);
++
++		if (pmc) {
++			pr_info("n9dump: pmc ao=%08x sleep=%08x master=%08x\n",
++				readl(pmc + 0xf0), readl(pmc + 0x1fc),
++				readl(pmc + 0x310));
++			iounmap(pmc);
++		}
++	}
++}
++
+ static int __init n9_trace_init(void)
+ {
+ 	void __iomem *base = n9_pmc_base();
+@@ -121,6 +164,9 @@ static int __init n9_trace_init(void)
+ 		       strstr(saved_command_line, "n9.trigger");
+ 	unsigned int i;
+ 
++	if (saved_command_line && strstr(saved_command_line, "n9.dump"))
++		n9_dump_regs();
++
+ 	if (!base)
+ 		return 0;
+ 
+diff --git a/drivers/usb/chipidea/udc.c b/drivers/usb/chipidea/udc.c
+index f80319e96..64ccebca4 100644
+--- a/drivers/usb/chipidea/udc.c
++++ b/drivers/usb/chipidea/udc.c
+@@ -1974,58 +1974,45 @@ static int ci_udc_pullup(struct usb_gadget *_gadget, int is_on)
+ 		return 0;
+ 
+ 	{
+-		void __iomem *phy = ioremap(0x7d000000 + 0x400, 0x100);
+-		void __iomem *pc = ioremap(0x7009f000, 0x1000);
+-
+-		if (phy)
+-			dev_info(ci->dev,
+-				 "n9: phy susp=%08x vbus=%08x wake=%08x\n",
+-				 readl(phy), readl(phy + 4), readl(phy + 8));
+-
+-		if (pc) {
+-			u32 cap = readl(pc + 0x08);
+-			u32 bias = readl(pc + 0xb8);
+-			u32 ctl0 = readl(pc + 0xa0);
+-			u32 ctl1 = readl(pc + 0xac);
++		void __iomem *phy = ioremap(0x7d000000 + 0x400, 0x500);
+ 
++		if (phy) {
+ 			dev_info(ci->dev,
+-				 "n9: padctl mux=%08x cap=%08x bias=%08x ctl0=%08x ctl1=%08x\n",
+-				 readl(pc + 0x04), cap, bias, ctl0, ctl1);
++				 "n9: utmi before bias=%08x xcvr0=%08x misc=%08x xcvr1=%08x\n",
++				 readl(phy + 0x400), readl(phy + 0x408),
++				 readl(phy + 0x424), readl(phy + 0x438));
+ 
+-			/* Power the USB2 OTG pad: the padctl lane PHY has no
+-			 * consumer on this board, so nothing else does it.
++			/* Clone hboot's known-good device-mode tuning, captured
++			 * with n9.dump while it was running fastboot.
+ 			 */
+-			writel((cap & ~0x3u) | 0x2, pc + 0x08);
+-			writel(bias & ~BIT(12), pc + 0xb8);
+-			writel(ctl0 & ~(BIT(21) | BIT(20) | BIT(19)), pc + 0xa0);
+-			writel(ctl1 & ~(BIT(2) | BIT(1) | BIT(0)), pc + 0xac);
++			writel(0x06002a3e, phy + 0x408);	/* XCVR_CFG0 */
++			writel(0x03e00078, phy + 0x424);	/* MISC_CFG0 */
++			writel(0x00188201, phy + 0x438);	/* XCVR_CFG1 */
+ 
+ 			dev_info(ci->dev,
+-				 "n9: padctl2 cap=%08x bias=%08x ctl0=%08x ctl1=%08x\n",
+-				 readl(pc + 0x08), readl(pc + 0xb8),
+-				 readl(pc + 0xa0), readl(pc + 0xac));
+-			iounmap(pc);
++				 "n9: utmi after  bias=%08x xcvr0=%08x misc=%08x xcvr1=%08x\n",
++				 readl(phy + 0x400), readl(phy + 0x408),
++				 readl(phy + 0x424), readl(phy + 0x438));
++			iounmap(phy);
+ 		}
++	}
+ 
+-		if (phy) {
++	{
++		void __iomem *pmc = ioremap(0x7000e400, 0x400);
++
++		if (pmc) {
+ 			dev_info(ci->dev,
+-				 "n9: phy2 susp=%08x vbus=%08x wake=%08x\n",
+-				 readl(phy), readl(phy + 4), readl(phy + 8));
+-			iounmap(phy);
++				 "n9: pmc ao=%08x sleep=%08x master=%08x\n",
++				 readl(pmc + 0xf0), readl(pmc + 0x1fc),
++				 readl(pmc + 0x310));
++			iounmap(pmc);
+ 		}
+ 	}
+ 
+-	/*
+-	 * The vendor PHY driver clears PTS and sets STS in DEVLC for both
+-	 * modes; mainline skips it because Tegra sets
+-	 * CI_HDRC_OVERRIDE_PHY_CONTROL.
+-	 */
+-	dev_info(ci->dev, "n9: devlc before=%08x\n",
+-		 hw_read(ci, OP_DEVLC, ~0));
+-	hw_write(ci, OP_DEVLC, DEVLC_PTS(7) | DEVLC_PTW, 0);
+-	hw_write(ci, OP_DEVLC, DEVLC_STS, DEVLC_STS);
+-	dev_info(ci->dev, "n9: devlc after=%08x\n",
+-		 hw_read(ci, OP_DEVLC, ~0));
++	/* hboot leaves SLOM clear in device mode. */
++	hw_write(ci, OP_USBMODE, USBMODE_SLOM, 0);
++	dev_info(ci->dev, "n9: devlc=%08x usbmode=%08x\n",
++		 hw_read(ci, OP_DEVLC, ~0), hw_read(ci, OP_USBMODE, ~0));
+ 
+ 	pm_runtime_get_sync(ci->dev);
+ 	if (is_on)
+-- 
+2.56.0
+

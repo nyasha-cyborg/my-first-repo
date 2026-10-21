@@ -1,0 +1,57 @@
+From ecfcb5f60ce2455d40e064fa2db80ade4f2d15a6 Mon Sep 17 00:00:00 2001
+From: nyasha <nmushambi@proton.me>
+Date: Sun, 18 Oct 2026 13:15:31 +1300
+Subject: [PATCH 07/29] Enable the charger and USB gadget drivers, fix the
+ charger IRQ type
+
+- Build CHARGER_BQ24190 and USB_TEGRA_XUDC in: the fastboot test image has
+  no module loader, so the usb-otg-vbus regulator never appeared and
+  tegra-xusb-padctl deferred forever
+- Use IRQ_TYPE_EDGE_FALLING for the bq24193 interrupt; GPIO_ACTIVE_HIGH is 0
+  and is not a valid trigger, so the GIC warned and the charger did not probe
+- The HDRC probe still defers; the charger may need further investigation
+
+Co-Authored-By: Claude Code with DeepSeek Flash v4.1 <noreply@anthropic.com>
+---
+ arch/arm64/boot/dts/nvidia/tegra132-flounder.dts | 2 +-
+ arch/arm64/configs/flounder_defconfig            | 4 ++--
+ 2 files changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts b/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
+index 0f27efe22..5f92f6f33 100644
+--- a/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
++++ b/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
+@@ -722,7 +722,7 @@ bq24193@6b {
+ 			compatible = "ti,bq24192";
+ 			reg = <0x6b>;
+ 			interrupt-parent = <&gpio>;
+-			interrupts = <TEGRA_GPIO(J, 0) GPIO_ACTIVE_HIGH>;
++			interrupts = <TEGRA_GPIO(J, 0) IRQ_TYPE_EDGE_FALLING>;
+ 			monitored-battery = <&battery>;
+ 			omit-battery-class;
+ 
+diff --git a/arch/arm64/configs/flounder_defconfig b/arch/arm64/configs/flounder_defconfig
+index 37e4fb847..4f09586c2 100644
+--- a/arch/arm64/configs/flounder_defconfig
++++ b/arch/arm64/configs/flounder_defconfig
+@@ -3545,7 +3545,7 @@ CONFIG_BATTERY_MAX17042=m
+ # CONFIG_CHARGER_MAX77976 is not set
+ # CONFIG_CHARGER_MAX8971 is not set
+ # CONFIG_CHARGER_BQ2415X is not set
+-CONFIG_CHARGER_BQ24190=m
++CONFIG_CHARGER_BQ24190=y
+ # CONFIG_CHARGER_BQ24257 is not set
+ # CONFIG_CHARGER_BQ24735 is not set
+ # CONFIG_CHARGER_BQ2515X is not set
+@@ -5781,7 +5781,7 @@ CONFIG_USB_BDC_UDC=y
+ # CONFIG_USB_EG20T is not set
+ # CONFIG_USB_GADGET_XILINX is not set
+ # CONFIG_USB_MAX3420_UDC is not set
+-CONFIG_USB_TEGRA_XUDC=m
++CONFIG_USB_TEGRA_XUDC=y
+ # CONFIG_USB_DUMMY_HCD is not set
+ # end of USB Peripheral Controller
+ 
+-- 
+2.56.0
+

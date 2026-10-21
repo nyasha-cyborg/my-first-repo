@@ -1,0 +1,45 @@
+From ca7aa3ae2009ade951fee7a593fd884cc4442ba3 Mon Sep 17 00:00:00 2001
+From: nyasha <nmushambi@proton.me>
+Date: Sun, 18 Oct 2026 12:06:49 +1300
+Subject: [PATCH 02/29] Pulse the panel reset and log the panel's DCS state
+
+- Assert then release the panel reset line; driving it high alone leaves the
+  panel in whatever state survived the previous SoC reboot
+- Read GET_POWER_MODE, GET_PIXEL_FORMAT and GET_ADDRESS_MODE after init to
+  tell a dummy read from a panel that is ignoring commands
+- Both still return 0x00 and some writes time out (-110), so the panel is
+  not reaching a usable display-on state yet
+
+Co-Authored-By: Claude Code with DeepSeek Flash v4.1 <noreply@anthropic.com>
+---
+ drivers/gpu/drm/panel/panel-jdi-lpm089a128a.c | 13 ++++++++++---
+ 1 file changed, 10 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/gpu/drm/panel/panel-jdi-lpm089a128a.c b/drivers/gpu/drm/panel/panel-jdi-lpm089a128a.c
+index 59fd547a8..670006359 100644
+--- a/drivers/gpu/drm/panel/panel-jdi-lpm089a128a.c
++++ b/drivers/gpu/drm/panel/panel-jdi-lpm089a128a.c
+@@ -196,10 +196,17 @@ static int jdi_panel_prepare(struct drm_panel *panel)
+ 	usleep_range(JDI_POWER_UP_DELAY_MS * 1000,
+ 		     JDI_POWER_UP_DELAY_MS * 1000 + 500);
+ 
+-	/* Reset is active high as the device tree declares it. */
++	/*
++	 * Reset is active high as the device tree declares it, but the panel
++	 * must actually be pulsed: driving it high without first asserting it
++	 * leaves the panel in whatever state survived the previous SoC reboot.
++	 * That state is not reliably usable -- after a DSI reset without a
++	 * panel reset, every DCS command times out with -110.
++	 */
++	gpiod_set_value(jdi->reset_gpio, 0);
++	usleep_range(10000, 12000);
+ 	gpiod_set_value(jdi->reset_gpio, 1);
+-	usleep_range(JDI_POWER_UP_DELAY_MS * 1000,
+-		     JDI_POWER_UP_DELAY_MS * 1000 + 500);
++	usleep_range(120000, 121000);
+ 
+ 	/*
+ 	 * No column/page address setup: the downstream init table has neither
+-- 
+2.56.0
+

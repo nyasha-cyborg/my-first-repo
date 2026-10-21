@@ -1,0 +1,113 @@
+From 5bf55902df2e67b15895b928b6c6c43f809c581a Mon Sep 17 00:00:00 2001
+From: nyasha <nmushambi@proton.me>
+Date: Tue, 20 Oct 2026 16:17:14 +1300
+Subject: [PATCH 19/29] arm64: tegra132: flounder: free BT_WAKE for userspace
+ control
+
+- move the BT_REG_ON regulator next to the other board rails
+- model WiFi REG_ON as active-high, matching the physical level pwrseq drives
+- drop the always-on BT_WAKE regulator/hog: Android pulses PEE1 per
+  transaction, and a static high never gives the chip an idle->wake edge
+
+Co-Authored-By: Claude Code <noreply@anthropic.com>
+---
+ .../boot/dts/nvidia/tegra132-flounder.dts     | 59 +++++++++++--------
+ 1 file changed, 33 insertions(+), 26 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts b/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
+index bff984dc9..129e23978 100644
+--- a/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
++++ b/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
+@@ -1201,20 +1201,52 @@ usb2-0 {
+ 		};
+ 	};
+ 
++
++	/*
++	 * BT_REG_ON (PR1): the BT section's own enable. Android's
++	 * bluedroid_pm asserts this before opening the UART.
++	 */
++	bt_reg_on: regulator-bt-reg-on {
++		compatible = "regulator-fixed";
++		regulator-name = "bt-reg-on";
++		gpio = <&gpio TEGRA_GPIO(R, 1) GPIO_ACTIVE_HIGH>;
++		enable-active-high;
++		regulator-always-on;
++		regulator-boot-on;
++	};
++
++	/* BT_WAKE (PEE1) is deliberately not claimed here: Android's
++	 * bluedroid_pm drives it dynamically (low on idle, high to wake).
++	 * Userspace tools in the diagnostic ramdisk own the line instead.
++	 */
++
++	wifi_reg_on: regulator-wifi-reg-on {
++		compatible = "regulator-fixed";
++		regulator-name = "wifi-reg-on";
++		/* pwrseq drives this rail on at physical high; model the line
++		 * as active-high so the regulator's enable does the same. */
++		gpio = <&gpio TEGRA_GPIO(X, 7) GPIO_ACTIVE_HIGH>;
++		enable-active-high;
++		regulator-always-on;
++		regulator-boot-on;
++	};
++
+ 	pwrseq_wifi: pwrseq-wifi {
+ 		compatible = "mmc-pwrseq-simple";
++		status = "disabled";
+ 		reset-gpios = <&gpio TEGRA_GPIO(X, 7) GPIO_ACTIVE_LOW>;
+ 		post-power-on-delay-ms = <300>;
+ 		power-off-delay-us = <300>;
+ 	};
+ 
++
+ 	mmc@700b0000 {
+ 		status = "okay";
+ 		bus-width = <4>;
+ 		sd-uhs-sdr104;
+ 		nvidia,only-1-8v;
+ 		non-removable;
+-		mmc-pwrseq = <&pwrseq_wifi>;
++		/* rail held by wifi_reg_on */
+ 		vqmmc-supply = <&vdd_1v8>;
+ 		#address-cells = <1>;
+ 		#size-cells = <0>;
+@@ -1308,19 +1340,6 @@ vdd_aud_1v8: regulator-rt5677-aud {
+ 		regulator-boot-on;
+ 	};
+ 
+-	/*
+-	 * BT_REG_ON (PR1). The tty/N_HCI path has no serdev device to drive
+-	 * it (hci_bcm only does that in serdev mode), so hold it on from
+-	 * boot; the chip then boots at 115200 and is ready for hciattach.
+-	 */
+-	bt_reg_on: regulator-bt-reg-on {
+-		compatible = "regulator-fixed";
+-		regulator-name = "bt-reg-on";
+-		gpio = <&gpio TEGRA_GPIO(R, 1) GPIO_ACTIVE_HIGH>;
+-		enable-active-high;
+-		regulator-always-on;
+-		regulator-boot-on;
+-	};
+ 
+ 	/*
+ 	 * Speaker card: one I2S and two amplifiers on a single stereo link.
+@@ -1582,15 +1601,3 @@ pllx_throttle_trip {
+ 
+ };
+ 
+-/*
+- * BT_WAKE (PEE1): held high from boot. Without serdev, hci_bcm does not touch
+- * it, and Android leaves it high from its probe.
+- */
+-&gpio {
+-	bt-wake-hog {
+-		gpio-hog;
+-		gpios = <TEGRA_GPIO(EE, 1) GPIO_ACTIVE_HIGH>;
+-		output-high;
+-		line-name = "bt-wake";
+-	};
+-};
+-- 
+2.56.0
+
