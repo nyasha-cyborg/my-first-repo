@@ -26,8 +26,9 @@ Build: `make O=../linux-flounder-out ARCH=arm64 LLVM=1 -j16 Image modules dtbs`
 | **flounder: un-tristate DAP3 outputs, match Android drive_dap3** | audio | needed (pads must drive) |
 | **ASoC: tegra: release I2S pads left in GPIO mode by the bootloader** | audio | **fixes the silent speakers**: amps lock (R0 `0xd05f`) |
 | **flounder: release the DAP2 pads for the codec card too** | audio | same fix for the rt5677/headphone card, untested by ear |
+| **ASoC: tfa989x: optional nxp,right-channel; flounder bottom speaker** | audio | stereo split works: top = left, bottom = right (heard) |
 
-Tested kernel release for the audio patches: `6.19.0-htc-flounder-g96949bf28c4c`.
+Tested kernel release for the audio patches: `6.19.0-htc-flounder-g5d830bfca033`.
 
 ## Before sending anything upstream (checkpatch 2026-10-22)
 
@@ -45,3 +46,5 @@ Tested kernel release for the audio patches: `6.19.0-htc-flounder-g96949bf28c4c`
   (`nvidia,i2s-pad-gpios`) with no binding yet. A cleaner upstream fix is
   probably in `gpio-tegra`/`pinctrl-tegra` (clear GPIO_CNF when a pad is
   muxed to a non-GPIO function); decide before sending.
+- `nxp,right-channel` is a new tfa989x DT property (binding updated in the
+  patch); the DAPM mux "Amp Input" can also flip it at runtime.

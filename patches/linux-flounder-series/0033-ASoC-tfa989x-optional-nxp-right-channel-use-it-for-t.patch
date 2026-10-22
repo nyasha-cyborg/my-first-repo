@@ -1,0 +1,80 @@
+From 5d830bfca0335adabd532051c3d255ec66212039 Mon Sep 17 00:00:00 2001
+From: nyasha <nmushambi@proton.me>
+Date: Thu, 22 Oct 2026 17:34:20 +1300
+Subject: [PATCH] ASoC: tfa989x: optional nxp,right-channel; use it for the
+ flounder bottom speaker
+
+Both amps shared one I2S stream but both took the left channel, so the right
+channel was never played. The amp at 0x34 is the bottom speaker (the 0x35 amp is
+the top one, checked by ear) and takes the right channel in Android too.
+---
+ .../devicetree/bindings/sound/nxp,tfa989x.yaml       |  6 ++++++
+ arch/arm64/boot/dts/nvidia/tegra132-flounder.dts     |  1 +
+ sound/soc/codecs/tfa989x.c                           | 12 ++++++++----
+ 3 files changed, 15 insertions(+), 4 deletions(-)
+
+diff --git a/Documentation/devicetree/bindings/sound/nxp,tfa989x.yaml b/Documentation/devicetree/bindings/sound/nxp,tfa989x.yaml
+index fd2415e23..cb3289cd2 100644
+--- a/Documentation/devicetree/bindings/sound/nxp,tfa989x.yaml
++++ b/Documentation/devicetree/bindings/sound/nxp,tfa989x.yaml
+@@ -30,6 +30,12 @@ properties:
+ 
+   sound-name-prefix: true
+ 
++  nxp,right-channel:
++    type: boolean
++    description:
++      Take the amplifier input from the right channel of the I2S stream
++      instead of the left one (stereo pair on one bus).
++
+   vddd-supply:
+     description: regulator phandle for the VDDD power supply.
+ 
+diff --git a/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts b/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
+index 24a700fb0..cd6fefd28 100644
+--- a/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
++++ b/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
+@@ -833,6 +833,7 @@ tfa9895_r: audio-codec@34 {
+ 			#sound-dai-cells = <0>;
+ 			vddd-supply = <&spk_ldo>;
+ 			sound-name-prefix = "Speaker Right";
++			nxp,right-channel;
+ 		};
+ 
+ 		tfa9895_l: audio-codec@35 {
+diff --git a/sound/soc/codecs/tfa989x.c b/sound/soc/codecs/tfa989x.c
+index 7204be155..7ee1f1ab7 100644
+--- a/sound/soc/codecs/tfa989x.c
++++ b/sound/soc/codecs/tfa989x.c
+@@ -283,12 +283,16 @@ static const struct tfa989x_rev tfa9897_rev = {
+  * Ideally NXP (or now Goodix) should release proper documentation for these
+  * amplifiers so that support for the "CoolFlux DSP" can be implemented properly.
+  */
+-static int tfa989x_dsp_bypass(struct regmap *regmap)
++static int tfa989x_dsp_bypass(struct regmap *regmap, bool right)
+ {
+ 	int ret;
+ 
+-	/* Clear CHSA to bypass DSP and take input from I2S 1 left channel */
+-	ret = regmap_clear_bits(regmap, TFA989X_I2SREG, TFA989X_I2SREG_CHSA_MSK);
++	/*
++	 * CHSA = 0 bypasses the DSP and takes input from the I2S 1 left
++	 * channel, CHSA = 1 takes the right channel.
++	 */
++	ret = regmap_update_bits(regmap, TFA989X_I2SREG, TFA989X_I2SREG_CHSA_MSK,
++				 right ? 1 << TFA989X_I2SREG_CHSA : 0);
+ 	if (ret)
+ 		return ret;
+ 
+@@ -392,7 +396,7 @@ static int tfa989x_i2c_probe(struct i2c_client *i2c)
+ 		return ret;
+ 	}
+ 
+-	ret = tfa989x_dsp_bypass(regmap);
++	ret = tfa989x_dsp_bypass(regmap, device_property_read_bool(dev, "nxp,right-channel"));
+ 	if (ret) {
+ 		dev_err(dev, "failed to enable DSP bypass: %d\n", ret);
+ 		return ret;
+-- 
+2.56.0
+

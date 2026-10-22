@@ -723,3 +723,17 @@ User heard the 440 Hz tone at 10 % (`tone-min 0 0 6 440 10`) on image `n9ampL`
 speaker output works with the stock `tfa989x` driver plus the pad-release fix.
 Not yet checked: left/right channel assignment, volume/boost tuning, headphones
 (rt5506, DAP2 pad release untested by ear).
+
+## 2026-10-22 17:40 — stereo channel mapping confirmed by ear
+
+Held in portrait: amp 0x35 ("Speaker Left", I2S left channel) = **top**
+speaker, amp 0x34 ("Speaker Right") = **bottom** speaker. Before this the
+driver set CHSA=left on both amps, so the right channel was never played
+(left-only tone came from both, right-only from none). Fix: tfa989x DT property
+`nxp,right-channel` (patch 0033), set on the 0x34 amp. Kernel
+`g5d830bfca033`, image `n9ampN`: left-only tone -> top only, right-only ->
+bottom only, both -> both; user confirmed. tone-min got a 7th arg
+(channel: 0 both, 1 left, 2 right). Android in portrait: user heard only the
+bottom speaker for the L/R test (not investigated; Android rotates routing).
+Open: volume/boost tuning, headphones (rt5506), landscape channel convention
+(userspace/UCM job), a proper ALSA mixer in the real rootfs.

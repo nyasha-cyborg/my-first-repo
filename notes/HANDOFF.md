@@ -240,9 +240,9 @@ was left for you to start.
   leaves the DAP pads as GPIOs (GPIO_CNF=1), overriding the I2S function; the
   machine driver now releases them (`nvidia,i2s-pad-gpios`) and the amps lock
   (R0 `0xd05f`). Confirmed audible by the user (440 Hz, 10 %); details in `audio.md`.
-  Kernel: `~/code/linux-flounder` `usb-bringup` @ `96949bf28` (release
-  `6.19.0-htc-flounder-g96949bf28c4c`, image `n9ampL-stripped.img`); full
-  series exported to `patches/linux-flounder-series/` (0030-0032 new).
+  Kernel: `~/code/linux-flounder` `usb-bringup` @ `5d830bfca` (release
+  `6.19.0-htc-flounder-g5d830bfca033`, image `n9ampN-stripped.img`); full
+  series exported to `patches/linux-flounder-series/` (0030-0033 new).
 - Open: (1) is the PMIC interrupt actually delivered after the invert fix
   (RTC alarm did not fire once; read INT status regs after an alarm to tell
   PMIC-side from delivery-side), (2) listen to the speakers, headphones (rt5506), (3) boot reliability
