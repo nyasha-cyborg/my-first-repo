@@ -39,7 +39,7 @@ if b"RXREADY" not in read_until(b"RXREADY", 15):
 time.sleep(1.0)                     # let the receiver settle, drop anything stale
 termios.tcflush(fd, termios.TCIFLUSH)
 t0 = time.time()
-BLK = 4096
+BLK = 16384
 for pos in range(0, len(data), BLK):
     blk = data[pos:pos + BLK]
     off = 0
@@ -52,7 +52,7 @@ for pos in range(0, len(data), BLK):
     while b"\x06" not in got and time.time() < end:
         r, _, _ = select.select([fd], [], [], 0.5)
         if r:
-            got += os.read(fd, 4096)
+            got += os.read(fd, 65536)
     if b"\x06" not in got:
         sys.exit("no ACK from the tablet at offset %d" % pos)
 res = read_until(b"sum=", 60)

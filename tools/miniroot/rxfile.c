@@ -1,6 +1,6 @@
 /* Receive N raw bytes from the console tty (stdin) into a file, with a byte-sum check.
  * usage: rxfile <path> <nbytes>      (run on the tablet's serial shell; pair: tools/n9push.py)
- * Puts the tty in raw mode, prints "RXREADY", reads exactly N bytes in 4096-byte blocks and
+ * Puts the tty in raw mode, prints "RXREADY", reads exactly N bytes in 16384-byte blocks and
  * answers every block with one ACK byte (0x06) so the sender cannot overrun the tty buffers,
  * writes them to <path>, restores the tty and prints "rx ok <n> sum=<hex>".
  * build: clang --target=aarch64-linux-gnu -nostdlib -static -O2 -fuse-ld=lld \
@@ -89,7 +89,7 @@ void main2(long *sp)
 	sc(SYS_ioctl, tty, TCSETS, (long)&raw);
 	say("RXREADY\n");
 	while (got < total) {
-		u64 want = total - got > 4096 ? 4096 : total - got, have = 0;
+		u64 want = total - got > 16384 ? 16384 : total - got, have = 0;
 
 		while (have < want) {
 			r = sc(SYS_read, tty, (long)buf + have, want - have);
