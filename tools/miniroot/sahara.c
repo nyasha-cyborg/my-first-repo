@@ -46,6 +46,15 @@ static long sc(long n, long a, long b, long c)
 	return x0;
 }
 
+static long sc4(long n, long a, long b, long c, long d)
+{
+	register long x8 __asm__("x8") = n, x0 __asm__("x0") = a;
+	register long x1 __asm__("x1") = b, x2 __asm__("x2") = c, x3 __asm__("x3") = d;
+
+	__asm__ volatile("svc 0" : "+r"(x0) : "r"(x8), "r"(x1), "r"(x2), "r"(x3) : "memory");
+	return x0;
+}
+
 static void say(const char *s)
 {
 	long n = 0;
@@ -158,6 +167,25 @@ static void serve(u64 id, u64 off, u64 len)
 		if (off + len > BUFSZ)
 			die("zero read too large", off + len);
 		send_all(fbuf + off, len);
+		return;
+	}
+	if (img[i].path[0] != '=' && img[i].path[0] != '+') {
+		/* real file: stream it with pread, images can be larger than the buffer */
+		long fd = sc(SYS_openat, AT_FDCWD, (long)img[i].path, 0);
+
+		if (fd < 0)
+			die("cannot open image", fd);
+		while (len) {
+			u64 n = len > 65536 ? 65536 : len;
+			long r = sc4(67 /* pread64 */, fd, (long)fbuf, n, off);
+
+			if (r <= 0)
+				die("pread failed / beyond end of image", off);
+			send_all(fbuf, r);
+			off += r;
+			len -= r;
+		}
+		sc(SYS_close, fd, 0, 0);
 		return;
 	}
 	if (cur != i) {
