@@ -2,7 +2,10 @@
  * Talks to a PBL/SBL in download mode (05c6:9008, 2 bulk endpoints: 0x81 IN, 0x01 OUT).
  * usage: sahara /dev/bus/usb/BBB/DDD <id>:<file> [<id>:<file> ...]
  * Prints every packet it receives and serves READ_DATA/READ_DATA_64 requests from the files
- * by image id (the same id:file pairs the stock `ks -s` takes).  Nothing else is written
+ * by image id (the same id:file pairs the stock `ks -s` takes).  A path of "=zero" serves an
+ * all-zero image (used for the modem EFS ids 16/17 so that no EF1/EF2 partition data is read).
+ * After DONE_RESP it keeps waiting for the next HELLO (the next boot stage) and exits when the
+ * link stays silent for 20 s.  Nothing else is written
  * to the modem; no EFS partition is touched.
  * build: clang --target=aarch64-linux-gnu -nostdlib -static -O2 -fuse-ld=lld \
  *              -fno-stack-protector -fno-builtin -o sahara tools/miniroot/sahara.c
@@ -100,6 +103,12 @@ static long load(int i)
 
 	if (img[i].size >= 0)
 		return img[i].size;
+	if (img[i].path[0] == '=') {
+		for (n = 0; n < BUFSZ; n++)
+			fbuf[n] = 0;
+		img[i].size = BUFSZ;
+		return BUFSZ;
+	}
 	fd = sc(SYS_openat, AT_FDCWD, (long)img[i].path, 0);
 	if (fd < 0)
 		die("cannot open image", fd);
@@ -165,9 +174,13 @@ void main2(long *sp)
 		die("claim interface failed", r);
 	say("sahara: waiting for HELLO\n");
 	for (;;) {
-		r = bulk(EP_IN, pkt, sizeof(pkt), 15000);
-		if (r < 0)
-			die("bulk in failed/timeout", r);
+		r = bulk(EP_IN, pkt, sizeof(pkt), 20000);
+		if (r < 0) {
+			say("link silent / error ");
+			sayn(-r, 10);
+			say(", leaving\n");
+			sc(SYS_exit, 0, 0, 0);
+		}
 		if (r < 8)
 			continue;
 		say("rx cmd=");
@@ -209,8 +222,8 @@ void main2(long *sp)
 		case 6:
 			say("DONE_RESP: ");
 			sayn(w[2], 10);
-			say("\nsahara: done\n");
-			sc(SYS_exit, 0, 0, 0);
+			say("\nsahara: stage done, waiting for the next HELLO\n");
+			cur = -1;
 			break;
 		default:
 			say("unhandled command, stopping\n");
