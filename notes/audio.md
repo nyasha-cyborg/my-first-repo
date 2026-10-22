@@ -715,3 +715,11 @@ Next steps:
 3. Headphones: rt5506 driver (not started); the DAP2 pad release is in but
    unverified by ear.
 4. Check other pads the bootloader may have left as GPIO (BT UART, etc.).
+
+## 2026-10-22 17:20 — speakers confirmed audible
+
+User heard the 440 Hz tone at 10 % (`tone-min 0 0 6 440 10`) on image `n9ampL`
+(kernel `g96949bf28c4c`); both amps R0 `0xd05f` during playback. Mainline
+speaker output works with the stock `tfa989x` driver plus the pad-release fix.
+Not yet checked: left/right channel assignment, volume/boost tuning, headphones
+(rt5506, DAP2 pad release untested by ear).

@@ -239,7 +239,7 @@ was left for you to start.
   cards register; **speaker root cause found 2026-10-22 09:10**: the bootloader
   leaves the DAP pads as GPIOs (GPIO_CNF=1), overriding the I2S function; the
   machine driver now releases them (`nvidia,i2s-pad-gpios`) and the amps lock
-  (R0 `0xd05f`). Needs a listening test (user away), details in `audio.md`.
+  (R0 `0xd05f`). Confirmed audible by the user (440 Hz, 10 %); details in `audio.md`.
   Kernel: `~/code/linux-flounder` `usb-bringup` @ `96949bf28` (release
   `6.19.0-htc-flounder-g96949bf28c4c`, image `n9ampL-stripped.img`); full
   series exported to `patches/linux-flounder-series/` (0030-0032 new).
