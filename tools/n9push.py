@@ -37,12 +37,22 @@ os.write(fd, ("\n/bin/rxfile %s %d\n" % (dst, len(data))).encode())
 if b"RXREADY" not in read_until(b"RXREADY", 15):
     sys.exit("receiver did not start")
 t0 = time.time()
-pos = 0
-while pos < len(data):
-    n = os.write(fd, data[pos:pos + 16384]) if select.select([], [fd], [], 5)[1] else 0
-    pos += n
-    if n == 0:
-        time.sleep(0.01)
+BLK = 4096
+for pos in range(0, len(data), BLK):
+    blk = data[pos:pos + BLK]
+    off = 0
+    while off < len(blk):
+        if select.select([], [fd], [], 5)[1]:
+            off += os.write(fd, blk[off:])
+    # wait for the tablet's ACK (0x06) before sending the next block
+    got = b""
+    end = time.time() + 20
+    while b"\x06" not in got and time.time() < end:
+        r, _, _ = select.select([fd], [], [], 0.5)
+        if r:
+            got += os.read(fd, 4096)
+    if b"\x06" not in got:
+        sys.exit("no ACK from the tablet at offset %d" % pos)
 res = read_until(b"sum=", 60)
 dt = time.time() - t0
 txt = res.decode("utf8", "replace")

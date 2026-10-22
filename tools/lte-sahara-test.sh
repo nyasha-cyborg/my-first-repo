@@ -2,10 +2,10 @@
 # Full LTE bring-up test cycle (user-run: the classifier blocks the modem power-on / boot from
 # the assistant's tools).  Boots a test image that contains /bin/sahara and /fw/*.mbn,
 # powers the modem (vendor GPIO sequence), runs the Sahara loader and logs everything.
-#   usage: tools/lte-sahara-test.sh [image]       default: n9hsicZ
+#   usage: tools/lte-sahara-test.sh [image]       default: n9hsicA2
 # SKIP_BOOT=1 reuses an already booted test image.  Log: /tmp/n9build/lte-sahara-test.txt     Nothing is flashed; no EFS partition is touched.
 HERE=$(dirname "$0")
-IMG=${1:-$HOME/Downloads/nexus9/bootimg-build/n9-mainline/n9hsicZ-stripped.img}
+IMG=${1:-$HOME/Downloads/nexus9/bootimg-build/n9-mainline/n9hsicA2-stripped.img}
 OUT=/tmp/n9build/lte-sahara-test.txt
 {
 if [ -z "$SKIP_BOOT" ]; then

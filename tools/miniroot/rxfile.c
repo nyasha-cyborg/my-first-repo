@@ -1,7 +1,8 @@
 /* Receive N raw bytes from the console tty (stdin) into a file, with a byte-sum check.
  * usage: rxfile <path> <nbytes>      (run on the tablet's serial shell; pair: tools/n9push.py)
- * Puts the tty in raw mode, prints "RXREADY", reads exactly N bytes, writes them to <path>,
- * restores the tty and prints "rx ok <n> sum=<hex>".
+ * Puts the tty in raw mode, prints "RXREADY", reads exactly N bytes in 4096-byte blocks and
+ * answers every block with one ACK byte (0x06) so the sender cannot overrun the tty buffers,
+ * writes them to <path>, restores the tty and prints "rx ok <n> sum=<hex>".
  * build: clang --target=aarch64-linux-gnu -nostdlib -static -O2 -fuse-ld=lld \
  *              -fno-stack-protector -fno-builtin -o rxfile tools/miniroot/rxfile.c
  */
@@ -84,16 +85,21 @@ void main2(long *sp)
 	sc(SYS_ioctl, 0, TCSETS, (long)&raw);
 	say("RXREADY\n");
 	while (got < total) {
-		u64 want = total - got > sizeof(buf) ? sizeof(buf) : total - got;
+		u64 want = total - got > 4096 ? 4096 : total - got, have = 0;
 
-		r = sc(SYS_read, 0, (long)buf, want);
-		if (r <= 0)
-			break;
-		for (i = 0; i < r; i++)
+		while (have < want) {
+			r = sc(SYS_read, 0, (long)buf + have, want - have);
+			if (r <= 0)
+				goto out;
+			have += r;
+		}
+		for (i = 0; i < (long)have; i++)
 			sum += buf[i];
-		sc(SYS_write, fd, (long)buf, r);
-		got += r;
+		sc(SYS_write, fd, (long)buf, have);
+		got += have;
+		sc(SYS_write, 1, (long)"\006", 1);
 	}
+out:
 	sc(SYS_close, fd, 0, 0);
 	sc(SYS_ioctl, 0, TCSETS, (long)&old);
 	say("\nrx ok ");
