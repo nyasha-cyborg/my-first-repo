@@ -1,0 +1,18 @@
+#!/sbin/openrc-run
+# Nexus 9 LTE modem bring-up (HSIC, MDM9x25).  Install as /etc/init.d/n9-modem.
+# Needs /usr/lib/n9-modem/{modem-gpio-min,sahara,mdm-boot.sh,mdm-data.sh} and the firmware images in
+# /lib/firmware/n9-modem (see tools/rootfs/provision-modem-fw.sh).  Never writes any partition.
+description="Boot the LTE modem (Sahara) and expose QMI (cdc-wdm)"
+depend() { need localmount; after modules; }
+start() {
+	ebegin "Booting the LTE modem"
+	modprobe qmi_wwan 2>/dev/null
+	FW=/lib/firmware/n9-modem DSP1=/lib/firmware/n9-modem/dsp1.mbn \
+		/usr/lib/n9-modem/mdm-boot.sh > /run/mdm-boot.log 2>&1
+	eend $? "see /run/mdm-boot.log"
+}
+stop() {
+	ebegin "Stopping the LTE modem"
+	pkill modem-gpio-min
+	eend 0
+}

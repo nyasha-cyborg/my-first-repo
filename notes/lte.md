@@ -603,3 +603,9 @@ ModemManager/oFono + wwan0 data path, (4) cleanup/upstreamable HSIC PHY patches.
 - Restart without reboot also works (`tools/lte-retry.sh`): `qcserial` must NOT be loaded (it claims the 9008).
 - One unexplained tablet hang + watchdog reset while running a long foreground n9sh command; the same steps run
   fine as a background service polled from the host.
+
+## 2026-10-23 04:20 — rootfs packaging drafts
+
+`tools/rootfs/n9-modem.initd` (OpenRC service running `mdm-boot.sh`) and `tools/rootfs/provision-modem-fw.sh`
+(extracts the modem images from the official volantisg zip into /lib/firmware/n9-modem). Untested in a
+real rootfs (the test image is a ramdisk); paths differ from the test image only by FW/DSP1 variables.
