@@ -49,3 +49,59 @@ Started 2026-10-22. Nothing here has been tried on mainline yet.
 - REA `qcom_usb_modem_power` (GPIO order, delays) in the Android kernel Image with
   the kallsyms recovery from `stability-debug.md`.
 - Check the DTS for an existing HSIC/modem node and `tegra-ehci.2` equivalent.
+
+
+## 2026-10-22 18:30 — REA of the Android kernel modem driver (`qcom_usb_modem_power`)
+
+Artifact: running Android kernel Image, symbols via the kallsyms recovery
+(`stability-debug.md`); windows `mdm.elf` 0xffffffc0004db940-0xffffffc0004df000
+(driver), `mdmpow.elf` 0xffffffc0000a2700-0xffffffc0000a3000 (board power
+helpers), `mdmboard.elf` 0xffffffc000df2d00-0xffffffc000df3500 (board init).
+
+**Registration is conditional.** `flounder_mdm_9k_init` only registers the
+`qcom_usb_modem_power` platform device when `is_mdm_modem()` (= `get_modem_sku()`
+is 1 or 2) is true; `set_radio_image_status` parses a `T1.xx` radio-image string.
+Platform data is not in the DT (the stock DT has only the rails `vdd_5v0_mdm`,
+`vddio_hsic`, `avdd_hsic_com`, `avdd_hsic_mdm`): the GPIO numbers come from board
+code. The Android debugfs GPIO names give the numbers (see the table above).
+
+**Platform-data layout** (offsets into the pdata the driver reads; mapping
+inferred from which IRQ thread / GPIO helper uses each field):
+
+| pdata off | role | GPIO |
+|---|---|---|
+| +0x18 | MDM2AP_ERRFATAL (irq, `errfatal_thread`) | 168 |
+| +0x1c | AP2MDM_ERRFATAL | 115 |
+| +0x20 | MDM2AP_STATUS (irq, `status_thread`) | 150 |
+| +0x24 | AP2MDM_STATUS | 114 |
+| +0x28 | MDM2AP_WAKEUP (irq, `wake_thread`) | 149 |
+| +0x2c | AP2MDM_WAKEUP | 113 |
+| +0x30 | MDM2AP_VDD_MIN (irq) | 226 |
+| +0x38 | MDM2AP_HSIC_READY (irq) | 169 |
+| +0x3c | AP2MDM_PMIC_RESET_N | 221 |
+| +0x48 | MDM2AP_IPC3 (irq) | 144 |
+
+(offsets +0x34/+0x40/+0x44/+0x4c = AP2MDM_VDD_MIN 118, IPC1 116, CHNL_RDY_CPU 135
+not confirmed.)
+
+**Power-on (`modem_power_on`)**: AP2MDM_WAKEUP = 0; AP2MDM_PMIC_RESET_N = 0;
+sleep 5-10 ms; PMIC_RESET_N = 1; wait 40; AP2MDM_STATUS = 1; wait 40; wait 200.
+(The wait helper's unit was not resolved; likely ms.)
+**Power-down (`modem_power_down`)**: PMIC_RESET_N = 0; wait 4000.
+**Subsystem powerup (`mdm_subsys_powerup`)**: AP2MDM_ERRFATAL = 0, AP2MDM_STATUS = 1,
+then waits up to 60 s for the modem to report status (`MDM2AP_STATUS`) and later
+`MDM2AP_HSIC_READY`; on ready the driver loads the HSIC host
+(`tegra_usb_host_load` / `tegra_usb_host_reset`) and raises CPU frequency
+(`cpu_freq_boost`) during enumeration. Panic/errfatal handlers reset the modem.
+
+Implications for mainline: the electrical bring-up is small (6-8 GPIOs and the
+rails); the hard part is still the userspace firmware boot (`ks_bridge` /
+Sahara) and having the modem images. Open: who enables `vdd_5v0_mdm`, and the
+HSIC pad/PHY setup in mainline Tegra124/132 (`tegra-ehci.2`).
+
+**Raw partition reads were blocked** by the permission classifier (`dd` of
+`MD1`/`MD2`/`WDM` from the device); not worked around. Needs the user's explicit
+go-ahead; EF1/EF2 (IMEI/EFS) must never be copied.
+**Official downloads**: Google's developer pages list only a generic AOSP
+flounder image (`aosp_flounder-img-3458595-*.zip`, no radio); the Nexus 9
+factory images are no longer on the public factory page.
