@@ -569,3 +569,23 @@ faster serial pushes (16 KB blocks with ACK: dsp1 44 MB in 4-8 s, blob 17.8 MB i
 - Open: which interface is the EFS server port (stock `efsks` talks to it, saves the modem's EFS back to
   EF1/EF2 -- we must NOT write the partitions), load qcserial/option/qmi_wwan(/cdc-wdm) for these interfaces,
   `modem_nv_write_done` = pulse of the gpio at pdata+0x40 (IPC1?) after the EFS sync.
+
+## 2026-10-23 03:10 — MILESTONE 3: QMI works on mainline (modem reports model/firmware/IMEI)
+
+`lte-run18` (image `n9hsicH2`: kernel `gcb8985407c88` with `qmi_wwan`, `cdc-wdm`, `qcserial` as modules)
++ `tools/miniroot/qmiraw.c` (raw QMUX over cdc-wdm) + `tools/qmi-probe.py` (host driver):
+- `modprobe qmi_wwan` before the re-enumeration -> after the `authorized` toggle the 9048 device gets
+  `cdc-wdm0..4` / `wwan0..4` (QMI interfaces 4-8). Modem stable (>3 min, ERRFATAL=0, never HSIC_READY).
+- CTL: the modem sends a SYNC indication and answers GET_VERSION_INFO with the service table
+  (CTL, WDS, DMS, NAS, UIM, ... 0x2b, 0x30, 0xe5).
+- DMS: manufacturer `QUALCOMM INCORPORATED`, revision `0.09.30.0105`, model "0", a valid IMEI (so the real
+  per-unit EFS/NV blob works; IMEI is NOT recorded in the repo), operating mode value 5.
+- UIM card status: card state "error"/no card (probably no SIM inserted), NAS: not registered
+  (searching), signal -128. Radio was not switched online (no SIM; left to the user).
+Per-boot recipe (all scripted, ~4 min): `tools/lte-sahara-test.sh` (reboot test image, power modem, push
+dsp1 + blob over serial at ~5 MB/s, Sahara all stages, auto-wake on STATUS=1, `usb1/authorized` toggle,
+modprobe qmi_wwan). Remaining for a usable LTE tablet: (1) turn the cycle into a proper boot service in the
+real rootfs (init script running power sequence + a Sahara loader reading the images from
+/lib/firmware or the stock vendor image + the EFS/RCA data read from the partitions at boot),
+(2) EFS write-back (stock `efsks` saves the modem's EFS to EF1/EF2/EF3; we do not write), (3) SIM +
+ModemManager/oFono + wwan0 data path, (4) cleanup/upstreamable HSIC PHY patches.
