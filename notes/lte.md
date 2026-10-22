@@ -659,3 +659,19 @@ real rootfs (the test image is a ramdisk); paths differ from the test image only
 - Next: after recovery rerun `lte-service-test.sh`, `--setapn wapaccess.co.nz` *before* `--online` (avoid the
   mode switch storm), wait 45 s, `--sysinfo`; if attached, `--wds wapaccess.co.nz` then DHCP on wwan0 (raw-ip).
   Persistent fix for the rootfs: set profile 1 at every modem boot (or ModemManager's initial-EPS-bearer APN).
+
+## 2026-10-23 10:45 — MILESTONE 5: registered on Spark LTE, data call connected (Skinny SIM)
+
+- Fix confirmed: rewrite 3GPP profile 1 (attach PDN) from Verizon `VZWIMS` to `wapaccess.co.nz` / IPv4 **while the modem is
+  still in low power (oper. mode 5) right after boot**, then `--online`. No extra radio cycle needed.
+  Sequence: `lte-service-test.sh` -> `qmi-probe.py --setapn wapaccess.co.nz` -> `--online` -> 45 s -> `--sysinfo --wds wapaccess.co.nz`.
+- After 45 s: serving system `01 01 01 02 01 08` = **registered, CS attached, PS attached**, LTE; PLMN 530-05 (network name TLV
+  present), LTE sys info srv_status 2 (full service), cell id valid.
+- WDS START_NETWORK (APN wapaccess.co.nz, IPv4): result 0, packet data handle 0x04046b10; GET_PKT_SRVC_STATUS = 2 (connected).
+- `qmi-probe.py` releases the WDS client at exit, which ends the call: the IP path needs the client kept (or WDS autoconnect).
+- Service test: dsp1 parts now retried up to 3x (`n9push.py` exit status checked; the old `| tail -1` hid failures). The
+  serial console stalled twice this session (after a low-power/online cycle and mid dsp1 push), each time followed by a
+  watchdog reset to Android within ~3-5 min.
+- Rootfs: the boot service must set profile 1's APN before going online (per SIM; or let ModemManager set the initial EPS
+  bearer APN). The stock EFS is a Verizon carrier config (rcdata/CNV), so other profiles stay VZW.
+- Next: keep the WDS client, WDS GET_RUNTIME_SETTINGS (IP/gw/DNS), bring up wwan0 (802.3 + DHCP, or raw_ip + static), ping.

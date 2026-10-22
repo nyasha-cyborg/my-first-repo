@@ -14,7 +14,19 @@ fi
 # a single 44 MB push hangs the tablet at ~30 MB (2026-10-23): push 8 MB parts and join them on the tablet
 echo "== push dsp1.mbn (8 MB parts)"; mkdir -p /tmp/n9build/dsp1parts; rm -f /tmp/n9build/dsp1parts/*
 split -b 8388608 -d "$HOME/Downloads/nexus9/google-volantisg-n4f27p/vendor-files/mdm/image/dsp1.mbn" /tmp/n9build/dsp1parts/p
-for f in /tmp/n9build/dsp1parts/p*; do python3 -I "$HERE/n9push.py" "$f" /tmp/$(basename "$f") | tail -1; done
+# each part: up to 3 tries (a checksum mismatch or missing ACK happens now and then), short pause between parts
+for f in /tmp/n9build/dsp1parts/p*; do
+	ok=
+	for try in 1 2 3; do
+		python3 -I "$HERE/n9push.py" "$f" /tmp/$(basename "$f") > /tmp/n9build/push.out 2>&1; rc=$?
+		tail -1 /tmp/n9build/push.out
+		[ $rc = 0 ] && { ok=1; break; }
+		echo "retry $(basename "$f") ($try)"; sleep 5
+		"$HERE/n9sh.sh" 'echo alive' 10 | grep -q alive || sleep 20
+	done
+	[ -n "$ok" ] || { echo "push of $(basename "$f") failed 3 times, giving up"; exit 1; }
+	sleep 2
+done
 "$HERE/n9sh.sh" 'cat /tmp/p?? > /tmp/dsp1.mbn; rm /tmp/p??; sha256sum /tmp/dsp1.mbn | cut -c1-16' 30
 sha256sum "$HOME/Downloads/nexus9/google-volantisg-n4f27p/vendor-files/mdm/image/dsp1.mbn" | cut -c1-16
 clang --target=aarch64-linux-gnu -nostdlib -static -O2 -fuse-ld=lld -fno-stack-protector -fno-builtin -o /tmp/n9build/qmiraw "$HERE/miniroot/qmiraw.c"

@@ -100,9 +100,10 @@ if "--setapn" in sys.argv:
     apn = sys.argv[sys.argv.index("--setapn") + 1].encode()
     (r, t) = req(1, cWDS, 0x28, bytes([1, 2, 0, 0, 1, 0x14, len(apn), 0]) + apn + bytes([0x11, 1, 0, 0]))
     print("WDS modify profile 1 -> apn %s IPv4:" % apn.decode(), r, {hex(k): v.hex() for k, v in t.items() if k != 2})
-    (r, t) = req(2, cDMS, 0x2e, bytes([1, 1, 0, 1])); print("set low power:", r)
-    import time; time.sleep(3)
-    (r, t) = req(2, cDMS, 0x2e, bytes([1, 1, 0, 0])); print("set online  :", r)
+    if "--cycle" in sys.argv:     # re-trigger attach on an already online modem (the console stalled after this once)
+        (r, t) = req(2, cDMS, 0x2e, bytes([1, 1, 0, 1])); print("set low power:", r)
+        import time; time.sleep(3)
+        (r, t) = req(2, cDMS, 0x2e, bytes([1, 1, 0, 0])); print("set online  :", r)
 
 if "--profiles" in sys.argv:
     # WDS default profile (0x49), profile list (0x2a), settings of each 3GPP profile (0x2b); read only
