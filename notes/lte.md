@@ -193,3 +193,24 @@ Revised kernel work list for LTE: (1) DT: HSIC lane + rails, (2) new UHSIC ops i
 `phy-tegra-usb.c`, (3) modem GPIO sequence (tiny driver or `gpio-hog` +
 userspace script), (4) firmware download. (1) and (3) are small, (2) is moderate,
 (4) is the unknown.
+
+## 2026-10-22 18:30 (device time 05:30) — FIRST HARDWARE RESULT: the modem answers
+
+Tool `tools/miniroot/modem-gpio-min` (gpio chardev v2, freestanding; modes `read`,
+`on [secs]`, `hold`), image `n9modemA` (kernel g5d830bfca033). Rails already on in
+mainline: `vdd-out2-5v0` 5 V (the `vdd_5v0_mdm` consumer), `avdd-dsi-csi` 1.2 V
+(feeds `vddio_hsic`, `avdd_hsic_com`, `avdd_hsic_mdm`).
+
+- Before: all MDM2AP_* inputs low (STATUS/HSIC_READY/ERRFATAL/WAKEUP/IPC3/VDD_MIN = 0).
+- Ran the vendor sequence (all AP2MDM outputs low; PMIC_RESET_N low 10 ms -> high;
+  40 ms; AP2MDM_STATUS high; 240 ms): **MDM2AP_HSIC_READY = 1 within 1 s and stayed 1
+  for the 30 s watch, and still 1 after the tool exited and released the lines**.
+  MDM2AP_STATUS stayed 0, no ERRFATAL.
+- Interpretation: a modem is fitted and powers up; it signals "HSIC ready" (its HSIC
+  PHY/boot ROM is up) but never reports STATUS (= software booted), consistent with a
+  Qualcomm boot ROM waiting for the firmware download over HSIC (QDL/Sahara,
+  `boot_hsic` driver in the Android kernel). So the next barrier is the AP-side HSIC
+  host: `usb@7d008000` needs the missing UHSIC PHY support to see the modem as a USB
+  device (expected: `05c6:9008`-style download mode).
+- Safe state: nothing written to storage; the modem stays powered until a reset or
+  power-cycle (HSIC_READY still high after the tool exited).
