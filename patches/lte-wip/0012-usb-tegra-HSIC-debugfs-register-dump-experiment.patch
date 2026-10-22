@@ -1,0 +1,63 @@
+From 6bf84f838a1d7766f814f81a8bda484712c3414f Mon Sep 17 00:00:00 2001
+From: nyasha <nmushambi@proton.me>
+Date: Thu, 22 Oct 2026 21:21:25 +1300
+Subject: [PATCH] usb: tegra HSIC: debugfs register dump (experiment)
+
+---
+ drivers/usb/phy/phy-tegra-usb.c | 26 ++++++++++++++++++++++++++
+ 1 file changed, 26 insertions(+)
+
+diff --git a/drivers/usb/phy/phy-tegra-usb.c b/drivers/usb/phy/phy-tegra-usb.c
+index 62ff209dc..919096d7d 100644
+--- a/drivers/usb/phy/phy-tegra-usb.c
++++ b/drivers/usb/phy/phy-tegra-usb.c
+@@ -23,6 +23,8 @@
+ #include <linux/spinlock.h>
+ 
+ #include <linux/regulator/consumer.h>
++#include <linux/debugfs.h>
++#include <linux/seq_file.h>
+ 
+ #include <linux/usb/ehci_def.h>
+ #include <linux/usb/of.h>
+@@ -1448,6 +1450,26 @@ static const struct of_device_id tegra_usb_phy_id_table[] = {
+ };
+ MODULE_DEVICE_TABLE(of, tegra_usb_phy_id_table);
+ 
++
++static int hsic_regs_show(struct seq_file *m, void *unused)
++{
++	struct tegra_usb_phy *phy = m->private;
++	void __iomem *b = phy->regs;
++	static const unsigned int offs[] = {
++		0x130, 0x134, 0x138, 0x144, 0x148, 0x154, 0x174, 0x1b4, 0x1f8,
++		0x400, 0x498, 0xc04, 0xc08, 0xc0c, 0xc10, 0xc14, 0xc18, 0xc1c,
++		0xc20, 0xc24, 0xc28, 0xc2c, 0xc30, 0xc34,
++	};
++	unsigned int i;
++
++	if (!phy->powered_on)
++		return -ENODEV;
++	for (i = 0; i < ARRAY_SIZE(offs); i++)
++		seq_printf(m, "%03x: %08x\n", offs[i], readl_relaxed(b + offs[i]));
++	return 0;
++}
++DEFINE_SHOW_ATTRIBUTE(hsic_regs);
++
+ static int tegra_usb_phy_probe(struct platform_device *pdev)
+ {
+ 	struct device_node *np = pdev->dev.of_node;
+@@ -1610,6 +1632,10 @@ static int tegra_usb_phy_probe(struct platform_device *pdev)
+ 
+ 	platform_set_drvdata(pdev, tegra_phy);
+ 
++	if (tegra_phy->is_hsic_phy)
++		debugfs_create_file("tegra-hsic-regs", 0444, NULL, tegra_phy,
++				    &hsic_regs_fops);
++
+ 	return usb_add_phy_dev(&tegra_phy->u_phy);
+ }
+ 
+-- 
+2.56.0
+

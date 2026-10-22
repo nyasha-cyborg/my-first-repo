@@ -1,0 +1,55 @@
+From e55d3764cdbabf44c55062be5da8f7aa6d7f17ea Mon Sep 17 00:00:00 2001
+From: nyasha <nmushambi@proton.me>
+Date: Thu, 22 Oct 2026 21:23:33 +1300
+Subject: [PATCH] usb: tegra HSIC: re-apply the vendor port-power writes after
+ controller reset
+
+---
+ drivers/usb/phy/phy-tegra-usb.c | 23 ++++++++++++++++++++++-
+ 1 file changed, 22 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/usb/phy/phy-tegra-usb.c b/drivers/usb/phy/phy-tegra-usb.c
+index 919096d7d..5953da36b 100644
+--- a/drivers/usb/phy/phy-tegra-usb.c
++++ b/drivers/usb/phy/phy-tegra-usb.c
+@@ -871,6 +871,24 @@ static int hsic_phy_power_on(struct tegra_usb_phy *phy)
+ 	return err;
+ }
+ 
++/*
++ * What the vendor driver does every time the port gets power
++ * (uhsic_phy_bus_port_power): the controller reset done by the chipidea core
++ * clears DEVLC bit 26, which has to be set again for HSIC.
++ */
++static void hsic_phy_port_power(struct tegra_usb_phy *phy)
++{
++	void __iomem *base = phy->regs;
++	u32 val;
++
++	hsic_rmw(base, TEGRA_USB_USBMODE, 0, 3);
++	val = readl_relaxed(base + TEGRA_USB_HOSTPC1_DEVLC);
++	writel_relaxed((val & 0x19ffffff) | 0x84000000,
++		       base + TEGRA_USB_HOSTPC1_DEVLC);
++	hsic_rmw(base, UHSIC_MISC_CFG0, 0, UHSIC_MISC_CFG0_PORT_POWER);
++	udelay(1);
++}
++
+ static int hsic_phy_power_off(struct tegra_usb_phy *phy)
+ {
+ 	void __iomem *base = phy->regs;
+@@ -1129,8 +1147,11 @@ static int tegra_usb_phy_set_suspend(struct usb_phy *u_phy, int suspend)
+ 	 * transitions: that resets the link in the middle of the hub's
+ 	 * enumeration (the vendor driver has a dedicated resume path instead).
+ 	 */
+-	if (phy->is_hsic_phy)
++	if (phy->is_hsic_phy) {
++		if (!suspend)
++			hsic_phy_port_power(phy);
+ 		return 0;
++	}
+ 
+ 	/*
+ 	 * PHY is sharing IRQ with the CI driver, hence here we either
+-- 
+2.56.0
+

@@ -1,0 +1,89 @@
+From 2bd7d62a848424de422b42ddfc49e11780b1286a Mon Sep 17 00:00:00 2001
+From: nyasha <nmushambi@proton.me>
+Date: Thu, 22 Oct 2026 21:33:49 +1300
+Subject: [PATCH] usb: tegra HSIC: enable the PLL_U 480 MHz gate (pll_u_480m)
+ the HSIC logic runs from
+
+---
+ arch/arm64/boot/dts/nvidia/tegra132-flounder.dts |  5 +++++
+ drivers/usb/phy/phy-tegra-usb.c                  | 14 ++++++++++++++
+ include/linux/usb/tegra_usb_phy.h                |  1 +
+ 3 files changed, 20 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts b/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
+index bb958a528..5a0265828 100644
+--- a/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
++++ b/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
+@@ -1658,6 +1658,11 @@ pllx_throttle_trip {
+ 
+ &phy3 {
+ 	status = "okay";
++	clocks = <&tegra_car TEGRA124_CLK_USB3>,
++		 <&tegra_car TEGRA124_CLK_PLL_U>,
++		 <&tegra_car TEGRA124_CLK_USBD>,
++		 <&tegra_car TEGRA124_CLK_PLL_U_480M>;
++	clock-names = "reg", "pll_u", "utmi-pads", "pll_u_480m";
+ 	phy_type = "hsic";
+ 	/* The vendor EHCI HSIC path never touches the XUSB padctl HSIC pad
+ 	 * (the UHSIC block in the controller drives the pad), so no phys. */
+diff --git a/drivers/usb/phy/phy-tegra-usb.c b/drivers/usb/phy/phy-tegra-usb.c
+index 20c2e32fb..bcaa0d96b 100644
+--- a/drivers/usb/phy/phy-tegra-usb.c
++++ b/drivers/usb/phy/phy-tegra-usb.c
+@@ -1064,6 +1064,7 @@ static void tegra_usb_phy_shutdown(struct usb_phy *u_phy)
+ 		utmip_pad_close(phy);
+ 
+ 	regulator_disable(phy->vbus);
++	clk_disable_unprepare(phy->pll_u_480m);
+ 	clk_disable_unprepare(phy->pll_u);
+ 
+ 	phy->freq = NULL;
+@@ -1237,6 +1238,12 @@ static int tegra_usb_phy_init(struct usb_phy *u_phy)
+ 	if (err)
+ 		return err;
+ 
++	if (phy->pll_u_480m) {
++		err = clk_prepare_enable(phy->pll_u_480m);
++		if (err)
++			goto disable_clk;
++	}
++
+ 	dev_info(phy->u_phy.dev, "n9: phy step rate\n");
+ 	parent_rate = clk_get_rate(clk_get_parent(phy->pll_u));
+ 	for (i = 0; i < ARRAY_SIZE(tegra_freq_table); i++) {
+@@ -1289,6 +1296,7 @@ static int tegra_usb_phy_init(struct usb_phy *u_phy)
+ 	regulator_disable(phy->vbus);
+ 
+ disable_clk:
++	clk_disable_unprepare(phy->pll_u_480m);
+ 	clk_disable_unprepare(phy->pll_u);
+ 
+ 	phy->freq = NULL;
+@@ -1617,6 +1625,12 @@ static int tegra_usb_phy_probe(struct platform_device *pdev)
+ 	case USBPHY_INTERFACE_MODE_HSIC:
+ 		tegra_phy->is_hsic_phy = true;
+ 
++		/* the HSIC logic runs from the PLL_U 480 MHz output (separate gate) */
++		tegra_phy->pll_u_480m = devm_clk_get_optional(&pdev->dev, "pll_u_480m");
++		if (IS_ERR(tegra_phy->pll_u_480m))
++			return dev_err_probe(&pdev->dev, PTR_ERR(tegra_phy->pll_u_480m),
++					     "Failed to get pll_u_480m clock\n");
++
+ 		tegra_phy->hsic_pad = devm_phy_optional_get(&pdev->dev, "hsic");
+ 		if (IS_ERR(tegra_phy->hsic_pad))
+ 			return dev_err_probe(&pdev->dev,
+diff --git a/include/linux/usb/tegra_usb_phy.h b/include/linux/usb/tegra_usb_phy.h
+index 48c24c550..8c650272c 100644
+--- a/include/linux/usb/tegra_usb_phy.h
++++ b/include/linux/usb/tegra_usb_phy.h
+@@ -77,6 +77,7 @@ struct tegra_usb_phy {
+ 	bool is_hsic_phy;
+ 	struct phy *hsic_pad;
+ 	struct phy *hsic_pad2;
++	struct clk *pll_u_480m;
+ 	struct gpio_desc *reset_gpio;
+ 	struct reset_control *pad_rst;
+ 	bool wakeup_enabled;
+-- 
+2.56.0
+

@@ -1,0 +1,71 @@
+From 6e8a4d2830adbfbde47962d237e2d52357ac73d1 Mon Sep 17 00:00:00 2001
+From: nyasha <nmushambi@proton.me>
+Date: Thu, 22 Oct 2026 21:25:27 +1300
+Subject: [PATCH] usb: tegra HSIC: debugfs poke + port power trace (experiment)
+
+---
+ drivers/usb/phy/phy-tegra-usb.c | 34 +++++++++++++++++++++++++++++++++
+ 1 file changed, 34 insertions(+)
+
+diff --git a/drivers/usb/phy/phy-tegra-usb.c b/drivers/usb/phy/phy-tegra-usb.c
+index 5953da36b..20c2e32fb 100644
+--- a/drivers/usb/phy/phy-tegra-usb.c
++++ b/drivers/usb/phy/phy-tegra-usb.c
+@@ -887,6 +887,8 @@ static void hsic_phy_port_power(struct tegra_usb_phy *phy)
+ 		       base + TEGRA_USB_HOSTPC1_DEVLC);
+ 	hsic_rmw(base, UHSIC_MISC_CFG0, 0, UHSIC_MISC_CFG0_PORT_POWER);
+ 	udelay(1);
++	dev_info(phy->u_phy.dev, "n9: hsic port power: devlc %08x -> %08x\n",
++		 val, readl_relaxed(base + TEGRA_USB_HOSTPC1_DEVLC));
+ }
+ 
+ static int hsic_phy_power_off(struct tegra_usb_phy *phy)
+@@ -1491,6 +1493,35 @@ static int hsic_regs_show(struct seq_file *m, void *unused)
+ }
+ DEFINE_SHOW_ATTRIBUTE(hsic_regs);
+ 
++static ssize_t hsic_poke_write(struct file *file, const char __user *ubuf,
++			       size_t len, loff_t *ppos)
++{
++	struct tegra_usb_phy *phy = file->private_data;
++	unsigned int off, set, clear;
++	char buf[64];
++
++	if (len >= sizeof(buf))
++		return -EINVAL;
++	if (copy_from_user(buf, ubuf, len))
++		return -EFAULT;
++	buf[len] = 0;
++	/* "<hex offset> <hex bits to set> [<hex bits to clear>]" */
++	clear = 0;
++	if (sscanf(buf, "%x %x %x", &off, &set, &clear) < 2 || off > 0xfff)
++		return -EINVAL;
++	if (!phy->powered_on)
++		return -ENODEV;
++	hsic_rmw(phy->regs, off, clear, set);
++	dev_info(phy->u_phy.dev, "n9: poke %03x set %08x clear %08x -> %08x\n",
++		 off, set, clear, readl_relaxed(phy->regs + off));
++	return len;
++}
++
++static const struct file_operations hsic_poke_fops = {
++	.open = simple_open,
++	.write = hsic_poke_write,
++};
++
+ static int tegra_usb_phy_probe(struct platform_device *pdev)
+ {
+ 	struct device_node *np = pdev->dev.of_node;
+@@ -1656,6 +1687,9 @@ static int tegra_usb_phy_probe(struct platform_device *pdev)
+ 	if (tegra_phy->is_hsic_phy)
+ 		debugfs_create_file("tegra-hsic-regs", 0444, NULL, tegra_phy,
+ 				    &hsic_regs_fops);
++	if (tegra_phy->is_hsic_phy)
++		debugfs_create_file("tegra-hsic-poke", 0200, NULL, tegra_phy,
++				    &hsic_poke_fops);
+ 
+ 	return usb_add_phy_dev(&tegra_phy->u_phy);
+ }
+-- 
+2.56.0
+

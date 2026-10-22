@@ -22,3 +22,12 @@ power_off/power_on on every LPM transition; fixing it did not cure -71) and an
 alternative route: HSIC lanes handed to the **xHCI** controller (`usb@70090000`,
 `nvidia,function = "xusb"`, firmware `nvidia/tegra124/xusb.bin` from linux-firmware,
 uncompressed into the ramdisk). Image `n9xhciA`, kernel `g8b0d00cb9ee1`.
+
+Patches 0010-0016 (later experiments, all still ending in -71): revert of the xHCI DT
+route (0010), EHCI HSIC without the xusb pad PHY (0011), debugfs register dump / poke
+(0012, 0014), re-applying the vendor port-power writes after the controller reset
+(0013), chipidea Tegra HSIC port-power hook (0015), PLL_U 480 MHz gate (0016).
+A vendor force-enable-HS (PORTSC PTC=5) experiment was committed and reverted again
+(no effect). Key result in `notes/lte.md` (2026-10-22 21:55): with the modem **off** the
+EHCI port shows the same phantom connect and the same -71, so the connect is produced by
+the controller's own pad pulls, not by the modem.

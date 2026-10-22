@@ -1,0 +1,32 @@
+From f60b3a33e1c59b2f47e2b9d6ed4278fd883981a0 Mon Sep 17 00:00:00 2001
+From: nyasha <nmushambi@proton.me>
+Date: Thu, 22 Oct 2026 21:27:57 +1300
+Subject: [PATCH] usb: chipidea tegra: HSIC port-power hook on
+ SetPortFeature(POWER/RESET)
+
+---
+ drivers/usb/chipidea/ci_hdrc_tegra.c | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/drivers/usb/chipidea/ci_hdrc_tegra.c b/drivers/usb/chipidea/ci_hdrc_tegra.c
+index d60f0a937..b6d74a8b5 100644
+--- a/drivers/usb/chipidea/ci_hdrc_tegra.c
++++ b/drivers/usb/chipidea/ci_hdrc_tegra.c
+@@ -470,6 +470,14 @@ static int tegra_ehci_hub_control(struct ci_hdrc *ci, u16 typeReq, u16 wValue,
+ 
+ 	switch (typeReq) {
+ 	case SetPortFeature:
++		/*
++		 * HSIC: the vendor driver runs the PHY's port-power hook (DEVLC bit 26 etc.,
++		 * lost on the controller reset) every time the hub powers or resets the port.
++		 */
++		if ((wValue == USB_PORT_FEAT_POWER || wValue == USB_PORT_FEAT_RESET) &&
++		    ci->platdata->phy_mode == USBPHY_INTERFACE_MODE_HSIC)
++			usb_phy_set_suspend(ci->usb_phy, 0);
++
+ 		if (wValue != USB_PORT_FEAT_RESET || !usb->needs_double_reset)
+ 			break;
+ 
+-- 
+2.56.0
+

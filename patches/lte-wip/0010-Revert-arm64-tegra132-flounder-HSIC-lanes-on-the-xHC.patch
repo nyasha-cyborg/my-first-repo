@@ -1,0 +1,87 @@
+From 67cac41fd1d2f4c0d1538830dd7f3d6430845217 Mon Sep 17 00:00:00 2001
+From: nyasha <nmushambi@proton.me>
+Date: Thu, 22 Oct 2026 21:19:24 +1300
+Subject: [PATCH] Revert "arm64: tegra132: flounder: HSIC lanes on the xHCI
+ controller (experiment)"
+
+This reverts commit 8b0d00cb9ee105a46bd5619dafa26991b32e626a.
+---
+ .../boot/dts/nvidia/tegra132-flounder.dts     | 33 +++----------------
+ 1 file changed, 4 insertions(+), 29 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts b/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
+index 7285965ed..ac4f8998d 100644
+--- a/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
++++ b/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
+@@ -1230,12 +1230,12 @@ hsic {
+ 
+ 				lanes {
+ 					hsic0: hsic-0 {
+-						nvidia,function = "xusb";
++						nvidia,function = "snps";
+ 						status = "okay";
+ 					};
+ 
+ 					hsic1: hsic-1 {
+-						nvidia,function = "xusb";
++						nvidia,function = "snps";
+ 						status = "okay";
+ 					};
+ 				};
+@@ -1249,14 +1249,6 @@ usb2-0 {
+ 				mode = "otg";
+ 				usb-role-switch;
+ 			};
+-
+-			hsic-0 {
+-				status = "okay";
+-			};
+-
+-			hsic-1 {
+-				status = "okay";
+-			};
+ 		};
+ 	};
+ 
+@@ -1266,28 +1258,11 @@ hsic-1 {
+ 	 * device to appear.
+ 	 */
+ 	usb@7d008000 {
+-		status = "disabled";
++		status = "okay";
+ 		dr_mode = "host";
+ 		phy_type = "hsic";
+ 	};
+ 
+-	/* The xHCI controller drives the HSIC lanes in the xusb experiment. */
+-	usb@70090000 {
+-		status = "okay";
+-
+-		phys = <&hsic0>, <&hsic1>;
+-		phy-names = "hsic-0", "hsic-1";
+-
+-		avddio-pex-supply = <&avdd_pll>;
+-		dvddio-pex-supply = <&avdd_pll>;
+-		avdd-usb-supply = <&avdd_usb>;
+-		hvdd-usb-ss-supply = <&avdd_usb>;
+-		avdd-pll-utmip-supply = <&vdd_1v8>;
+-		avdd-pll-erefe-supply = <&avdd_pll>;
+-		avdd-usb-ss-pll-supply = <&avdd_pll>;
+-		hvdd-usb-ss-pll-e-supply = <&avdd_usb>;
+-	};
+-
+ 	/* BT_REG_ON (PR1) and BT_WAKE (PEE1) belong to the bluetooth node
+ 	 * under serial@70006200; hci_bcm drives both. */
+ 
+@@ -1682,7 +1657,7 @@ pllx_throttle_trip {
+ 
+ 
+ &phy3 {
+-	status = "disabled";
++	status = "okay";
+ 	phy_type = "hsic";
+ 	phys = <&hsic1>, <&hsic0>;
+ 	phy-names = "hsic", "hsic2";
+-- 
+2.56.0
+

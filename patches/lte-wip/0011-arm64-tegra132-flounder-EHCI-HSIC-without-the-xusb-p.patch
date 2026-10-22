@@ -1,0 +1,26 @@
+From 10fe62a6da50dcdf46c47e2bcfea60a275a6af76 Mon Sep 17 00:00:00 2001
+From: nyasha <nmushambi@proton.me>
+Date: Thu, 22 Oct 2026 21:19:26 +1300
+Subject: [PATCH] arm64: tegra132: flounder: EHCI HSIC without the xusb pad PHY
+ (vendor does not use it)
+
+---
+ arch/arm64/boot/dts/nvidia/tegra132-flounder.dts | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts b/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
+index ac4f8998d..bb958a528 100644
+--- a/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
++++ b/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
+@@ -1659,6 +1659,6 @@ pllx_throttle_trip {
+ &phy3 {
+ 	status = "okay";
+ 	phy_type = "hsic";
+-	phys = <&hsic1>, <&hsic0>;
+-	phy-names = "hsic", "hsic2";
++	/* The vendor EHCI HSIC path never touches the XUSB padctl HSIC pad
++	 * (the UHSIC block in the controller drives the pad), so no phys. */
+ };
+-- 
+2.56.0
+
