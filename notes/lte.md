@@ -429,3 +429,29 @@ header at +256) and `vendor/bin/qcks` (strings; REA open_binary), kernel `mdm_mo
   the device under the *vendor* kernel (Android) to see whether the modem enumerates there
   (ground truth for the hardware). Risk: `efsks` talks to EF1/EF2 (modem NV/EFS); would
   only run the Sahara part without `efsks`.
+
+## 2026-10-22 23:40 — ROOT CAUSE OF THE WRONG-LINK CHASE: the modem is on USB2 (7d004000), not USB3
+
+Ran the vendor flow on the device under Android's own 3.10 kernel (user approved):
+`tools/miniroot/mdmwake` (static helper: open `/dev/mdm`, ioctl `WAKE_CHARM` = 0xcc01, hold),
+no images sent, no `efsks`, no EFS access. Kernel log:
+```
+[MDM]: mdm_modem_ioctl: Powering on mdm
+[MDM]: unload USB host / load USB host      <- tegra_usb_host_reset, tegra-ehci.1
+phy_interface: USB_PHY_INTF_HSIC
+tegra-ehci tegra-ehci.1: irq 53, io mem 0x7d004000     <- USB2 controller
+[MDM]: modem_power_on: Pulling RESET gpio low / high
+usb 2-1: new high-speed USB device number 2 using tegra-ehci
+usb 2-1: New USB device found, idVendor=05c6, idProduct=9008, Product: QHSUSB__BULK
+I: If#=0 Cls=ff Driver=ks_bridge  E: 81(I) bulk 512, 01(O) bulk 512
+```
+GPIOs at that point: AP2MDM_STATUS=1, PMIC_RESET_N=1, MDM2AP_HSIC_READY=1, MDM2AP_STATUS=0.
+=> The boot ROM enumerates fine as the Qualcomm Sahara/QDL device (9008) within 0.35 s of the
+reset release, **on `tegra-ehci.1` = `usb@7d004000` (phy2) in HSIC mode**. Vendor numbering:
+ehci.0 = 7d000000 (USB1), ehci.1 = 7d004000 (USB2, the modem; platform device is registered
+and reloaded by the mdm driver), ehci.2 = 7d008000 (USB3, idle root hub on bus 1).
+My earlier note "HSIC port = third EHCI instance tegra-ehci.2 = usb@7d008000 (phy3)" was
+WRONG; every HSIC experiment (pads, trims, PMC, force-HS, ...) was on a controller that has
+nothing connected, which is why the phantom connect and -71 were independent of the modem.
+Fix = move the HSIC setup in the flounder DT (and the test image) from `usb@7d008000`/`phy3` to
+`usb@7d004000`/`phy2`; the UHSIC register recipe is the same per controller (+0xc00).
