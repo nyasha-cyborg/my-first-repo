@@ -1,0 +1,1 @@
+./regdump.o

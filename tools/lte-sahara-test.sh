@@ -2,10 +2,10 @@
 # Full LTE bring-up test cycle (user-run: the classifier blocks the modem power-on / boot from
 # the assistant's tools).  Boots a test image that contains /bin/sahara and /fw/*.mbn,
 # powers the modem (vendor GPIO sequence), runs the Sahara loader and logs everything.
-#   usage: tools/lte-sahara-test.sh [image]       default: n9hsicV
+#   usage: tools/lte-sahara-test.sh [image]       default: n9hsicW
 # Log: /tmp/n9build/lte-sahara-test.txt     Nothing is flashed; no EFS partition is touched.
 HERE=$(dirname "$0")
-IMG=${1:-$HOME/Downloads/nexus9/bootimg-build/n9-mainline/n9hsicV-stripped.img}
+IMG=${1:-$HOME/Downloads/nexus9/bootimg-build/n9-mainline/n9hsicW-stripped.img}
 OUT=/tmp/n9build/lte-sahara-test.txt
 {
 echo "== back to Android"; "$HERE/n9sh.sh" 'reboot -f' 3 >/dev/null 2>&1; sleep 5
@@ -14,7 +14,7 @@ echo "== boot $IMG"; timeout 500 "$HERE/n9boot.sh" "$IMG" 2>&1 | tail -1
 echo "== power on the modem"; "$HERE/n9sh.sh" 'dmesg -c >/dev/null; (/bin/modem-gpio-min hold > /tmp/mdm.log 2>&1 &); sleep 9; tail -1 /tmp/mdm.log' 20
 echo "== usb"; "$HERE/n9sh.sh" 'mount -t debugfs none /sys/kernel/debug 2>/dev/null; dmesg | grep -E "usb 1-|descriptor" | cut -c1-120 | tail -5; cat /sys/bus/usb/devices/1-1/idVendor /sys/bus/usb/devices/1-1/idProduct /sys/bus/usb/devices/1-1/busnum /sys/bus/usb/devices/1-1/devnum 2>&1' 12
 echo "== sahara"
-"$HERE/n9sh.sh" 'B=$(cat /sys/bus/usb/devices/1-1/busnum); D=$(cat /sys/bus/usb/devices/1-1/devnum); N=$(printf "/dev/bus/usb/%03d/%03d" $B $D); echo node $N; (/bin/sahara $N 21:/fw/sbl1.mbn 23:/fw/rpm.mbn 25:/fw/tz.mbn 31:/fw/mba.mbn 6:/fw/apps.mbn 30:/fw/sdi.mbn 16:=zero 17:=zero > /tmp/sahara.log 2>&1 &); sleep 75; cat /tmp/sahara.log | grep -vE "^rx cmd=3" | tail -40; echo "reads: $(grep -c "^rx cmd=3" /tmp/sahara.log)"; grep "^rx cmd=3" /tmp/sahara.log | tail -3' 100
+"$HERE/n9sh.sh" 'B=$(cat /sys/bus/usb/devices/1-1/busnum); D=$(cat /sys/bus/usb/devices/1-1/devnum); N=$(printf "/dev/bus/usb/%03d/%03d" $B $D); echo node $N; (/bin/sahara $N 21:/fw/sbl1.mbn 23:/fw/rpm.mbn 25:/fw/tz.mbn 31:/fw/mba.mbn 6:/fw/apps.mbn 30:/fw/sdi.mbn 16:=zero 17:=zero 40:+/fw/htcssmem.mbn 42:+/fw/htcnvmfg.mbn 43:+/fw/htcrfnv.mbn 45:+/fw/htcuserd.mbn 46:+/fw/htccdma.mbn 44:+/fw/htccnv_a.mbn 47:+/fw/htccnv_t.mbn 48:+/fw/htccnv_v.mbn 49:+/fw/htccnv_s.mbn 55:+/fw/htccnv_u.mbn 56:+/fw/htccnv_o.mbn > /tmp/sahara.log 2>&1 &); sleep 75; cat /tmp/sahara.log | grep -vE "^rx cmd=3" | tail -40; echo "reads: $(grep -c "^rx cmd=3" /tmp/sahara.log)"; grep "^rx cmd=3" /tmp/sahara.log | tail -3' 100
 echo "== after"; "$HERE/n9sh.sh" 'dmesg | cut -c1-140 | tail -15; cat /sys/kernel/debug/usb/devices | grep -E "^(T|P|S):"; /bin/modem-gpio-min read 2>&1 | tail -1' 15
 echo flush
 } 2>&1 | tee "$OUT"

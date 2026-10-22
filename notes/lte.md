@@ -474,3 +474,25 @@ The PHY recipe that works is the already-committed UHSIC one (no force-HS, no PM
 -- PMC USB_AO release is vendor-conform and kept). Next: Sahara client (PBL asks for image
 ids; `ks -s id:file` list in the qcks notes above), `qcserial`/usbfs, firmware from
 `~/Downloads/nexus9/google-volantisg-n4f27p/vendor-files/mdm/image`.
+
+## 2026-10-23 00:10 — Sahara on mainline: stages 21,25,30,23,16,17 served; HTC NV images (REA of qcks)
+
+`tools/miniroot/sahara.c` (usbfs Sahara client) + `tools/lte-sahara-test.sh` (full cycle; runs with
+the user's permission rule for the scripts). Observed on mainline (kernel g7fd3d31d0c6f):
+- PBL: HELLO, id 21 (sbl1.mbn, 0x2a174 bytes in 0x1000 reads), END ok, DONE_RESP 0.
+- then one Sahara session per image on the same link: id 25 tz (ELF pieces), 30 sdi, 23 rpm,
+  16 EFS1, 17 EFS2 (answered with a blank image: modem accepts it, END status 0), then id 40.
+- id 40 with an all-zero image: `END_IMAGE_TRANSFER id=40 status=6` (header invalid).
+- REA of `qcks` FUN_00402284 ("EFS Prepend"): efs1.bin/efs2.bin = `dd` of the EF1/EF2 partitions
+  (0xc00 KiB each, never read by us); htc40/42/43/45/46 = [40-byte MBN header stub from
+  vendor/firmware/mdm/image/htc*.mbn] + data of the HTC combined partition at offsets
+  ssmem 0x0, NV_MFG 0x400, RF_NV 0xc00, USER_DATA 0x800, CDMA_RECORD (other partition) 0x0 (KiB);
+  htc44/47/48/49/55/56 = carrier CNV slots: `rcdata_<carrier>.img` dd'd into the partition at
+  seek 7168 KiB, then htccnv_<x>.mbn header + data at 0x1c00; `sbl1` variant chosen from the
+  mdm9k serial byte in /data/qcks/htcssmem.bin (sbl1.mbn / sbl1_82 / _96 / _92).
+- Stub headers (40 B, MBN v3): id 0x28 ssmem size 0x10000; 0x2a NV_MFG 0x80000; 0x2b RF_NV
+  0x40000; 0x2d USER_DATA 0x20000; 0x2e CDMA 0x20000; 0x2c/0x2f/0x30/0x31/0x37/0x38 CNV 0x100000.
+- Test mode (no tablet storage read): reply to these ids with the real stub header + zero payload
+  (blank NV, RAM-only in the modem; efsks is never run so nothing is written back to EF1/EF2).
+  Image `n9hsicW`. Real calibration/IMEI would need reading the tablet's HTC partition and
+  EF1/EF2: needs the user's explicit go-ahead.

@@ -4,6 +4,8 @@
  * Prints every packet it receives and serves READ_DATA/READ_DATA_64 requests from the files
  * by image id (the same id:file pairs the stock `ks -s` takes).  A path of "=zero" serves an
  * all-zero image (used for the modem EFS ids 16/17 so that no EF1/EF2 partition data is read).
+ * A path of "+stub" serves the (40-byte) header from the stub file followed by zeros (blank
+ * HTC NV partitions: valid MBN header, empty payload).
  * After DONE_RESP it keeps waiting for the next HELLO (the next boot stage) and exits when the
  * link stays silent for 20 s.  Nothing else is written
  * to the modem; no EFS partition is touched.
@@ -21,7 +23,7 @@
 #define USBDEVFS_BULK 0xc0185502UL
 #define EP_IN 0x81
 #define EP_OUT 0x01
-#define MAXIMG 16
+#define MAXIMG 40
 #define BUFSZ (4u << 20)
 
 typedef unsigned int u32;
@@ -103,6 +105,19 @@ static long load(int i)
 
 	if (img[i].size >= 0)
 		return img[i].size;
+	if (img[i].path[0] == '+') {
+		for (n = 0; n < BUFSZ; n++)
+			fbuf[n] = 0;
+		fd = sc(SYS_openat, AT_FDCWD, (long)img[i].path + 1, 0);
+		if (fd < 0)
+			die("cannot open stub header", fd);
+		n = sc(SYS_read, fd, (long)fbuf, 40);
+		sc(SYS_close, fd, 0, 0);
+		if (n != 40)
+			die("stub header is not 40 bytes", n);
+		img[i].size = BUFSZ;
+		return BUFSZ;
+	}
 	if (img[i].path[0] == '=') {
 		for (n = 0; n < BUFSZ; n++)
 			fbuf[n] = 0;

@@ -1,0 +1,1 @@
+savedcmd_bitbang.ko := ld.lld -r -EL  -maarch64elf -z norelro -z noexecstack --build-id=sha1  -T /home/nyasha/code/linux-flounder-out/scripts/module.lds -o bitbang.ko bitbang.o bitbang.mod.o .module-common.o
