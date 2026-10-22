@@ -10,7 +10,7 @@ import subprocess
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-DEV = sys.argv[1] if len(sys.argv) > 1 else "/dev/cdc-wdm0"
+DEV = next((a for a in sys.argv[1:] if a.startswith("/dev/")), "/dev/cdc-wdm0")
 txn = [0]
 
 
@@ -75,3 +75,16 @@ print("IDs         :", r, "IMEI %s...%s (masked)" % (imei[:4], imei[-2:]) if ime
 (r, t) = req(0x0b, cUIM, 0x2f); print("UIM card status:", r, t.get(0x10, b"?").hex()[:60])
 (r, t) = req(3, cNAS, 0x24); print("NAS serving system:", r, t.get(1, b"?").hex())
 (r, t) = req(3, cNAS, 0x20); print("NAS signal   :", r, t.get(1, b"?").hex())
+
+if "--online" in sys.argv:
+    # switch the radio on (DMS SET_OPERATING_MODE 0 = online) and look again after 15 s
+    import time
+    (r, t) = req(2, cDMS, 0x2e, bytes([1, 1, 0, 0])); print("set online  :", r)
+    time.sleep(15)
+    (r, t) = req(2, cDMS, 0x2d); print("oper. mode  :", r, t.get(1, b"?").hex())
+    (r, t) = req(3, cNAS, 0x24); print("NAS serving system:", r, t.get(1, b"?").hex())
+    (r, t) = req(3, cNAS, 0x20); print("NAS signal   :", r, t.get(1, b"?").hex())
+
+if "--lowpower" in sys.argv:
+    (r, t) = req(2, cDMS, 0x2e, bytes([1, 1, 0, 1])); print("set low power:", r)
+    (r, t) = req(2, cDMS, 0x2d); print("oper. mode  :", r, t.get(1, b"?").hex())
