@@ -8,3 +8,4 @@ boot.img
 bootloader.img
 *.dtb
 *.raw
+__pycache__/
