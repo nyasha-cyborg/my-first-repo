@@ -551,3 +551,21 @@ EFS. `MDM2AP_STATUS=1`, `HSIC_READY` stays 0, no USB device after a port power-c
 instead of +32 s). Real NV changes the timing but not the outcome: the modem OS still never
 raises HSIC_READY. Next: REA of the vendor `mdm_fatal` / errfatal / ramdump path and of what else
 `qcks` does after Sahara (NORMAL_BOOT_DONE, ioctls) to find what the AP owes the modem.
+
+## 2026-10-23 02:25 — MILESTONE 2: modem OS is stable and enumerates as 05c6:9048 (run 17)
+
+`lte-run17` (image `n9hsicG2`, kernel `g5489f179b56d`): real EFS/NV data (host-built blob) + the new
+`modem-gpio-min hold 4` (raises AP2MDM_WAKEUP as soon as MDM2AP_STATUS goes high, as the vendor
+board ops `modem_status_changed`/`modem_boot_done` do: REA of mdmpow.elf, gpio at pdata+0x2c) +
+faster serial pushes (16 KB blocks with ACK: dsp1 44 MB in 4-8 s, blob 17.8 MB in 2 s).
+- All Sahara stages status 0; STATUS=1 at t+28; **ERRFATAL stays 0 for the whole run (>120 s)**
+  (earlier: +32 s blank NV, +43..67 s real NV without the wake line).
+- HSIC_READY stays 0 (not needed). The host must re-enumerate: `echo 0/1 > usb1/authorized` (the
+  stale 05c6:9008 device object stays otherwise; PORTSC pokes had cleared the W1C change bits,
+  poke fixed in the kernel `g5489f179b56d`). After the toggle: `usb 1-1: new high-speed USB
+  device number 7`, **05c6:9048 "Qualcomm CDMA Technologies MSM"**, 1 config, 500 mA,
+  9 vendor-specific interfaces: 0-2 two bulk endpoints each (diag/modem/ks-efs), 3-8 three
+  endpoints each (bulk + interrupt: rmnet/QMI-style), no driver bound yet.
+- Open: which interface is the EFS server port (stock `efsks` talks to it, saves the modem's EFS back to
+  EF1/EF2 -- we must NOT write the partitions), load qcserial/option/qmi_wwan(/cdc-wdm) for these interfaces,
+  `modem_nv_write_done` = pulse of the gpio at pdata+0x40 (IPC1?) after the EFS sync.
