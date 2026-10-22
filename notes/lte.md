@@ -369,3 +369,18 @@ my boot): dmesg `n9: hsic: cleared PMC USB_AO[19:12]`, `PMC_USB_AO = 0x00000ff3`
 afterwards, modem OFF: the port still reports the phantom connect (PORTSC 0x00601801)
 and `device descriptor read/64, error -71`. The isolation bits are not what makes the
 connect appear or what breaks enumeration. (Kept in the tree; harmless, matches vendor.)
+
+## 2026-10-22 22:25 — official Google factory images for the LTE Nexus 9 DO exist
+
+(The earlier note that Google lists no Nexus 9 radio was wrong: the live
+developers.google.com/android/images page dropped the old Nexus entries, but the archived
+copy https://web.archive.org/web/2019/https://developers.google.com/android/images still lists
+them and the dl.google.com files are still served.)
+- `volantisg` = Nexus 9 (LTE), newest: 7.1.1 N4F27P (Oct 2017)
+  https://dl.google.com/dl/android/aosp/volantisg-n4f27p-factory-1e29c858.zip
+  857,896,156 bytes, SHA-256 1e29c858d283d75dab5c53eaa6397cd1f8bf4b3dd24efa03fb4b6f153eb899ac
+  (HTTP 200 checked with HEAD; also volantisg-nmf26f 858,282,899 B, nrd91n 824,730,733 B).
+- `volantis` = Wi-Fi: N9F27M factory `volantis-n9f27m-factory-a0d47736.zip` (and OTA
+  `volantis-ota-n9f27m-ad1aee0f.zip`, 817,456,682 B).
+- Not downloaded yet (needs the user's OK). Purpose: vendor blobs for REA (`mdm_helper`,
+  `ks`, RIL/QMI libs, modem firmware `radio`/`MD1` equivalents) and a restore path.
