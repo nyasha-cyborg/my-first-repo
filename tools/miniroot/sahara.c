@@ -31,7 +31,7 @@ typedef unsigned long long u64;
 
 struct bulk { u32 ep, len, timeout; void *data; };
 
-static struct { long id; const char *path; long size; } img[MAXIMG];
+static struct { long id; const char *path; long size; long base; } img[MAXIMG];
 static int nimg;
 static unsigned char fbuf[BUFSZ];
 static unsigned char pkt[8192];
@@ -177,7 +177,7 @@ static void serve(u64 id, u64 off, u64 len)
 			die("cannot open image", fd);
 		while (len) {
 			u64 n = len > 65536 ? 65536 : len;
-			long r = sc4(67 /* pread64 */, fd, (long)fbuf, n, off);
+			long r = sc4(67 /* pread64 */, fd, (long)fbuf, n, off + img[i].base);
 
 			if (r <= 0)
 				die("pread failed / beyond end of image", off);
@@ -222,6 +222,21 @@ void main2(long *sp)
 		img[nimg].id = id;
 		img[nimg].path = s + 1;
 		img[nimg].size = -1;
+		img[nimg].base = 0;
+		{	/* optional "@offset": the image starts at that byte offset of the file */
+			char *at = s + 1;
+
+			while (*at && *at != '@')
+				at++;
+			if (*at == '@') {
+				long b = 0;
+
+				*at++ = 0;
+				while (*at >= '0' && *at <= '9')
+					b = b * 10 + (*at++ - '0');
+				img[nimg].base = b;
+			}
+		}
 		nimg++;
 	}
 	usbfd = sc(SYS_openat, AT_FDCWD, (long)argv[1], 2);

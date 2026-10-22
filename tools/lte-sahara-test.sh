@@ -2,10 +2,17 @@
 # Full LTE bring-up test cycle (user-run: the classifier blocks the modem power-on / boot from
 # the assistant's tools).  Boots a test image that contains /bin/sahara and /fw/*.mbn,
 # powers the modem (vendor GPIO sequence), runs the Sahara loader and logs everything.
-#   usage: tools/lte-sahara-test.sh [image]       default: n9hsicE2
+#   usage: tools/lte-sahara-test.sh [image]       default: n9hsicF2
 # SKIP_BOOT=1 reuses an already booted test image.  Log: /tmp/n9build/lte-sahara-test.txt     Nothing is flashed; no EFS partition is touched.
 HERE=$(dirname "$0")
-IMG=${1:-$HOME/Downloads/nexus9/bootimg-build/n9-mainline/n9hsicE2-stripped.img}
+# per-unit modem data (real EFS + HTC NV from this tablet's own partitions, private) if prepared with
+# tools/build-modem-blob.py, else blank stub images
+if [ -f "$HOME/Downloads/nexus9/modem-private/sahara-args.txt" ]; then
+	MODEMARGS=$(cat "$HOME/Downloads/nexus9/modem-private/sahara-args.txt")
+else
+	MODEMARGS="16:=zero 17:=zero 40:+/fw/htcssmem.mbn 42:+/fw/htcnvmfg.mbn 43:+/fw/htcrfnv.mbn 45:+/fw/htcuserd.mbn 46:+/fw/htccdma.mbn 44:+/fw/htccnv_a.mbn 47:+/fw/htccnv_t.mbn 48:+/fw/htccnv_v.mbn 49:+/fw/htccnv_s.mbn 55:+/fw/htccnv_u.mbn 56:+/fw/htccnv_o.mbn"
+fi
+IMG=${1:-$HOME/Downloads/nexus9/bootimg-build/n9-mainline/n9hsicF2-stripped.img}
 OUT=/tmp/n9build/lte-sahara-test.txt
 {
 if [ -z "$SKIP_BOOT" ]; then
@@ -19,8 +26,12 @@ echo "== push dsp1.mbn over the USB serial console (raw, checksummed)"
 python3 -I "$HERE/n9push.py" "$HOME/Downloads/nexus9/google-volantisg-n4f27p/vendor-files/mdm/image/dsp1.mbn" /tmp/dsp1.mbn
 echo "== arm the second-enumeration watcher"
 "$HERE/n9sh.sh" '(while ! tail -1 /tmp/mdm.log | grep -q "STATUS=1"; do sleep 1; done; echo "STATUS=1 seen: $(tail -1 /tmp/mdm.log | cut -c1-12)"; dmesg -c >/dev/null; P=/sys/kernel/debug/tegra-hsic-poke; echo "174 0 1000" > $P; sleep 1; echo "174 1000 0" > $P; for i in $(seq 1 45); do echo "t$i $(for d in /sys/bus/usb/devices/1-1*; do [ -f $d/idProduct ] && echo -n "$(basename $d)=$(cat $d/idVendor):$(cat $d/idProduct) "; done) | $(tail -1 /tmp/mdm.log | cut -c1-70) | portsc $(grep ^174 /sys/kernel/debug/tegra-hsic-regs | cut -d" " -f2)"; sleep 1; done; dmesg | grep -E "usb 1-" | cut -c1-130 | tail -20) > /tmp/second.log 2>&1 &' 5
+if [ -f "$HOME/Downloads/nexus9/modem-private/sahara-args.txt" ]; then
+echo "== push the per-unit modem data (EFS + HTC NV, private) over the serial console"
+python3 -I "$HERE/n9push.py" "$HOME/Downloads/nexus9/modem-private/mdata.bin" /tmp/mdata.bin
+fi
 echo "== sahara"
-"$HERE/n9sh.sh" 'B=$(cat /sys/bus/usb/devices/1-1/busnum); D=$(cat /sys/bus/usb/devices/1-1/devnum); N=$(printf "/dev/bus/usb/%03d/%03d" $B $D); echo node $N; (/bin/sahara $N 21:/fw/sbl1.mbn 23:/fw/rpm.mbn 25:/fw/tz.mbn 31:/fw/mba.mbn 8:/tmp/dsp1.mbn 6:/fw/apps.mbn 30:/fw/sdi.mbn 16:=zero 17:=zero 40:+/fw/htcssmem.mbn 42:+/fw/htcnvmfg.mbn 43:+/fw/htcrfnv.mbn 45:+/fw/htcuserd.mbn 46:+/fw/htccdma.mbn 44:+/fw/htccnv_a.mbn 47:+/fw/htccnv_t.mbn 48:+/fw/htccnv_v.mbn 49:+/fw/htccnv_s.mbn 55:+/fw/htccnv_u.mbn 56:+/fw/htccnv_o.mbn > /tmp/sahara.log 2>&1 &); for i in $(seq 1 150); do pgrep sahara >/dev/null || break; sleep 2; done; cat /tmp/sahara.log | grep -vE "^rx cmd=3" | tail -40; echo "reads: $(grep -c "^rx cmd=3" /tmp/sahara.log)"; grep "^rx cmd=3" /tmp/sahara.log | tail -3' 330
+"$HERE/n9sh.sh" 'B=$(cat /sys/bus/usb/devices/1-1/busnum); D=$(cat /sys/bus/usb/devices/1-1/devnum); N=$(printf "/dev/bus/usb/%03d/%03d" $B $D); echo node $N; (/bin/sahara $N 21:/fw/sbl1.mbn 23:/fw/rpm.mbn 25:/fw/tz.mbn 31:/fw/mba.mbn 8:/tmp/dsp1.mbn 6:/fw/apps.mbn 30:/fw/sdi.mbn '"$MODEMARGS"' > /tmp/sahara.log 2>&1 &); for i in $(seq 1 150); do pgrep sahara >/dev/null || break; sleep 2; done; cat /tmp/sahara.log | grep -vE "^rx cmd=3" | tail -40; echo "reads: $(grep -c "^rx cmd=3" /tmp/sahara.log)"; grep "^rx cmd=3" /tmp/sahara.log | tail -3' 330
 echo "== second enumeration log (watcher)"
 "$HERE/n9sh.sh" 'for i in $(seq 1 30); do grep -q "^t45 " /tmp/second.log 2>/dev/null && break; sleep 3; done; cat /tmp/second.log | cut -c1-200' 120
 echo "== after"; "$HERE/n9sh.sh" 'dmesg | cut -c1-140 | tail -15; cat /sys/kernel/debug/usb/devices | grep -E "^(T|P|S):"; /bin/modem-gpio-min read 2>&1 | tail -1' 15
