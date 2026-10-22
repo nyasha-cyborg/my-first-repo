@@ -361,3 +361,11 @@ approved the power-on (risk discussed in the chat), it then ran fine.
   with `modem-gpio-min hold` and see whether a real device enumerates).
 - Also still to try if this is not it: PMC 0x284 bit 0 / 0x29c bit 0 / 0xec bit 1 (outside
   the PMC regmap's readable range; needs an in-driver ioremap of PMC).
+
+## 2026-10-22 22:15 — PMC USB_AO isolation released: no effect (dead end)
+
+Image `n9hsicR` (kernel `g189353253b78`, booted by the user after the classifier blocked
+my boot): dmesg `n9: hsic: cleared PMC USB_AO[19:12]`, `PMC_USB_AO = 0x00000ff3`
+afterwards, modem OFF: the port still reports the phantom connect (PORTSC 0x00601801)
+and `device descriptor read/64, error -71`. The isolation bits are not what makes the
+connect appear or what breaks enumeration. (Kept in the tree; harmless, matches vendor.)
