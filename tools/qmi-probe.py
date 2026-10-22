@@ -89,7 +89,17 @@ if "--lowpower" in sys.argv:
     (r, t) = req(2, cDMS, 0x2e, bytes([1, 1, 0, 1])); print("set low power:", r)
     (r, t) = req(2, cDMS, 0x2d); print("oper. mode  :", r, t.get(1, b"?").hex())
 
+if "--sysinfo" in sys.argv:
+    (r, t) = req(3, cNAS, 0x4d); print("NAS sys info:", r, {hex(k): v.hex() for k, v in t.items() if k != 2})
+    (r, t) = req(3, cNAS, 0x43); print("NAS sys sel pref:", r, {hex(k): v.hex() for k, v in t.items() if k != 2})
+
+if "--wds" in sys.argv:
+    apn = (sys.argv[sys.argv.index("--wds") + 1] if len(sys.argv) > sys.argv.index("--wds") + 1 else "internet").encode()
+    (r, t) = req(1, cWDS, 0x20, bytes([0x14, len(apn), 0]) + apn)
+    print("WDS start network (apn %s):" % apn.decode(), r, {hex(k): v.hex() for k, v in t.items() if k != 2})
+    (r, t) = req(1, cWDS, 0x22); print("WDS packet status:", r, t.get(1, b"?").hex())
+
 # release the QMI clients so repeated runs do not exhaust the modem's client ids
 for _svc, _cid in ((2, cDMS), (3, cNAS), (0x0b, cUIM), (1, cWDS)):
     if _cid is not None:
-        req(0, 0, 0x23, bytes([1, 2, 0, _svc, _cid]))
+        print("release", _svc, _cid, req(0, 0, 0x23, bytes([1, 2, 0, _svc, _cid]))[0])

@@ -301,3 +301,24 @@ Quick start (tablet in Android, test image flow):
 (2) EFS write-back (stock `efsks` saves the modem's EFS to EF1/EF2/EF3; we never write partitions),
 (3) SIM + ModemManager/oFono + `wwan0` data (no SIM tested), (4) upstream-quality HSIC PHY patches
 (squash `patches/lte-wip/0001-0021`), (5) the occasional tablet hang during long foreground console commands.
+
+---
+
+# Session 2026-10-23 (LTE with SIM) — stopped here
+
+State: modem boots and answers QMI from cold; SIM (Skinny NZ, PLMN 530-05) is read (USIM ready); radio online sees Spark LTE
+at about -72 dBm but never attaches (reg_state 2 = searching, CS/PS detached). Details: `notes/lte.md` (09:10, 09:40, 10:05 entries).
+
+**Do first:** the tablet vanished from host USB and must be replugged/power-cycled (host `lsusb` shows nothing even when Android is up).
+Then `mkdir -p /tmp/n9build` (tmpfs, wiped on host reboot) and run `tools/lte-service-test.sh` (now pushes dsp1 in 8 MB parts: a single
+44 MB push hangs the tablet at ~30 MB and needs a power cycle, seen 3 times). Then:
+`python3 -I tools/qmi-probe.py --online`, wait ~45 s, `python3 -I tools/qmi-probe.py --sysinfo --wds wapaccess.co.nz`.
+
+**Skinny APN is `wapaccess.co.nz`** (MCC 530 / MNC 05, no user/pass, IPv4), NOT `internet`
+(skinny.co.nz/help/other-help/mms-data-internet-settings). The `--sysinfo` (NAS 0x4d) and `--wds <apn>` flags of `qmi-probe.py` are written
+but never run. Open: attach reject cause, carrier NV (rcdata overlays are US carriers), then `wwan0` + DHCP/qmi data path.
+`qmi-probe.py` client release (CTL 0x23) is unverified: alloc returned None after ~6 runs; restart the modem with `tools/lte-retry.sh`
+to reset ids (the `release` print shows whether it works).
+
+Operator rules from the user: never wait on them for tablet recovery; when the tablet is off USB alternate adb/fastboot checks
+for 5 min before asking for a power cycle; reply to messages immediately.
