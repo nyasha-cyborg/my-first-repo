@@ -8,6 +8,8 @@
  *                                     lines are released on exit (outputs fall
  *                                     back to inputs), so pair with `hold`.
  *        modem-gpio-min hold [mask]   power on and stay running (outputs held);
+ *                                     mask bit2 (4) = raise AP2MDM_WAKEUP as soon as
+ *                                     MDM2AP_STATUS goes high (vendor modem_boot_done);
  *                                     mask bit0 = AP2MDM_WAKEUP high, bit1 =
  *                                     AP2MDM_ERRFATAL high (experiments)
  * build: clang --target=aarch64-linux-gnu -nostdlib -static -O2 -fuse-ld=lld \
@@ -202,11 +204,31 @@ void main2(long *sp)
 		outnum("outputs=", (long)v);
 		out("\n");
 	}
-	for (i = 0; i < (mode[0] == 'h' ? 100000 : secs); i++) {
-		out("t+");
-		outnum("", i);
-		show(in);
-		msleep(1000);
+	{
+		unsigned long long cur = (1ULL << 3) | (1ULL << 1);
+		int autowake = mode[0] == 'h' && sp[0] > 2 && (secs & 4), woke = 0, k;
+
+		if (mode[0] == 'h' && sp[0] > 2) {
+			if (secs & 1)
+				cur |= 1ULL << 0;
+			if (secs & 2)
+				cur |= 1ULL << 2;
+		}
+		for (i = 0; i < (mode[0] == 'h' ? 100000 : secs); i++) {
+			out("t+");
+			outnum("", i);
+			show(in);
+			/* poll faster than the 1 s log line so the wake follows STATUS closely */
+			for (k = 0; k < 10; k++) {
+				if (autowake && !woke && (getvals(in, 6) & 1)) {
+					cur |= 1ULL << 0;
+					setvals(o, 4, cur);
+					woke = 1;
+					out("MDM2AP_STATUS high -> AP2MDM_WAKEUP raised\n");
+				}
+				msleep(100);
+			}
+		}
 	}
 	sc(SYS_exit, 0, 0, 0);
 }
