@@ -496,3 +496,24 @@ the user's permission rule for the scripts). Observed on mainline (kernel g7fd3d
   (blank NV, RAM-only in the modem; efsks is never run so nothing is written back to EF1/EF2).
   Image `n9hsicW`. Real calibration/IMEI would need reading the tablet's HTC partition and
   EF1/EF2: needs the user's explicit go-ahead.
+
+## 2026-10-23 00:50 — THE MODEM BOOTS ITS OS (MDM2AP_STATUS=1) from mainline
+
+Run `lte-run10` (image `n9hsicB2`, `tools/lte-sahara-test.sh`): after the images served earlier,
+the modem asked for id 8 (dsp1.mbn, 44 MB: pushed over the USB serial console with
+`tools/n9push.py` + `tools/miniroot/rxfile.c`, 4 KB blocks with ACK, checksum OK; the console
+runs commands with stdin=/dev/null so rxfile opens /dev/ttyGS0 itself) and id 6 (apps.mbn):
+both `END_IMAGE_TRANSFER status=0`. Then (HELLO now with mode=1) the link went silent.
+`/tmp/mdm.log` (modem-gpio-min hold, 1 line/s) on the tablet:
+```
+t+0..22  STATUS=0 HSIC_READY=1 (boot ROM / SBL, Sahara)
+t+23     MDM2AP_STATUS=1  HSIC_READY=0   <- first time ever: the modem OS is up
+t+54     ERRFATAL=1 (stays 1)            <- modem crash ~30 s after boot
+```
+Likely cause of the ERR_FATAL: blank EFS/NV (stub images with zero payload) and nobody
+answering the EFS sync (`efsks`, the 2nd enumerated port "COMPORT_EFS"). After STATUS=1 the
+modem renumerates on USB (new PID); the EHCI port still shows the stale 05c6:9008 device
+(PORTSC CCS|PE, 0x1005): the host never saw the disconnect. Next: force re-enumeration (port
+reset / power toggle via the tegra-hsic-poke debugfs), identify the new USB PID(s), load
+qcserial/option/cdc-wdm/qmi_wwan modules in the test image, and decide about real EFS/NV
+(needs the user's go-ahead: EF1/EF2 + the HTC combined partition).
