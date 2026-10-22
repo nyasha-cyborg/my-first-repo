@@ -20,7 +20,7 @@ HOSTIP=$(ip -4 -o addr show wlan0 2>/dev/null | awk '{print $4}' | cut -d/ -f1 |
 python3 -I -m http.server 8099 --bind "$HOSTIP" --directory "$HOME/Downloads/nexus9/dsp1-serve" >/tmp/n9build/dsp1-http.log 2>&1 &
 HTTPPID=$!
 sleep 1
-"$HERE/n9sh.sh" 'for i in 1 2 3 4 5 6 7 8 9 10 11 12; do ip addr show wlan0 2>/dev/null | grep -q "inet " && break; sleep 3; done; /bin/busybox wget -q -O /tmp/dsp1.mbn http://'"$HOSTIP"':8099/dsp1.mbn; ls -l /tmp/dsp1.mbn' 90
+"$HERE/n9sh.sh" 'for i in $(seq 1 40); do /bin/busybox wget -q -O /tmp/dsp1.mbn http://'"$HOSTIP"':8099/dsp1.mbn && break; rm -f /tmp/dsp1.mbn; sleep 3; done; ls -l /tmp/dsp1.mbn' 150
 kill $HTTPPID 2>/dev/null
 echo "== sahara"
 "$HERE/n9sh.sh" 'B=$(cat /sys/bus/usb/devices/1-1/busnum); D=$(cat /sys/bus/usb/devices/1-1/devnum); N=$(printf "/dev/bus/usb/%03d/%03d" $B $D); echo node $N; (/bin/sahara $N 21:/fw/sbl1.mbn 23:/fw/rpm.mbn 25:/fw/tz.mbn 31:/fw/mba.mbn 8:/tmp/dsp1.mbn 6:/fw/apps.mbn 30:/fw/sdi.mbn 16:=zero 17:=zero 40:+/fw/htcssmem.mbn 42:+/fw/htcnvmfg.mbn 43:+/fw/htcrfnv.mbn 45:+/fw/htcuserd.mbn 46:+/fw/htccdma.mbn 44:+/fw/htccnv_a.mbn 47:+/fw/htccnv_t.mbn 48:+/fw/htccnv_v.mbn 49:+/fw/htccnv_s.mbn 55:+/fw/htccnv_u.mbn 56:+/fw/htccnv_o.mbn > /tmp/sahara.log 2>&1 &); sleep 75; cat /tmp/sahara.log | grep -vE "^rx cmd=3" | tail -40; echo "reads: $(grep -c "^rx cmd=3" /tmp/sahara.log)"; grep "^rx cmd=3" /tmp/sahara.log | tail -3' 100
