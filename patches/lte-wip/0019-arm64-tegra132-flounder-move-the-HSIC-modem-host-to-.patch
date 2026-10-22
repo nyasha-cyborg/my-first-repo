@@ -1,0 +1,53 @@
+From 7fd3d31d0c6f4c29ea4e18635d9b4fbbf46af5ec Mon Sep 17 00:00:00 2001
+From: nyasha <nmushambi@proton.me>
+Date: Thu, 22 Oct 2026 22:25:34 +1300
+Subject: [PATCH] arm64: tegra132: flounder: move the HSIC modem host to the
+ USB2 controller (7d004000, phy2)
+
+---
+ arch/arm64/boot/dts/nvidia/tegra132-flounder.dts | 11 ++++++-----
+ 1 file changed, 6 insertions(+), 5 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts b/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
+index 5a0265828..91fa7c83a 100644
+--- a/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
++++ b/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
+@@ -1224,7 +1224,7 @@ usb2-0 {
+ 
+ 			/* LTE modem link (Qualcomm MDM9k over HSIC); which of the
+ 			 * two lanes it uses is not known yet, so both are
+-			 * described and phy3 below picks one. */
++			 * described and phy2 below picks one. */
+ 			hsic {
+ 				status = "okay";
+ 
+@@ -1253,11 +1253,12 @@ usb2-0 {
+ 	};
+ 
+ 	/*
+-	 * HSIC host for the LTE modem: the third EHCI controller. Power the
++	 * HSIC host for the LTE modem: the USB2 controller (vendor tegra-ehci.1,
++	 * 7d004000; confirmed by running the vendor flow, notes/lte.md). Power the
+ 	 * modem separately (AP2MDM_* GPIOs, see notes/lte.md) before expecting a
+ 	 * device to appear.
+ 	 */
+-	usb@7d008000 {
++	usb@7d004000 {
+ 		status = "okay";
+ 		dr_mode = "host";
+ 		phy_type = "hsic";
+@@ -1656,9 +1657,9 @@ pllx_throttle_trip {
+ };
+ 
+ 
+-&phy3 {
++&phy2 {
+ 	status = "okay";
+-	clocks = <&tegra_car TEGRA124_CLK_USB3>,
++	clocks = <&tegra_car TEGRA124_CLK_USB2>,
+ 		 <&tegra_car TEGRA124_CLK_PLL_U>,
+ 		 <&tegra_car TEGRA124_CLK_USBD>,
+ 		 <&tegra_car TEGRA124_CLK_PLL_U_480M>;
+-- 
+2.56.0
+

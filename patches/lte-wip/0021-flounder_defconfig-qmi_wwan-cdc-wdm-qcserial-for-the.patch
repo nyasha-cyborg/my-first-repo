@@ -1,0 +1,24 @@
+From cb8985407c885ed6d23037f19cd4d04e8a190a94 Mon Sep 17 00:00:00 2001
+From: nyasha <nmushambi@proton.me>
+Date: Fri, 23 Oct 2026 01:47:20 +1300
+Subject: [PATCH] flounder_defconfig: qmi_wwan, cdc-wdm, qcserial for the LTE
+ modem (05c6:9048)
+
+---
+ arch/arm64/configs/flounder_defconfig | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/arch/arm64/configs/flounder_defconfig b/arch/arm64/configs/flounder_defconfig
+index 0d29548e5..2b173e798 100644
+--- a/arch/arm64/configs/flounder_defconfig
++++ b/arch/arm64/configs/flounder_defconfig
+@@ -8298,3 +8298,6 @@ CONFIG_MEMTEST=y
+ CONFIG_IO_URING_ZCRX=y
+ CONFIG_DRM_PANEL_JDI_LPM089A128A=y
+ CONFIG_DRM_MIPI_DSI=y
++CONFIG_USB_NET_QMI_WWAN=m
++CONFIG_USB_WDM=m
++CONFIG_USB_SERIAL_QUALCOMM=m
+-- 
+2.56.0
+

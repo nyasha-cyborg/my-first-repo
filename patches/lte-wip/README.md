@@ -31,3 +31,10 @@ A vendor force-enable-HS (PORTSC PTC=5) experiment was committed and reverted ag
 (no effect). Key result in `notes/lte.md` (2026-10-22 21:55): with the modem **off** the
 EHCI port shows the same phantom connect and the same -71, so the connect is produced by
 the controller's own pad pulls, not by the modem.
+
+Patches 0017-0018 (PMC USB_AO debugfs and isolation release; harmless, vendor-conform), **0019: the
+fix that mattered** -- the HSIC modem host moves to the USB2 controller (`usb@7d004000`, `phy2`);
+0020 debugfs PORTSC poke keeps the W1C change bits; 0021 defconfig (`qmi_wwan`, `cdc-wdm`,
+`qcserial`). With these the modem's boot ROM (05c6:9008) enumerates, Sahara loads it, the OS
+boots and `qmi_wwan` binds (05c6:9048); see `notes/lte.md` (milestones 1-3). 0001-0016 still
+carry the earlier experiments on the wrong controller and should be squashed before upstreaming.
