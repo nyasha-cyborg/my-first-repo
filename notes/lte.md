@@ -402,3 +402,30 @@ boot/system/vendor/recovery/cache; bootloader image = 3.50.0.0143 (same as this 
 - Next: REA of `ks`/`efsks`/`libmdmdetect` (what device node / protocol, timing, what
   triggers it, which usb VID:PID it expects), and the init rc in boot.img (mdm_helper
   equivalent). Then a userspace Sahara client for mainline once the HSIC link works.
+
+## 2026-10-22 23:00 — REA of the stock LTE userspace: the complete boot flow
+
+Sources: stock `boot.img` ramdisk (`init.flounder.rc`, split by hand: NVIDIA wrapper, Android
+header at +256) and `vendor/bin/qcks` (strings; REA open_binary), kernel `mdm_modem_ioctl`.
+- `androidboot.baseband` = `ROW` or `US` -> LTE SKU: init enables service
+  `kickstart = /vendor/bin/qcks -i /vendor/firmware/mdm/image/ -r /data/qcks/mdm/`, plus
+  `qmuxd`, `netmgrd`, `ril-daemon` (libril-qc-qmi-1.so, `-e wwan0`). `N/A` = Wi-Fi only.
+  This unit reports `ROW` (so it IS an LTE unit; LineageOS just never starts the stack).
+- The kernel does NOT power the modem by itself. `qcks` opens `/dev/mdm` and issues ioctls
+  (`GET_MFG_MODE`, `WAKE_CHARM` = bring MDM9K out of reset -> `mdm_modem_ioctl` 0xcc01:
+  reset state, enable IRQs, board `power_on` ops = the GPIO sequence I already mirror,
+  `NORMAL_BOOT_DONE` 0x4004cc05, `POWER_OFF_CHARM`, `RAM_DUMP_DONE`, `WAIT_FOR_RESTART`,
+  `TRIGGER_MODEM_RAMDUMP`).
+- Then `qcks` waits for the boot ROM's USB serial port ("COMPORT_SAHARA", PBL 05c6:9008),
+  runs the Sahara loader: first `dbl.mbn`/sbl images, then
+  `ks -w <dir> -p <port> -s 21:.. -s 23:rpm.mbn -s 22:sbl2.mbn -s 12:dsp2 -s 25:tz.mbn
+  -s 30:sdi.mbn -s 31:mba.mbn -s 28:dsp3 -s 8:dsp1.mbn -s 6:apps.mbn -s 29:acdb ...
+  -s 16/17:efs1/efs2 -s 32:htcrcust ...`, waits for the 2nd enumeration port, spawns
+  `efsks` (EFS server) and sets `ro.hw.ks.ready=1` (starts rild).
+- So the whole remaining problem is the first HSIC enumeration of the boot ROM. After that
+  everything is standard: mainline `qcserial` handles 05c6:9008, the Sahara protocol is
+  open (Linaro `qdl`-style), `qmi_wwan` + ModemManager for the data path.
+- Idea (needs the user's OK): run the stock `qcks`/`ks` binaries from the Google image on
+  the device under the *vendor* kernel (Android) to see whether the modem enumerates there
+  (ground truth for the hardware). Risk: `efsks` talks to EF1/EF2 (modem NV/EFS); would
+  only run the Sahara part without `efsks`.
