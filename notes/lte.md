@@ -621,3 +621,12 @@ real rootfs (the test image is a ramdisk); paths differ from the test image only
   stays reg_state 2 (searching), RAT 8 (LTE), signal ~0, for >2.5 min. Not yet explained: antenna/RF NV, carrier NV (rcdata),
   APN/PLMN, or no coverage. Each probe run leaks a QMI client id (no release).
 - Next: NAS get_system_info / PLMN scan, check which rcdata overlay matches the SIM's carrier, check coverage by trying other bands.
+
+## 2026-10-23 09:40 — second SIM: card ready, LTE signal seen, registration unconfirmed
+
+- `lte-service-test.sh` now pushes dsp1 in 8 MB parts + qmiraw and runs unattended end to end (modem enumerated, QMI ok).
+- New SIM: USIM ready. `--online` accepted (the replies right after the mode switch are garbage for a few seconds).
+  ~30-60 s later: oper. mode 0 (online), NAS RAT 8 (LTE), signal byte 0xbb (= -69 dBm), serving-system reg_state still 2
+  (searching), CS/PS detached. So the RF path/antenna works; registration not reached/confirmed yet.
+- `qmi-probe.py` leaks one QMI client id per service per run; after ~6 runs alloc returns None. Fix: release clients
+  (CTL 0x23) at exit, or restart the modem. Next: NAS get_system_info (0x4d) / PLMN, then WDS start network; check SIM carrier/APN.

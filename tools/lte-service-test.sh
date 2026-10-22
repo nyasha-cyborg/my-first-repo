@@ -11,7 +11,14 @@ echo "== back to Android"; "$HERE/n9sh.sh" 'reboot -f' 3 >/dev/null 2>&1; sleep 
 for i in $(seq 1 60); do adb devices | grep -q 'device$' && break; sleep 3; done
 echo "== boot $IMG"; timeout 500 "$HERE/n9boot.sh" "$IMG" 2>&1 | tail -1
 fi
-echo "== push dsp1.mbn"; python3 -I "$HERE/n9push.py" "$HOME/Downloads/nexus9/google-volantisg-n4f27p/vendor-files/mdm/image/dsp1.mbn" /tmp/dsp1.mbn | tail -2
+# a single 44 MB push hangs the tablet at ~30 MB (2026-10-23): push 8 MB parts and join them on the tablet
+echo "== push dsp1.mbn (8 MB parts)"; mkdir -p /tmp/n9build/dsp1parts; rm -f /tmp/n9build/dsp1parts/*
+split -b 8388608 -d "$HOME/Downloads/nexus9/google-volantisg-n4f27p/vendor-files/mdm/image/dsp1.mbn" /tmp/n9build/dsp1parts/p
+for f in /tmp/n9build/dsp1parts/p*; do python3 -I "$HERE/n9push.py" "$f" /tmp/$(basename "$f") | tail -1; done
+"$HERE/n9sh.sh" 'cat /tmp/p?? > /tmp/dsp1.mbn; rm /tmp/p??; sha256sum /tmp/dsp1.mbn | cut -c1-16' 30
+sha256sum "$HOME/Downloads/nexus9/google-volantisg-n4f27p/vendor-files/mdm/image/dsp1.mbn" | cut -c1-16
+clang --target=aarch64-linux-gnu -nostdlib -static -O2 -fuse-ld=lld -fno-stack-protector -fno-builtin -o /tmp/n9build/qmiraw "$HERE/miniroot/qmiraw.c"
+python3 -I "$HERE/n9push.py" /tmp/n9build/qmiraw /tmp/qmiraw | tail -1; "$HERE/n9sh.sh" 'chmod +x /tmp/qmiraw' 5
 echo "== start /bin/mdm-boot.sh (background)"
 "$HERE/n9sh.sh" '(FW=/fw DSP1=/tmp/dsp1.mbn /bin/mdm-boot.sh > /tmp/mdm-boot.log 2>&1 &); sleep 1; echo started' 10
 for i in $(seq 1 40); do
