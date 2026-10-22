@@ -73,7 +73,7 @@ for name, svc in (("DMS", 2), ("NAS", 3), ("UIM", 0x0b), ("WDS", 1)):
 imei = txt(t, 0x11)
 print("IDs         :", r, "IMEI %s...%s (masked)" % (imei[:4], imei[-2:]) if imei != "?" else "no IMEI in reply (blank?)")
 (r, t) = req(0x0b, cUIM, 0x2f); print("UIM card status:", r, t.get(0x10, b"?").hex()[:60])
-(r, t) = req(3, cNAS, 0x24); print("NAS serving system:", r, t.get(1, b"?").hex())
+(r, t) = req(3, cNAS, 0x24); print("NAS serving system:", r, t.get(1, b"?").hex(), "plmn:", t.get(0x12, b"?").hex(), "all:", {k: v.hex() for k, v in t.items() if k not in (1, 2)})
 (r, t) = req(3, cNAS, 0x20); print("NAS signal   :", r, t.get(1, b"?").hex())
 
 if "--online" in sys.argv:
@@ -88,3 +88,8 @@ if "--online" in sys.argv:
 if "--lowpower" in sys.argv:
     (r, t) = req(2, cDMS, 0x2e, bytes([1, 1, 0, 1])); print("set low power:", r)
     (r, t) = req(2, cDMS, 0x2d); print("oper. mode  :", r, t.get(1, b"?").hex())
+
+# release the QMI clients so repeated runs do not exhaust the modem's client ids
+for _svc, _cid in ((2, cDMS), (3, cNAS), (0x0b, cUIM), (1, cWDS)):
+    if _cid is not None:
+        req(0, 0, 0x23, bytes([1, 2, 0, _svc, _cid]))

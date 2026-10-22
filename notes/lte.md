@@ -630,3 +630,12 @@ real rootfs (the test image is a ramdisk); paths differ from the test image only
   (searching), CS/PS detached. So the RF path/antenna works; registration not reached/confirmed yet.
 - `qmi-probe.py` leaks one QMI client id per service per run; after ~6 runs alloc returns None. Fix: release clients
   (CTL 0x23) at exit, or restart the modem. Next: NAS get_system_info (0x4d) / PLMN, then WDS start network; check SIM carrier/APN.
+
+## 2026-10-23 10:05 — Skinny NZ SIM: network seen (530-05), still not attached
+
+- Carrier: Skinny (NZ, runs on Spark's network, PLMN 530-05). `qmi-probe.py` now prints all NAS serving-system TLVs and releases its
+  QMI clients at exit (client ids no longer leak; the modem was restarted with `lte-retry.sh` to reset them).
+- After `--online`: serving PLMN TLV = mcc 530 / mnc 5, RAT LTE, signal ~ -72 dBm (stable over 100 s), but reg_state 2 /
+  CS+PS detached. So the modem finds Spark's LTE cell and does not complete attach. Candidates: attach rejected (need NAS
+  get_system_info 0x4d for the reject cause), no APN profile / no data call requested, carrier NV (rcdata overlays are US carriers),
+  Skinny SIM provisioning. Next: get_system_info, WDS start network with APN `internet`.
