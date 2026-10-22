@@ -7,7 +7,7 @@
  * A path of "+stub" serves the (40-byte) header from the stub file followed by zeros (blank
  * HTC NV partitions: valid MBN header, empty payload).
  * After DONE_RESP it keeps waiting for the next HELLO (the next boot stage) and exits when the
- * link stays silent for 20 s.  Nothing else is written
+ * link stays silent for 8 s.  Nothing else is written
  * to the modem; no EFS partition is touched.
  * build: clang --target=aarch64-linux-gnu -nostdlib -static -O2 -fuse-ld=lld \
  *              -fno-stack-protector -fno-builtin -o sahara tools/miniroot/sahara.c
@@ -232,7 +232,7 @@ void main2(long *sp)
 		die("claim interface failed", r);
 	say("sahara: waiting for HELLO\n");
 	for (;;) {
-		r = bulk(EP_IN, pkt, sizeof(pkt), 20000);
+		r = bulk(EP_IN, pkt, sizeof(pkt), 8000);
 		if (r < 0) {
 			say("link silent / error ");
 			sayn(-r, 10);
