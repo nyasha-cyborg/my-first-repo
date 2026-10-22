@@ -70,3 +70,20 @@ brcmfmac first (card needs only the power sequence, not the driver).
 2. Confirm classic inquiry; Wi-Fi + BT coexistence.
 3. Upstream: DT pwrseq + probe-time power (see the series README for nits;
    probe-time power should become a per-compatible quirk).
+
+## 2026-10-22 17:55 — Wi-Fi + Bluetooth running together (image `n9coexA`)
+
+Kernel `g5d830bfca033`, ramdisk = audio/shell ramdisk with Wi-Fi auto-start
+(no `/etc/no-wifi`). Wi-Fi associated (2.4 GHz channel 6, WPA2) with
+192.168.1.100 from DHCP; then `modprobe hci_uart` brought `hci0` up (BCM4354
+patch loaded) with Wi-Fi still connected.
+- Concurrent run: 70 pings to the router at 0.5 s while `btscan-min` did a 6 s
+  LE scan + 10 s inquiry: **0 % loss**, `wpa_state=COMPLETED` throughout.
+  Latency during the scan averaged 210 ms (max 2.6 s) vs 38 ms for the same
+  ping with Bluetooth idle: the expected 2.4 GHz coexistence cost.
+- The radio heard LE advertisers from at least four distinct addresses during
+  the concurrent scan (HCI monitor lines); `n9scan` counters were lost to
+  kmsg ratelimiting (449 lines suppressed), so the counts are not reliable.
+- Not tested: BlueZ pairing/audio, throughput under load, bt-coex firmware
+  tuning (`btc_mode=1` is already in the Android NVRAM we have but our NVRAM is
+  the generic p2371 one).
