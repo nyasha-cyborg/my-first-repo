@@ -1,0 +1,43 @@
+From e7505a04eb816c590fe00d788a3b6504ab33e1c7 Mon Sep 17 00:00:00 2001
+From: nyasha <nmushambi@proton.me>
+Date: Thu, 22 Oct 2026 18:57:30 +1300
+Subject: [PATCH 6/6] xusb: hsic_pd_trx knob (experiment)
+
+---
+ drivers/phy/tegra/xusb-tegra124.c | 13 +++++++++++++
+ 1 file changed, 13 insertions(+)
+
+diff --git a/drivers/phy/tegra/xusb-tegra124.c b/drivers/phy/tegra/xusb-tegra124.c
+index f022ed964..595c6bb28 100644
+--- a/drivers/phy/tegra/xusb-tegra124.c
++++ b/drivers/phy/tegra/xusb-tegra124.c
+@@ -864,6 +864,8 @@ static int tegra124_hsic_phy_exit(struct phy *phy)
+ static int n9_hsic_rx_strobe = -1, n9_hsic_rx_data = -1, n9_hsic_strobe_trim = -1;
+ static int n9_hsic_tx_rtune_n = -1, n9_hsic_tx_rtune_p = -1;
+ static int n9_hsic_tx_rslew_n = -1, n9_hsic_tx_rslew_p = -1, n9_hsic_auto_term = -1;
++static int n9_hsic_pd_trx = -1;
++module_param_named(hsic_pd_trx, n9_hsic_pd_trx, int, 0644);
+ module_param_named(hsic_rx_strobe, n9_hsic_rx_strobe, int, 0644);
+ module_param_named(hsic_rx_data, n9_hsic_rx_data, int, 0644);
+ module_param_named(hsic_strobe_trim, n9_hsic_strobe_trim, int, 0644);
+@@ -959,6 +961,17 @@ static int tegra124_hsic_phy_power_on(struct phy *phy)
+ 		 XUSB_PADCTL_HSIC_PAD_CTL1_RPU_STROBE;
+ 	padctl_writel(padctl, value, XUSB_PADCTL_HSIC_PADX_CTL1(index));
+ 
++	if (n9_hsic_pd_trx >= 0) {
++		/* vendor: PD_TRX is set again after a short delay */
++		usleep_range(50, 100);
++		value = padctl_readl(padctl, XUSB_PADCTL_HSIC_PADX_CTL1(index));
++		if (n9_hsic_pd_trx)
++			value |= XUSB_PADCTL_HSIC_PAD_CTL1_PD_TRX;
++		else
++			value &= ~XUSB_PADCTL_HSIC_PAD_CTL1_PD_TRX;
++		padctl_writel(padctl, value, XUSB_PADCTL_HSIC_PADX_CTL1(index));
++	}
++
+ 	dev_info(padctl->dev,
+ 		 "n9: hsic%u pad: ctl0=%08x ctl1=%08x ctl2=%08x trk=%08x mux=%08x\n", index,
+ 		 padctl_readl(padctl, XUSB_PADCTL_HSIC_PADX_CTL0(index)),
+-- 
+2.56.0
+

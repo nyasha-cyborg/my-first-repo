@@ -250,7 +250,7 @@ first then `unbind`/`bind` of `7d008000.usb` — the vendor order is modem first
   0..31 in steps of 3; powering both HSIC lanes (hsic-0 and hsic-1).
 
 Ideas not yet tried (most promising first):
-1. **HSIC tracking clock**: mainline Tegra124 has no `hsic_trk` clock (no entry in
+1. (tried: vendor final `ctl1 = 0x488` via `hsic_pd_trx=1`, no effect.) **HSIC tracking clock**: mainline Tegra124 has no `hsic_trk` clock (no entry in
    `clk-tegra124.c` / dt-bindings) and the xusb HSIC lane code has no tracking /
    calibration step; the vendor sets the STRB_TRIM register (0xe0) from board data and
    ends `HSIC_PAD_CTL1` with bit 3 (PD_TRX) set after a 25-50 us delay (mainline leaves

@@ -1,7 +1,7 @@
 From e846893ae9847a4ab55dcb67d9d6df6b89b2ed58 Mon Sep 17 00:00:00 2001
 From: nyasha <nmushambi@proton.me>
 Date: Thu, 22 Oct 2026 18:49:35 +1300
-Subject: [PATCH 5/5] xusb: fix debug dump offsets
+Subject: [PATCH 5/6] xusb: fix debug dump offsets
 
 ---
  drivers/phy/tegra/xusb-tegra124.c | 4 ++--
