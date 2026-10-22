@@ -2,7 +2,7 @@
 # Full LTE bring-up test cycle (user-run: the classifier blocks the modem power-on / boot from
 # the assistant's tools).  Boots a test image that contains /bin/sahara and /fw/*.mbn,
 # powers the modem (vendor GPIO sequence), runs the Sahara loader and logs everything.
-#   usage: tools/lte-sahara-test.sh [image]       default: n9hsicG2
+#   usage: tools/lte-sahara-test.sh [image]       default: n9hsicH2
 # SKIP_BOOT=1 reuses an already booted test image.  Log: /tmp/n9build/lte-sahara-test.txt     Nothing is flashed; no EFS partition is touched.
 HERE=$(dirname "$0")
 # per-unit modem data (real EFS + HTC NV from this tablet's own partitions, private) if prepared with
@@ -12,7 +12,7 @@ if [ -f "$HOME/Downloads/nexus9/modem-private/sahara-args.txt" ]; then
 else
 	MODEMARGS="16:=zero 17:=zero 40:+/fw/htcssmem.mbn 42:+/fw/htcnvmfg.mbn 43:+/fw/htcrfnv.mbn 45:+/fw/htcuserd.mbn 46:+/fw/htccdma.mbn 44:+/fw/htccnv_a.mbn 47:+/fw/htccnv_t.mbn 48:+/fw/htccnv_v.mbn 49:+/fw/htccnv_s.mbn 55:+/fw/htccnv_u.mbn 56:+/fw/htccnv_o.mbn"
 fi
-IMG=${1:-$HOME/Downloads/nexus9/bootimg-build/n9-mainline/n9hsicG2-stripped.img}
+IMG=${1:-$HOME/Downloads/nexus9/bootimg-build/n9-mainline/n9hsicH2-stripped.img}
 OUT=/tmp/n9build/lte-sahara-test.txt
 {
 if [ -z "$SKIP_BOOT" ]; then
@@ -25,7 +25,7 @@ echo "== usb"; "$HERE/n9sh.sh" 'mount -t debugfs none /sys/kernel/debug 2>/dev/n
 echo "== push dsp1.mbn over the USB serial console (raw, checksummed)"
 python3 -I "$HERE/n9push.py" "$HOME/Downloads/nexus9/google-volantisg-n4f27p/vendor-files/mdm/image/dsp1.mbn" /tmp/dsp1.mbn
 echo "== arm the second-enumeration watcher"
-"$HERE/n9sh.sh" '(while ! tail -1 /tmp/mdm.log | grep -q "STATUS=1"; do sleep 1; done; echo "STATUS=1 seen: $(tail -1 /tmp/mdm.log | cut -c1-12)"; dmesg -c >/dev/null; for i in $(seq 1 45); do [ $i = 12 ] && { echo 0 > /sys/bus/usb/devices/usb1/authorized; sleep 1; echo 1 > /sys/bus/usb/devices/usb1/authorized; echo "(authorized toggle)"; }; echo "t$i $(for d in /sys/bus/usb/devices/1-1*; do [ -f $d/idProduct ] && echo -n "$(basename $d)=$(cat $d/idVendor):$(cat $d/idProduct) "; done) | $(tail -1 /tmp/mdm.log | cut -c1-70) | portsc $(grep ^174 /sys/kernel/debug/tegra-hsic-regs | cut -d" " -f2)"; sleep 1; done; dmesg | grep -E "usb 1-" | cut -c1-130 | tail -20) > /tmp/second.log 2>&1 &' 5
+"$HERE/n9sh.sh" '(while ! tail -1 /tmp/mdm.log | grep -q "STATUS=1"; do sleep 1; done; echo "STATUS=1 seen: $(tail -1 /tmp/mdm.log | cut -c1-12)"; dmesg -c >/dev/null; modprobe qmi_wwan 2>&1 | tail -2; modprobe qcserial 2>&1 | tail -2; for i in $(seq 1 45); do [ $i = 12 ] && { echo 0 > /sys/bus/usb/devices/usb1/authorized; sleep 1; echo 1 > /sys/bus/usb/devices/usb1/authorized; echo "(authorized toggle)"; }; echo "t$i $(for d in /sys/bus/usb/devices/1-1*; do [ -f $d/idProduct ] && echo -n "$(basename $d)=$(cat $d/idVendor):$(cat $d/idProduct) "; done) | $(tail -1 /tmp/mdm.log | cut -c1-70) | portsc $(grep ^174 /sys/kernel/debug/tegra-hsic-regs | cut -d" " -f2)"; sleep 1; done; dmesg | grep -E "usb 1-|qmi|wwan|cdc|ttyUSB|qcserial|usbserial" | cut -c1-150 | tail -30; ls -l /dev/cdc-wdm* /dev/ttyUSB* 2>&1; ls /sys/class/net) > /tmp/second.log 2>&1 &' 5
 if [ -f "$HOME/Downloads/nexus9/modem-private/sahara-args.txt" ]; then
 echo "== push the per-unit modem data (EFS + HTC NV, private) over the serial console"
 python3 -I "$HERE/n9push.py" "$HOME/Downloads/nexus9/modem-private/mdata.bin" /tmp/mdata.bin
