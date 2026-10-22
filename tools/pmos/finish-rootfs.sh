@@ -40,8 +40,29 @@ if [ -f $R/home/$U/.ssh/authorized_keys ]; then
 	sed -i 's/^PermitRootLogin no/PermitRootLogin prohibit-password/' $R/etc/ssh/sshd_config.d/50-n9-keys-only.conf
 fi
 
+# watchdog: the boot cmdline arms tegra_wdt (early_start); busybox watchdog feeds it from the boot runlevel,
+# so a hang resets the tablet instead of stranding it (first pmOS boot hung right after phoc's modeset)
+if [ -e $R/etc/init.d/watchdog ]; then
+	printf 'WATCHDOG_OPTS="-t 10 -T 60"\nWATCHDOG_DEV="/dev/watchdog"\n' > $R/etc/conf.d/watchdog
+	c rc-update add watchdog boot >/dev/null 2>&1 && say "watchdog fed from the boot runlevel"
+fi
+# kernel log that survives a hang/reset: /var/log/kmsg.log, synced every 5 s (debug period)
+mkdir -p $R/etc/local.d
+cat > $R/etc/local.d/n9-kmsg.start <<'EOF'
+#!/bin/sh
+# n9: keep the kernel log across hangs (rotates at boot, previous boot in kmsg.log.1)
+[ -f /var/log/kmsg.log ] && mv /var/log/kmsg.log /var/log/kmsg.log.1
+(cat /proc/kmsg >> /var/log/kmsg.log) </dev/null >/dev/null 2>&1 &
+(while true; do sync /var/log/kmsg.log 2>/dev/null || sync; sleep 5; done) </dev/null >/dev/null 2>&1 &
+EOF
+chmod +x $R/etc/local.d/n9-kmsg.start
+c rc-update add local default >/dev/null 2>&1 || true
+# the Phosh greeter only once the display hang is understood: start it by hand (rc-service greetd start)
+GREETD_AUTOSTART=${GREETD_AUTOSTART:-0}
+
 # services (OpenRC); missing ones are skipped
-for s in sshd seatd networkmanager greetd n9-modem bluetooth chronyd; do
+[ "$GREETD_AUTOSTART" = 1 ] || c rc-update del greetd default >/dev/null 2>&1 || true
+for s in sshd seatd networkmanager $([ "$GREETD_AUTOSTART" = 1 ] && echo greetd) n9-modem bluetooth chronyd; do
 	[ -e $R/etc/init.d/$s ] && c rc-update add $s default >/dev/null 2>&1 && say "enabled $s"
 done
 # root autologin on the USB serial gadget (debug console; g_serial is built into the kernel)

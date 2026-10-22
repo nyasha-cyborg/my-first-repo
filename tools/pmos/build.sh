@@ -93,5 +93,5 @@ cp "$BASE/bin/busybox" "$O/boot/bin/busybox"
 install -m755 "$HERE/init" "$O/boot/init"
 (cd "$O/boot" && find . | cpio -o -H newc --quiet | gzip -9 > "$O/boot.gz")
 python3 -I "$T/bootimg-swap-ramdisk.py" "$BIMG" "$O/boot.gz" "$D/n9pmos-boot-stripped.img" "$O/kernel" | tail -1
-setcmd "$D/n9pmos-boot-stripped.img" "androidboot.hardware=flounder console=tty0 quiet loglevel=4"
+setcmd "$D/n9pmos-boot-stripped.img" "androidboot.hardware=flounder console=tty0 loglevel=6 tegra_wdt.early_start=1 tegra_wdt.heartbeat=60"	# fed by busybox watchdog (boot runlevel)
 echo "release $REL: $D/n9pmos-inst-stripped.img, $D/n9pmos-boot-stripped.img, $O/overlay.tgz"
