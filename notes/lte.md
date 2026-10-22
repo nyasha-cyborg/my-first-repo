@@ -133,3 +133,43 @@ factory images are no longer on the public factory page.
 4. Then QMI (`qmi_wwan`) + ModemManager: mainline already supports.
 Estimate: several focused sessions for 1+2, open-ended for 3. Risk to hardware
 is low if EFS (EF1/EF2) is never touched and no modem partition is written.
+
+## 2026-10-22 19:00 — REA of the vendor HSIC PHY (`uhsic_phy_power_on`, `uhsic_phy_open`)
+
+Window `uhsic.elf` 0xffffffc000612a00-0xffffffc000614f00 of the Android Image.
+Register offsets are relative to the USB controller base (HSIC = `usb@7d008000`);
+the UHSIC block sits at +0xc00. Sequence from `uhsic_phy_power_on` (decompiled,
+operation order kept; delays are the `udelay` arguments, ns/us not resolved):
+
+```
+UHSIC_PADS_CFG? (+0xc20): r = rd; wr(r & 0xfffff99b); wr((r & 0xfffff99b) | 0x89)
++0x400 (SUSP_CTRL): |= 0x4000 ; delay 0x10c7 ; |= 0x80000
++0xc08 |= 0x23040        +0xc0c |= 0x12        +0xc10 &= ~0x200
++0xc14 |= 0x80           +0xc18 |= pdata.byte5 << 2     (tx rtune/slew)
++0xc04 |= (pdata.byte4 & 0x1f) << 14 | (pdata.half8 & 0xfff)  (pll/timing trims)
++0x400 &= ~0x4000 ; delay 0x10c7
+if the controller-clock-status bit (CAR 0x1fc / 0x284 reg, bit 24 / bit 0) is clear:
+    +0xc20 &= ~0x8
++0xc20 &= ~0x10 ; delay 0x1a36f ; +0xc20 |= 0x10      (pad/ldo enable pulse)
++0xc2c |= 0x1000
++0x400 |= 0x20 ; +0x400 &= ~0x20
++0x1f8 |= 3 ; +0x1b4 = (v & 0x9ffffff) | 0x84000000 ; +0x174 &= 0xff9fffff
++0xc10 |= 0x40 ; +0xc1c = (v & 0xff00f0ff) | 0xa00
+poll +0x400 for bit 7 (0x80) within 0x9c4 us  -> error "uhsic PLL/ready timeout" (-110)
+then bring up the host controller (usb_phy_bringup_host_controller), poll
++0x174 (PORTSC) until bits 0xc0 clear (25 ms), clear +0xc34 bit 0, restore +0xc20 bit 3,
+sleep 10-11 ms (25-26 ms in the irq-off path), poll +0x130 (USB_STS?) bit 0, finish
+with +0x154 = 0x100000 (USB_PORTSC?? ) -- exact register names still to map.
+```
+`uhsic_phy_open` picks a per-board trim table (4 entries at 0xffffffc000f81240,
+keyed by a regulator/chip id) and toggles the controller clock/reset (calls at
++0xb8/+0xb0). Pad rail handling is separate (`hsic_pad_enable`,
+`hsic_pad_disable`, `hsic_power_rail_disable` in the vendor PHY, window
+0xffffffc0005dfc00-0xffffffc0005e0e00 not yet decompiled).
+
+Porting plan: add a `tegra_hsic_phy` set of ops to `phy-tegra-usb.c` (new
+`phy_type = "hsic"` branch) with these register writes expressed with the
+mainline `UHSIC_*` names from the Tegra TRM / vendor headers, plus the `vddio_hsic`,
+`avdd_hsic_com`, `avdd_hsic_mdm` regulators and `vdd_5v0_mdm` in the flounder DT.
+Without hardware access to the modem this can only be validated by seeing the
+EHCI port connect when the modem is powered (modem GPIO sequence above).
