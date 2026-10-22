@@ -124,7 +124,32 @@ if "--wds" in sys.argv:
     print("WDS start network (apn %s):" % apn.decode(), r, {hex(k): v.hex() for k, v in t.items() if k != 2})
     (r, t) = req(1, cWDS, 0x22); print("WDS packet status:", r, t.get(1, b"?").hex())
 
+if "--runtime" in sys.argv:
+    # WDS GET_RUNTIME_SETTINGS: mask DNS (0x10) | IP (0x100) | gateway+subnet (0x200) | MTU (0x2000)
+    (r, t) = req(1, cWDS, 0x2d, bytes([0x10, 4, 0]) + struct.pack("<I", 0x2310))
+    ip4 = lambda k: ".".join(str(b) for b in reversed(t[k])) if k in t and len(t[k]) == 4 else "?"
+    print("WDS runtime:", r, "ip", ip4(0x1e), "gw", ip4(0x20), "mask", ip4(0x21), "dns", ip4(0x15), ip4(0x16),
+          "mtu", struct.unpack("<I", t[0x29])[0] if 0x29 in t else "?")
+
 # release the QMI clients so repeated runs do not exhaust the modem's client ids
+if "--stats" in sys.argv:
+    # WDS GET_PKT_STATISTICS: mask tx ok 1, rx ok 2, tx err 4, rx err 8, tx ovf 0x10, rx ovf 0x20, tx/rx bytes 0x40/0x80, drops 0x100/0x200
+    (r, t) = req(1, cWDS, 0x24, bytes([1, 4, 0]) + struct.pack("<I", 0x3ff))
+    print("WDS pkt stats:", r, {hex(k): (struct.unpack("<Q", v)[0] if len(v) == 8 else struct.unpack("<I", v)[0] if len(v) == 4 else v.hex()) for k, v in t.items() if k != 2})
+
+if "--wda" in sys.argv or "--rawip" in sys.argv:
+    # WDA (0x1a) data format: TLV 0x11 link layer protocol 1 = 802.3, 2 = raw IP
+    cWDA = alloc(0x1a); print("client WDA", cWDA)
+    if "--rawip" in sys.argv:
+        (r, t) = req(0x1a, cWDA, 0x20, bytes([0x11, 4, 0]) + struct.pack("<I", 2))
+        print("WDA set raw IP:", r, {hex(k): v.hex() for k, v in t.items() if k != 2})
+    (r, t) = req(0x1a, cWDA, 0x21); print("WDA data format:", r, {hex(k): v.hex() for k, v in t.items() if k != 2})
+    if cWDA is not None:
+        req(0, 0, 0x23, bytes([1, 2, 0, 0x1a, cWDA]))
+
+# --keep leaves the WDS client allocated: releasing it ends a data call started with --wds
 for _svc, _cid in ((2, cDMS), (3, cNAS), (0x0b, cUIM), (1, cWDS)):
+    if _svc == 1 and "--keep" in sys.argv:
+        print("WDS client %s kept (data call stays up)" % _cid); continue
     if _cid is not None:
         print("release", _svc, _cid, req(0, 0, 0x23, bytes([1, 2, 0, _svc, _cid]))[0])

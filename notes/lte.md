@@ -675,3 +675,26 @@ real rootfs (the test image is a ramdisk); paths differ from the test image only
 - Rootfs: the boot service must set profile 1's APN before going online (per SIM; or let ModemManager set the initial EPS
   bearer APN). The stock EFS is a Verizon carrier config (rcdata/CNV), so other profiles stay VZW.
 - Next: keep the WDS client, WDS GET_RUNTIME_SETTINGS (IP/gw/DNS), bring up wwan0 (802.3 + DHCP, or raw_ip + static), ping.
+
+## 2026-10-23 11:00 — MILESTONE 6: IP over LTE works on mainline (ping + DNS through wwan0)
+
+Same boot as milestone 5 (profile 1 APN set before online, registered on Spark 530-05 LTE).
+- `qmi-probe.py --wds wapaccess.co.nz --runtime --keep`: call up, runtime settings IPv4 10.238.125.48/27, gw .49,
+  DNS 122.56.237.1 / 210.55.111.1, MTU 1500. `--keep` leaves the WDS client allocated (releasing it ends the call).
+- **802.3 framing (modem default, WDA 0x21 link layer = 1) does not work:** ARP is answered by the modem
+  (02:50:f3:00:00:00), uplink leaves the modem (last-call tx 828 B), but last-call rx = 0 B and wwan0 only sees the ARP replies.
+- **Raw IP works:** `--rawip` (WDA SET_DATA_FORMAT 0x20, TLV 0x11 = 2) + `echo Y > /sys/class/net/wwan0/qmi/raw_ip` (link down
+  first). Changing the data format **ends the active call** (WDS 0x24 then returns QMI error 15 out-of-call): start the call again
+  after the switch. Result: `ping -c 4 1.1.1.1` 4/4 (54-305 ms), `nslookup example.com 122.56.237.1` answered; modem stats
+  tx 6 / rx 6 packets.
+- wwan0 <-> cdc-wdm0 (wwan1..4 <-> cdc-wdm1..4, unused). Only host routes for 1.1.1.1 and the DNS server were put on wwan0;
+  WiFi stayed the default route.
+
+Working order per boot (all from the host, tablet in the n9hsicI2 test image):
+1. `tools/lte-service-test.sh`
+2. `qmi-probe.py --setapn wapaccess.co.nz` (modem still in low power) -> `--online` -> ~45 s
+3. `qmi-probe.py --rawip --keep`; on the tablet: `ip link set wwan0 down; echo Y > .../qmi/raw_ip; ip link set wwan0 up`
+4. `qmi-probe.py --wds wapaccess.co.nz --runtime --keep`; `ip addr add <ip>/<mask> dev wwan0`, routes/DNS as wanted.
+
+Next: turn steps 2-4 into the rootfs service (or ModemManager: it does raw-ip, WDS and the initial bearer APN itself, given
+`qmi_wwan` + cdc-wdm), HTTP test, longer soak, the console stalls during long serial transfers.
