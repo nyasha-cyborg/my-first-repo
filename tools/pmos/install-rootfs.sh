@@ -13,7 +13,7 @@ SIZE_MB=${SIZE_MB:-12288}
 M=https://mirror.postmarketos.org/postmarketos/$PMOS
 A=https://dl-cdn.alpinelinux.org/alpine/$ALP
 PKGS=${PKGS:-"postmarketos-base device-htc-flounder device-htc-flounder-nonfree-firmware postmarketos-ui-phosh
-	mesa-dri-gallium mesa-egl mesa-gles kmscube mpv yt-dlp firefox openssh alsa-utils alsa-ucm-conf
+	mesa-dri-gallium mesa-egl mesa-gles kmscube mpv yt-dlp firefox alsa-utils alsa-ucm-conf
 	networkmanager-wifi wpa_supplicant e2fsprogs htop"}
 APK="/bin/apk.static -U --arch aarch64 --keys-dir /etc/n9-apk-keys --no-progress --timeout 120"
 R=/mnt/pmos

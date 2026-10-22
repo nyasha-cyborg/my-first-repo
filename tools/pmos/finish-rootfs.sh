@@ -24,8 +24,24 @@ grep -q '^Include /etc/ssh/sshd_config.d' $R/etc/ssh/sshd_config 2>/dev/null || 
 	sed -i '1i Include /etc/ssh/sshd_config.d/*.conf' $R/etc/ssh/sshd_config
 say "sshd: key login only"
 
+# seat for the compositor: phoc's libseat found no backend under greetd (elogind gave the greeter no seat);
+# seatd works. (Do not add "openssh" to PKGS: it pulls the non-PAM sshd that rejects pmOS's UsePAM policy.)
+c apk add -q seatd seatd-openrc >/dev/null 2>&1 || say "seatd install failed (needs network)"
+for u in greetd $U; do c addgroup $u seat 2>/dev/null || true; done
+# GPU: Mesa tegra+nouveau segfaults on the first draw (notes/gpu.md): software rendering until fixed.
+# greetd starts the greeter with a clean PAM environment, so this must be in /etc/environment (pam_env).
+for kv in GBM_ALWAYS_SOFTWARE=1 LIBGL_ALWAYS_SOFTWARE=1 WLR_RENDERER=pixman; do
+	grep -q "^${kv%%=*}=" $R/etc/environment 2>/dev/null || echo "$kv" >> $R/etc/environment
+done
+# root over SSH with the same key only (passwords stay off)
+if [ -f $R/home/$U/.ssh/authorized_keys ]; then
+	mkdir -p $R/root/.ssh; cp $R/home/$U/.ssh/authorized_keys $R/root/.ssh/
+	chmod 700 $R/root/.ssh; chmod 600 $R/root/.ssh/authorized_keys
+	sed -i 's/^PermitRootLogin no/PermitRootLogin prohibit-password/' $R/etc/ssh/sshd_config.d/50-n9-keys-only.conf
+fi
+
 # services (OpenRC); missing ones are skipped
-for s in sshd networkmanager greetd n9-modem bluetooth chronyd; do
+for s in sshd seatd networkmanager greetd n9-modem bluetooth chronyd; do
 	[ -e $R/etc/init.d/$s ] && c rc-update add $s default >/dev/null 2>&1 && say "enabled $s"
 done
 # root autologin on the USB serial gadget (debug console; g_serial is built into the kernel)

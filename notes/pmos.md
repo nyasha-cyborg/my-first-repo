@@ -34,3 +34,20 @@ Until then everything is tested with `fastboot boot`.
 
 - 11:40 installer `n9pmos-inst` booted (kernel gcfc538ce0338, WiFi 192.168.1.100), rootfs.img created (12 GiB),
   package install running.
+- 11:47 first install attempt cut by a watchdog reset at package ~670 (installer image armed the 90 s watchdog;
+  most likely the test init's busybox feeder died under load). Installer now: no watchdog cmdline, e2fsck before
+  remount, kmsg + memory logs on userdata. Second run: 872 packages, 1.59 GB; only error = postmarketos-mkinitfs
+  trigger (no pmOS kernel package; we use our own boot image) — harmless.
+- 12:03 **pmOS v26.06 boots** (`fastboot boot n9pmos-boot`): OpenRC up, NetworkManager joined WiFi (192.168.1.109),
+  sshd (key only), elogind, bluetooth, zram, root autologin on ttyGS0.
+- greetd crashed, two causes, both fixed (baked into finish-rootfs.sh):
+  1. `libseat: No backend was able to open a seat` -> `apk add seatd seatd-openrc`, enable seatd, greetd + user in `seat`.
+  2. phoc segfaults in the GPU path (Mesa 26.1.6 `tegra` renderer, GLES 3.2, crashes on the first draw; `kmscube -D
+     /dev/dri/card0` too; plain `kmscube` picks card1 = nouveau without connectors). Workaround: software rendering via
+     `/etc/environment` (greetd gives the greeter a clean PAM env, conf.d exports don't reach it):
+     `GBM_ALWAYS_SOFTWARE=1 LIBGL_ALWAYS_SOFTWARE=1 WLR_RENDERER=pixman` (phoc's GLES renderer fails on software GBM
+     and falls back to Vulkan -> pixman for the compositor, llvmpipe for apps; kmscube on llvmpipe renders fine).
+- 12:13 greetd started, phoc + phrog running -> Phosh lock screen expected on the panel.
+- Access: `ssh user@<ip>` and `ssh root@<ip>` with the laptop key only (PermitRootLogin prohibit-password).
+- `openssh` in PKGS pulled the non-PAM sshd (pmOS's `UsePAM` policy line then errors, sshd still works): removed from PKGS.
+- `n9-modem` service: stopped at boot — not looked at yet.
