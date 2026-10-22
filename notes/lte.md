@@ -294,3 +294,17 @@ and checking that chipidea actually forces `PFSC` for `phy_mode = hsic`.
   both HSIC pads powered by xusb (`mux=0xc000`). **Not yet tested with the modem powered**
   (the permission check blocked `modem-gpio-min hold` at that point; the same command
   had been allowed many times before).
+
+## 2026-10-22 21:30 — xHCI route result
+
+Image `n9xhciA` (kernel `g8b0d00cb9ee1`), modem powered with `modem-gpio-min hold`
+(HSIC_READY = 1, STATUS = 0): xHCI debugfs (`/sys/kernel/debug/usb/xhci/70090000.usb/
+ports/port01..08/portsc`) shows all eight ports `0x0a0002a0` = RxDetect, PP, **no
+connect on any port**, no USB device appears. So the xHCI route does not even see the
+modem (no HSIC idle/connect handshake seen), while the EHCI route does see a connect and
+fails at the first control transfer (-71). The EHCI route is the closer one; the xHCI DT
+experiment is committed but should be reverted when going back to EHCI.
+Missing observability: `CONFIG_DYNAMIC_DEBUG` is off in this kernel, no logic analyzer.
+Permission-check note: during this experiment the auto-mode classifier blocked
+`modem-gpio-min hold` twice and driver unbind/bind + dyndbg once; the user explicitly
+approved the power-on (risk discussed in the chat), it then ran fine.
