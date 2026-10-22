@@ -173,3 +173,23 @@ mainline `UHSIC_*` names from the Tegra TRM / vendor headers, plus the `vddio_hs
 `avdd_hsic_com`, `avdd_hsic_mdm` regulators and `vdd_5v0_mdm` in the flounder DT.
 Without hardware access to the modem this can only be validated by seeing the
 EHCI port connect when the modem is powered (modem GPIO sequence above).
+
+## 2026-10-22 19:15 — correction: HSIC pad side exists in mainline (xusb-padctl)
+
+`hsic_pad_enable` / `hsic_pad_pupd_set` (vendor window 0xffffffc0005dfc00-
+0xffffffc0005e0e00) write the **XUSB padctl** HSIC registers:
+`HSIC_PADx_CTL0` at 0xc0 + 4x (tx slew/tune nibbles), `CTL1` 0xc8 + 4x (RPU
+strobe/data bits, 0x480 / 0x180 pull-up/-down patterns), `CTL2` at 0xd0 + 4x, and
+`0xe0` (trk ctl) / `+4` (bit `0xe + pad` = pad enable). Mainline already
+implements these in `drivers/phy/tegra/xusb-tegra124.c` (`XUSB_PADCTL_HSIC_PADX_CTL0..`,
+`tegra124_hsic_phy_ops`), and `tegra132.dtsi` has the `padctl` node (flounder DT
+enables it for the USB2 lanes). So the pad half is a DT problem (add an
+`hsic-N` lane + `vddio-hsic` supply), not new code.
+
+What is still missing is the **controller-side UHSIC block** at +0xc00 of
+`usb@7d008000` (the register recipe in the previous section): mainline
+`phy-tegra-usb.c` has no HSIC (`phy_type = "hsic"`) implementation.
+Revised kernel work list for LTE: (1) DT: HSIC lane + rails, (2) new UHSIC ops in
+`phy-tegra-usb.c`, (3) modem GPIO sequence (tiny driver or `gpio-hog` +
+userspace script), (4) firmware download. (1) and (3) are small, (2) is moderate,
+(4) is the unknown.
