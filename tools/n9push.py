@@ -56,6 +56,7 @@ for pos in range(0, len(data), BLK):
     if b"\x06" not in got:
         sys.exit("no ACK from the tablet at offset %d" % pos)
 res = read_until(b"sum=", 60)
+res += read_until(b"\n", 3)            # the hex digits follow "sum="
 dt = time.time() - t0
 txt = res.decode("utf8", "replace")
 print("sent %d bytes in %.1fs; tablet says: %s" % (len(data), dt, txt.strip().splitlines()[-1] if txt.strip() else "<nothing>"))

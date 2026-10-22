@@ -540,3 +540,14 @@ Read-only copies (adb exec-out dd, nothing written to the tablet) are in
 commit, never upload). `tools/build-modem-blob.py` builds `mdata.bin` + `sahara-args.txt` there;
 `sahara.c` takes `id:path@offset`; `lte-sahara-test.sh` pushes the blob over the serial console and
 uses the real args automatically when `sahara-args.txt` exists.
+
+## 2026-10-23 01:55 — run 15: real EFS/NV given (EF1/EF2/RCA/CDR), modem still dies
+
+`lte-run15` (image `n9hsicF2`): dsp1 (44 MB, 200 s) + per-unit blob (17.8 MB, 100 s) pushed over the
+serial console (byte counts match; the "CHECKSUM MISMATCH" lines were a pusher bug: it stopped
+reading at `sum=` before the hex digits arrived; fixed). All stages status 0, including ids 16/17 with real
+EFS. `MDM2AP_STATUS=1`, `HSIC_READY` stays 0, no USB device after a port power-cycle (CCS=0), and
+`ERRFATAL=1` arrives later than with blank NV (somewhere between +43 s and +67 s after STATUS=1
+instead of +32 s). Real NV changes the timing but not the outcome: the modem OS still never
+raises HSIC_READY. Next: REA of the vendor `mdm_fatal` / errfatal / ramdump path and of what else
+`qcks` does after Sahara (NORMAL_BOOT_DONE, ioctls) to find what the AP owes the modem.
