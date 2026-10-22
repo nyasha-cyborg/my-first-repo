@@ -517,3 +517,26 @@ modem renumerates on USB (new PID); the EHCI port still shows the stale 05c6:900
 reset / power toggle via the tegra-hsic-poke debugfs), identify the new USB PID(s), load
 qcserial/option/cdc-wdm/qmi_wwan modules in the test image, and decide about real EFS/NV
 (needs the user's go-ahead: EF1/EF2 + the HTC combined partition).
+
+## 2026-10-23 01:20 — blank NV: the modem OS boots then dies; now feeding it the unit's real EFS/NV
+
+Runs 10-14 (blank EFS + stub-header HTC NV): all Sahara stages accepted (21,25,30,23,16,17,40,42,43,45,46,
+44,31,8,6), `MDM2AP_STATUS=1` ~7 s after `apps.mbn`, **HSIC_READY stays 0 and no USB device
+appears** (PORTSC CCS=0 after a port power-cycle), **ERRFATAL=1 exactly ~32 s after STATUS=1** (t+29 ->
+t+61). With blank NV the modem OS never brings its HSIC up and crashes: consistent with it needing real
+EFS/RF NV. (A first attempt failed because the script's wait loop used `ps`, which the tablet's busybox
+does not have; use `pgrep`.)
+User granted (chat, 2026-10-23) reading the tablet's own EF1/EF2/RCA/CDR partitions to give the
+modem real data. REA of `qcks` (FUN_00402284 / FUN_00402e44) gives the recipe; partition names (from
+the binary): EF1, EF2, RCA (the "HTC combined" partition), CDR (CDMA record), all under
+`/dev/block/platform/sdhci-tegra.3/by-name/`, sizes 8/8/8/2 MiB:
+- efs1.bin / efs2.bin = first 3 MiB of EF1 / EF2 (dd bs=1024 count=0xc00)
+- htcNN.bin = 40-byte stub (htc*.mbn from the image) + 1 MiB of RCA (or CDR) at skip KiB:
+  40 ssmem @0, 42 NV_MFG @0x400, 43 RF_NV @0xc00, 45 USER_DATA @0x800, 46 CDMA = CDR @0
+  44/47/48/49/55/56 carrier CNV: rcdata_<att|tmo|vzw|spcs|ul|o2>.img is dd'd INTO RCA at 7168 KiB
+  (a write by the stock tool; we only overlay it in memory) then 1 MiB is read from 7168 KiB.
+Read-only copies (adb exec-out dd, nothing written to the tablet) are in
+`~/Downloads/nexus9/modem-private/` (mode 700, OUTSIDE the repo, contains IMEI/calibration: never
+commit, never upload). `tools/build-modem-blob.py` builds `mdata.bin` + `sahara-args.txt` there;
+`sahara.c` takes `id:path@offset`; `lte-sahara-test.sh` pushes the blob over the serial console and
+uses the real args automatically when `sahara-args.txt` exists.
