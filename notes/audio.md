@@ -737,3 +737,10 @@ bottom only, both -> both; user confirmed. tone-min got a 7th arg
 bottom speaker for the L/R test (not investigated; Android rotates routing).
 Open: volume/boost tuning, headphones (rt5506), landscape channel convention
 (userspace/UCM job), a proper ALSA mixer in the real rootfs.
+
+Loudness (user, 2026-10-22): 10 % raw tone "sounded loud". Expected: the
+mainline `tfa989x` driver bypasses the amp DSP, so there is **no hardware
+volume**; amps run at fixed gain. Android was about -37 dB at volume 3. Needed
+for the real rootfs: software volume (ALSA softvol / PipeWire gain) with a
+default output cap so a full-scale stream cannot overdrive the speakers.
+Keep test tones <= 10 % (3 % for a gentler check).
