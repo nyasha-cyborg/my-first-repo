@@ -384,3 +384,21 @@ them and the dl.google.com files are still served.)
   `volantis-ota-n9f27m-ad1aee0f.zip`, 817,456,682 B).
 - Not downloaded yet (needs the user's OK). Purpose: vendor blobs for REA (`mdm_helper`,
   `ks`, RIL/QMI libs, modem firmware `radio`/`MD1` equivalents) and a restore path.
+
+## 2026-10-22 22:40 — official LTE factory image downloaded and unpacked (the missing modem userspace)
+
+Downloaded (user gave the exact URL): `volantisg-n4f27p-factory-1e29c858.zip` (SHA-256
+verified = Google's value) to `~/Downloads/nexus9/google-volantisg-n4f27p/` (zip,
+`extracted/`, `raw/` = simg2img'd system/vendor, `vendor-files/` = rdump of vendor
+/bin /etc /firmware/mdm). Not flashed. REA `extract_artifact` of the inner image zip gave
+boot/system/vendor/recovery/cache; bootloader image = 3.50.0.0143 (same as this unit).
+- vendor `/bin`: `ks`, `efsks`, `qcks`, `netmgrd`, `port-bridge`, `qmiproxy`, `qmuxd`,
+  `bridgemgrd`, `usbhub`, `usbhub_init`, `diag_*`, `time_daemon`, ... ; `/lib64`:
+  `libril-qc-qmi-1.so`, `libqmi*.so`, `libmdmdetect.so`, `libdsi_netctrl.so`, `libidl.so`.
+- vendor `/firmware/mdm/image`: `sbl1.mbn rpm.mbn tz.mbn mba.mbn apps.mbn dsp1.mbn`
+  (+ `htc*.mbn` stubs, `rcdata_{att,o2,tmo,ul,vzw}.img`) and `radiover.cfg`: the modem
+  boot chain the AP pushes over HSIC (Sahara/QDL via `ks`). So the modem has no own flash
+  image path: boot ROM waits for sbl1 over HSIC -> this is why STATUS stays 0.
+- Next: REA of `ks`/`efsks`/`libmdmdetect` (what device node / protocol, timing, what
+  triggers it, which usb VID:PID it expects), and the init rc in boot.img (mdm_helper
+  equivalent). Then a userspace Sahara client for mainline once the HSIC link works.
