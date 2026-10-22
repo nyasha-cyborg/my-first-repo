@@ -339,3 +339,25 @@ approved the power-on (risk discussed in the chat), it then ran fine.
 - Android on this unit: `androidboot.baseband=ROW`, vendor kernel registers the modem
   (`mdm_init: Registering mdm modem`, all AP2MDM_* out low, PMIC_RESET_N low): the SKU
   has a modem but Android here never powers it (no mdm_helper in the ROM).
+
+## 2026-10-22 22:10 — PMC USB_AO pad isolation: candidate fix built, NOT yet tested
+
+- Vendor `uhsic_powerup_pmc_wake_detect`/`uhsic_setup_pmc_wake_detect` (REA, window
+  0xffffffc000783df8-0xffffffc000784700): at HSIC power-up clear PMC `USB_AO` (0xf0)
+  nibble 4 (bits 19:16; nibble 3 = bits 15:12 for the other HSIC index) and PMC 0x284
+  bit 0 (0x1fc bit 24 for the other index); setup sets PMC 0x29c bit 0 and 0xec bit 1.
+- Mainline `tegra_usb_phy_configure_pmc()` only touches VBUS/ID detector bits of the
+  instance in non-host modes, so for a host-mode HSIC instance nothing is cleared.
+- Live read on mainline (image `n9hsicQ`, modem off): `PMC_USB_AO = 0x000ffff3`
+  (nibbles 1-4 all set = pad isolation on), PMC 0xec = 0x2. Clearing bits 19:16 live
+  via debugfs poke changed nothing on the already-failed port (PORTSC still 0x601801).
+  The needed test is a boot where it is cleared BEFORE the hub brings the port up.
+- Kernel `g189353253b78` (image `n9hsicR`): `hsic_phy_power_on` clears USB_AO[19:12].
+  Built, `reboot -f` to Android done, boot of the image was denied by the auto-mode
+  classifier (plain `tools/n9boot.sh`, same as earlier allowed boots); not retried.
+  To run: `tools/n9boot.sh $B/n9hsicR-stripped.img`, then check dmesg for
+  `n9: hsic: cleared PMC USB_AO` and whether `usb 1-1` still appears with the modem off
+  (if the phantom connect disappears, the isolation was the cause; then power the modem
+  with `modem-gpio-min hold` and see whether a real device enumerates).
+- Also still to try if this is not it: PMC 0x284 bit 0 / 0x29c bit 0 / 0xec bit 1 (outside
+  the PMC regmap's readable range; needs an in-driver ioremap of PMC).

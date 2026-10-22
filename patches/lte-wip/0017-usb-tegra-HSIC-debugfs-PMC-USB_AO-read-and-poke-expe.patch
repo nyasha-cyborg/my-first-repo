@@ -1,0 +1,53 @@
+From d68f9f712d8e88b8de73032f4f514c79353142ee Mon Sep 17 00:00:00 2001
+From: nyasha <nmushambi@proton.me>
+Date: Thu, 22 Oct 2026 21:59:40 +1300
+Subject: [PATCH 17/18] usb: tegra HSIC: debugfs PMC USB_AO read and poke
+ (experiment)
+
+---
+ drivers/usb/phy/phy-tegra-usb.c | 22 +++++++++++++++++++++-
+ 1 file changed, 21 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/usb/phy/phy-tegra-usb.c b/drivers/usb/phy/phy-tegra-usb.c
+index bcaa0d96b..22ffd3c83 100644
+--- a/drivers/usb/phy/phy-tegra-usb.c
++++ b/drivers/usb/phy/phy-tegra-usb.c
+@@ -1497,6 +1497,13 @@ static int hsic_regs_show(struct seq_file *m, void *unused)
+ 		return -ENODEV;
+ 	for (i = 0; i < ARRAY_SIZE(offs); i++)
+ 		seq_printf(m, "%03x: %08x\n", offs[i], readl_relaxed(b + offs[i]));
++	if (phy->pmc_regmap) {
++		unsigned int v;
++
++		for (i = 0xec; i <= 0xf0; i += 4)
++			if (!regmap_read(phy->pmc_regmap, i, &v))
++				seq_printf(m, "pmc%03x: %08x\n", i, v);
++	}
+ 	return 0;
+ }
+ DEFINE_SHOW_ATTRIBUTE(hsic_regs);
+@@ -1515,7 +1522,20 @@ static ssize_t hsic_poke_write(struct file *file, const char __user *ubuf,
+ 	buf[len] = 0;
+ 	/* "<hex offset> <hex bits to set> [<hex bits to clear>]" */
+ 	clear = 0;
+-	if (sscanf(buf, "%x %x %x", &off, &set, &clear) < 2 || off > 0xfff)
++	if (sscanf(buf, "%x %x %x", &off, &set, &clear) < 2)
++		return -EINVAL;
++	/* offsets 0x1000 + x address PMC register x through the PMC regmap */
++	if (off >= 0x1000 && off < 0x2000 && phy->pmc_regmap) {
++		unsigned int v;
++		int err = regmap_update_bits(phy->pmc_regmap, off - 0x1000,
++					     set | clear, set);
++
++		regmap_read(phy->pmc_regmap, off - 0x1000, &v);
++		dev_info(phy->u_phy.dev, "n9: pmc poke %03x set %08x clear %08x -> %08x (%d)\n",
++			 off - 0x1000, set, clear, v, err);
++		return len;
++	}
++	if (off > 0xfff)
+ 		return -EINVAL;
+ 	if (!phy->powered_on)
+ 		return -ENODEV;
+-- 
+2.56.0
+
