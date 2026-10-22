@@ -36,6 +36,8 @@ def read_until(token, secs):
 os.write(fd, ("\n/bin/rxfile %s %d\n" % (dst, len(data))).encode())
 if b"RXREADY" not in read_until(b"RXREADY", 15):
     sys.exit("receiver did not start")
+time.sleep(1.0)                     # let the receiver settle, drop anything stale
+termios.tcflush(fd, termios.TCIFLUSH)
 t0 = time.time()
 BLK = 4096
 for pos in range(0, len(data), BLK):
