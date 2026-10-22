@@ -105,3 +105,31 @@ go-ahead; EF1/EF2 (IMEI/EFS) must never be copied.
 **Official downloads**: Google's developer pages list only a generic AOSP
 flounder image (`aosp_flounder-img-3458595-*.zip`, no radio); the Nexus 9
 factory images are no longer on the public factory page.
+
+## 2026-10-22 18:45 — more REA + what mainline lacks
+
+- `mdm_status_changed` (MDM2AP_STATUS edge handler) is a small state machine:
+  status high = modem running (sets flag, notifies the driver), status low after
+  running = modem went away -> restart path (`mdm_fatal`, ramdump/recovery, calls
+  the board `ops` callbacks). `mdm_hsic_ready` just latches MDM2AP_HSIC_READY = 1
+  into the driver state; the HSIC host is loaded after both are seen.
+- HSIC port = the third EHCI instance, `tegra-ehci.2` = USB3 controller
+  `usb@7d008000` (`phy3`). **Mainline has no Tegra HSIC PHY support**:
+  `drivers/usb/phy/phy-tegra-usb.c` implements UTMI/ULPI only (the `hsic` value
+  exists in the binding enum but no code; only a `UHSIC_RESET` bit is touched).
+  `tegra132.dtsi` declares `usb@7d008000`/`phy3` as `utmi`, status disabled, and
+  the flounder DT does not enable it. So an HSIC PHY driver (port of the vendor
+  `tegra_usb_phy` HSIC code: pad power, strobe/data trim, tristate, calibration)
+  would have to be written before the modem could even enumerate.
+
+### LTE feasibility, honest summary
+1. GPIO/rail power sequence: small, known (see above).
+2. **HSIC PHY driver for Tegra124/132: missing in mainline, the largest kernel job**
+   (REA of the vendor HSIC PHY code in the Android Image would be the source).
+3. Modem firmware boot over `ks_bridge` + the proprietary images: userspace,
+   needs the modem images (device partitions `MD1/MD2` or a Google download) and
+   knowledge of the Sahara/kickstart flow; the Android ROM on this unit does not
+   ship the helper, so no working reference.
+4. Then QMI (`qmi_wwan`) + ModemManager: mainline already supports.
+Estimate: several focused sessions for 1+2, open-ended for 3. Risk to hardware
+is low if EFS (EF1/EF2) is never touched and no modem partition is written.
