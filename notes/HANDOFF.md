@@ -279,3 +279,25 @@ Never `cat` a regmap debugfs file while the storm runs: it wedges the shell.
 Headphones (rt5506 + rt5677 routing) and "final improvements" (volume/softvol
 cap, amp boost tuning, patch cleanup for upstream) are parked until later. PMIC
 interrupt delivery check started, result in `stability-debug.md` (unverified).
+
+## LTE modem (state 2026-10-23, details in notes/lte.md)
+
+**Works on mainline:** the MDM9x25 modem is booted over HSIC (USB2 controller `usb@7d004000`/`phy2`),
+loaded with the stock Google firmware images through a small Sahara client, runs stably, and answers QMI
+over `qmi_wwan`/`cdc-wdm` (firmware 0.09.30.0105, IMEI read from this unit's own EFS data).
+
+Quick start (tablet in Android, test image flow):
+- `tools/lte-service-test.sh` = cold-boot test of the whole device-side service (image `n9hsicI2`);
+  `tools/lte-sahara-test.sh` / `tools/lte-retry.sh` = host-driven variants; `tools/qmi-probe.py` queries the modem
+  (`--online` / `--lowpower` switch the radio).
+- Device side (what a boot service must run): `tools/mdm-data.sh` (per-unit EFS/NV from EF1/EF2/RCA/CDR, read-only),
+  `tools/mdm-boot.sh`, binaries `modem-gpio-min`, `sahara`; kernel: DT `usb@7d004000` + `&phy2` HSIC
+  (`patches/lte-wip/0019`), `qmi_wwan`/`cdc-wdm` modules. Firmware images: stock `volantisg-n4f27p`
+  (`~/Downloads/nexus9/google-volantisg-n4f27p/`, vendor-files/mdm/image), not redistributable here.
+- Private data (never commit): `~/Downloads/nexus9/modem-private/` (raw EF1/EF2/RCA/CDR copies = IMEI + RF calibration).
+- The user's permission rules for the lte scripts live in `.claude/settings.local.json`.
+
+**Not done:** (1) a real boot service in the final rootfs (init script + ship the firmware images),
+(2) EFS write-back (stock `efsks` saves the modem's EFS to EF1/EF2/EF3; we never write partitions),
+(3) SIM + ModemManager/oFono + `wwan0` data (no SIM tested), (4) upstream-quality HSIC PHY patches
+(squash `patches/lte-wip/0001-0021`), (5) the occasional tablet hang during long foreground console commands.
