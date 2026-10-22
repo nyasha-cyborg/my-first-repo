@@ -12,7 +12,7 @@ Until then everything is tested with `fastboot boot`.
 | `tools/pmos/build.sh` | host: installer image `n9pmos-inst`, pmOS boot image `n9pmos-boot`, `overlay.tgz` |
 | `tools/pmos/install-rootfs.sh` | tablet (installer ramdisk): mke2fs via apk-staged e2fsprogs, `apk.static` pmOS v26.06 + Alpine v3.24 |
 | `tools/pmos/push-overlay.sh` | host -> tablet over WiFi: modules, firmware, LTE modem service + firmware, ssh key |
-| `tools/pmos/finish-rootfs.sh` | tablet: user `user` (password 147147, pmbootstrap default — change it), services, ttyGS0 root autologin, WiFi |
+| `tools/pmos/finish-rootfs.sh` | tablet: user `user` (screen PIN 147147, pmbootstrap default — change it), SSH key-only (no password, no root), services, ttyGS0 root autologin (USB only), WiFi |
 | `tools/pmos/init` | pmOS boot ramdisk: busybox, mounts UDA, loop-mounts the image, `switch_root` to OpenRC; rescue shell on ttyGS0 |
 
 - No pmbootstrap: it needs sudo (password on this host). The rootfs is built on the tablet with `apk.static` (native

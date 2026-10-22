@@ -17,6 +17,13 @@ c chown -R $U:$U /home/$U
 [ -f $R/home/$U/.ssh/authorized_keys ] && chmod 700 $R/home/$U/.ssh && chmod 600 $R/home/$U/.ssh/authorized_keys
 say "user $U ready"
 
+# SSH: keys only (the default password must not open the tablet to the whole LAN), no root login
+mkdir -p $R/etc/ssh/sshd_config.d
+printf 'PasswordAuthentication no\nKbdInteractiveAuthentication no\nPermitRootLogin no\n' > $R/etc/ssh/sshd_config.d/50-n9-keys-only.conf
+grep -q '^Include /etc/ssh/sshd_config.d' $R/etc/ssh/sshd_config 2>/dev/null || \
+	sed -i '1i Include /etc/ssh/sshd_config.d/*.conf' $R/etc/ssh/sshd_config
+say "sshd: key login only"
+
 # services (OpenRC); missing ones are skipped
 for s in sshd networkmanager greetd n9-modem bluetooth chronyd; do
 	[ -e $R/etc/init.d/$s ] && c rc-update add $s default >/dev/null 2>&1 && say "enabled $s"
