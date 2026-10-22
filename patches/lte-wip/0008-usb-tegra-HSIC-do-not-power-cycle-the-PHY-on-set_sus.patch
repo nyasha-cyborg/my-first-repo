@@ -1,0 +1,32 @@
+From 7ac2bc15fd195655687094f58e7495c73d230339 Mon Sep 17 00:00:00 2001
+From: nyasha <nmushambi@proton.me>
+Date: Thu, 22 Oct 2026 21:01:41 +1300
+Subject: [PATCH 8/9] usb: tegra HSIC: do not power cycle the PHY on
+ set_suspend
+
+---
+ drivers/usb/phy/phy-tegra-usb.c | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/drivers/usb/phy/phy-tegra-usb.c b/drivers/usb/phy/phy-tegra-usb.c
+index 1d194e94f..62ff209dc 100644
+--- a/drivers/usb/phy/phy-tegra-usb.c
++++ b/drivers/usb/phy/phy-tegra-usb.c
+@@ -1122,6 +1122,14 @@ static int tegra_usb_phy_set_suspend(struct usb_phy *u_phy, int suspend)
+ 	if (WARN_ON(!phy->freq))
+ 		return -EINVAL;
+ 
++	/*
++	 * The HSIC PHY must not be power cycled by the controller's low-power
++	 * transitions: that resets the link in the middle of the hub's
++	 * enumeration (the vendor driver has a dedicated resume path instead).
++	 */
++	if (phy->is_hsic_phy)
++		return 0;
++
+ 	/*
+ 	 * PHY is sharing IRQ with the CI driver, hence here we either
+ 	 * disable interrupt for both PHY and CI or for CI only.  The
+-- 
+2.56.0
+

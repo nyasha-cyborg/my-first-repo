@@ -16,3 +16,9 @@ State and findings: `notes/lte.md`. Status: PHY powers up, the modem is detected
 high-speed device on the HSIC port, enumeration fails with EPROTO (-71).
 Squash 2-5 away before anything is sent upstream; (1) needs binding docs and the
 vendor register names cleaned up.
+
+Later commits: `set_suspend` no-op for HSIC (the chipidea Tegra glue called the PHY's
+power_off/power_on on every LPM transition; fixing it did not cure -71) and an
+alternative route: HSIC lanes handed to the **xHCI** controller (`usb@70090000`,
+`nvidia,function = "xusb"`, firmware `nvidia/tegra124/xusb.bin` from linux-firmware,
+uncompressed into the ramdisk). Image `n9xhciA`, kernel `g8b0d00cb9ee1`.

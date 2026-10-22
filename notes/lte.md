@@ -276,3 +276,21 @@ same -71 failure. Remaining untried: HSIC tracking clock/calibration (no `hsic_t
 clock in mainline Tegra124), the vendor board pad table values, the vendor EHCI
 HSIC port-reset special handling (vendor `ehci-tegra` hub control, not read yet),
 and checking that chipidea actually forces `PFSC` for `phy_mode = hsic`.
+
+## 2026-10-22 21:10 — vendor EHCI paths ruled out; trying the xHCI controller
+
+- `tegra_ehci_hub_control` (vendor) is generic: after SetPortFeature(RESET/POWER) it just
+  calls the PHY `bus_reset` / `port_power` hooks; nothing HSIC-specific. `tegra_usb_phy_open`
+  (vendor) acquires only the usual clocks; no `hsic_trk` clock on the EHCI path.
+- Found a bug in my port: chipidea's Tegra glue calls `usb_phy_set_suspend()` on LPM
+  transitions, which re-ran the whole HSIC power-on/off. Made it a no-op for HSIC
+  (`g7ac2bc15fd19`, image `n9hsicH`); enumeration still fails with -71.
+- Vendor `_usb_phy_init` writes (0x498, SDIS, DEVLC bit 28) added: no effect.
+- Alternative: the Tegra124 xHCI controller also owns the HSIC lanes and mainline has full
+  HSIC port support in `xhci-tegra` + `xusb-tegra124.c`. Set up in the DT (lane function
+  `xusb`, `usb@70090000` with phys `hsic-0/hsic-1` and the 8 supplies mapped to
+  `avdd_pll` / `avdd_usb` / `vdd_1v8`), firmware `xusb.bin` in the ramdisk. Result so
+  far: the xHCI controller loads the firmware and registers two buses (USB 2 and 3.0),
+  both HSIC pads powered by xusb (`mux=0xc000`). **Not yet tested with the modem powered**
+  (the permission check blocked `modem-gpio-min hold` at that point; the same command
+  had been allowed many times before).

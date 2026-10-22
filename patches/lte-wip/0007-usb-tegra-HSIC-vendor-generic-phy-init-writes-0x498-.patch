@@ -1,7 +1,7 @@
 From 9282a7e23caeb91ef86f0c4428ce34363a3a42bc Mon Sep 17 00:00:00 2001
 From: nyasha <nmushambi@proton.me>
 Date: Thu, 22 Oct 2026 19:01:04 +1300
-Subject: [PATCH 7/7] usb: tegra HSIC: vendor generic phy init writes (0x498,
+Subject: [PATCH 7/9] usb: tegra HSIC: vendor generic phy init writes (0x498,
  SDIS, DEVLC bit 28)
 
 ---
