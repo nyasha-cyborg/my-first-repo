@@ -589,3 +589,17 @@ real rootfs (init script running power sequence + a Sahara loader reading the im
 /lib/firmware or the stock vendor image + the EFS/RCA data read from the partitions at boot),
 (2) EFS write-back (stock `efsks` saves the modem's EFS to EF1/EF2/EF3; we do not write), (3) SIM +
 ModemManager/oFono + wwan0 data path, (4) cleanup/upstreamable HSIC PHY patches.
+
+## 2026-10-23 03:55 — MILESTONE 4: whole bring-up runs on the tablet as one script from a cold boot
+
+- `tools/mdm-data.sh` builds the per-unit Sahara data on the device from the eMMC partitions (GPT names via
+  sysfs PARTNAME: EF1/EF2/RCA/CDR; `dd`/`cat` only, read-only; mainline sees mmcblk0 with the Android partition
+  numbers: EF1=p21 EF2=p22 RCA=p8 CDR=p23). Output verified **byte-identical** to the host-built blob.
+- `tools/mdm-boot.sh` (device side): data -> `modem-gpio-min hold 4` -> wait 9008 -> `sahara` (15 images) ->
+  wait STATUS=1 -> `modprobe qmi_wwan` -> hub re-authorize -> 9048 -> `/dev/cdc-wdm0..4`.
+- `tools/lte-service-test.sh` = cold-boot test (image `n9hsicI2` has the scripts, /fw stubs, rcdata baked in; only
+  dsp1.mbn (44 MB, too big for fastboot boot) is pushed over the serial console): result "modem enumerated as
+  05c6:9048: /dev/cdc-wdm0..4", QMI probe identical to run 18 (firmware 0.09.30.0105, valid IMEI).
+- Restart without reboot also works (`tools/lte-retry.sh`): `qcserial` must NOT be loaded (it claims the 9008).
+- One unexplained tablet hang + watchdog reset while running a long foreground n9sh command; the same steps run
+  fine as a background service polled from the host.
