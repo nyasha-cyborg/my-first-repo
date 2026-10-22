@@ -639,3 +639,23 @@ real rootfs (the test image is a ramdisk); paths differ from the test image only
   CS+PS detached. So the modem finds Spark's LTE cell and does not complete attach. Candidates: attach rejected (need NAS
   get_system_info 0x4d for the reject cause), no APN profile / no data call requested, carrier NV (rcdata overlays are US carriers),
   Skinny SIM provisioning. Next: get_system_info, WDS start network with APN `internet`.
+
+## 2026-10-23 10:30 — cause of "camped, not attached": Verizon attach profile; Skinny APN set (attach unconfirmed)
+
+- Service test ran clean from cold (dsp1 in 8 MB parts): sahara 15 images, STATUS=1, 05c6:9048, cdc-wdm0..4.
+- `--online` then (+45 s) `--sysinfo`: serving system reg_state 2, CS/PS detached, RAT LTE, PLMN 530-05.
+  NAS sys info (0x4d): LTE srv_status 1 (limited), true_srv_status 3 (limited regional), srv_domain 4 (camped),
+  network 53005, `is_sys_forbidden` 0. RF band info (0x31): LTE, band enum 0x7e = **B7** (2600). Sys sel pref (0x34):
+  LTE band pref 0x7ff5bdf3fff (B1-14, B3/B7/B20/B28 all allowed), mode pref GSM|UMTS|LTE, network sel automatic,
+  domain CS+PS. So bands/prefs are not the blocker.
+- `--wds wapaccess.co.nz` (start network): QMI error 14 CALL_FAILED, end reason 3 (no service), verbose type 3 / 2001.
+- **`--profiles`: default 3GPP profile = 1; all 10 profiles are Verizon (1 `VZWIMS` IPv4v6, 2 `VZWADMIN`, 3 `VZWINTERNET`,
+  4 `VZWAPP`, 5 `VZW800`, 6-10 repeat).** The LTE attach PDN uses profile 1's APN, so Spark is very likely rejecting
+  the attach (unknown APN). Earlier fix in `qmi-probe.py`: `--sysinfo` used NAS 0x43 (cell location), now 0x34 + 0x31.
+- Skinny APN verified on the web (skinny.co.nz settings page): `wapaccess.co.nz`, IPv4, no auth, 530/05.
+- `--setapn wapaccess.co.nz` (WDS 0x28 on profile 1, APN + PDP IPv4; RAM-only EFS, efsks never runs) returned 0, then
+  low power -> online. **Right after this the tablet console stalled (mode B: gadget enumerated, n9sh no reply)**, so
+  the attach result is unknown. The modem restart that follows recovery reverts profile 1 to VZWIMS.
+- Next: after recovery rerun `lte-service-test.sh`, `--setapn wapaccess.co.nz` *before* `--online` (avoid the
+  mode switch storm), wait 45 s, `--sysinfo`; if attached, `--wds wapaccess.co.nz` then DHCP on wwan0 (raw-ip).
+  Persistent fix for the rootfs: set profile 1 at every modem boot (or ModemManager's initial-EPS-bearer APN).

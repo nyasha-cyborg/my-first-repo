@@ -91,11 +91,35 @@ if "--lowpower" in sys.argv:
 
 if "--sysinfo" in sys.argv:
     (r, t) = req(3, cNAS, 0x4d); print("NAS sys info:", r, {hex(k): v.hex() for k, v in t.items() if k != 2})
-    (r, t) = req(3, cNAS, 0x43); print("NAS sys sel pref:", r, {hex(k): v.hex() for k, v in t.items() if k != 2})
+    (r, t) = req(3, cNAS, 0x34); print("NAS sys sel pref:", r, {hex(k): v.hex() for k, v in t.items() if k != 2})
+    (r, t) = req(3, cNAS, 0x31); print("NAS RF band info:", r, {hex(k): v.hex() for k, v in t.items() if k != 2})
+
+if "--setapn" in sys.argv:
+    # WDS MODIFY_PROFILE_SETTINGS (0x28) on 3GPP profile 1 (the LTE attach profile): APN + PDP type IPv4.
+    # Only the modem's in-RAM EFS changes (efsks never runs, nothing is written to EF1/EF2); a modem restart undoes it.
+    apn = sys.argv[sys.argv.index("--setapn") + 1].encode()
+    (r, t) = req(1, cWDS, 0x28, bytes([1, 2, 0, 0, 1, 0x14, len(apn), 0]) + apn + bytes([0x11, 1, 0, 0]))
+    print("WDS modify profile 1 -> apn %s IPv4:" % apn.decode(), r, {hex(k): v.hex() for k, v in t.items() if k != 2})
+    (r, t) = req(2, cDMS, 0x2e, bytes([1, 1, 0, 1])); print("set low power:", r)
+    import time; time.sleep(3)
+    (r, t) = req(2, cDMS, 0x2e, bytes([1, 1, 0, 0])); print("set online  :", r)
+
+if "--profiles" in sys.argv:
+    # WDS default profile (0x49), profile list (0x2a), settings of each 3GPP profile (0x2b); read only
+    (r, t) = req(1, cWDS, 0x49, bytes([1, 2, 0, 0, 0])); print("WDS default 3GPP profile:", r, t.get(1, b"?").hex())
+    (r, t) = req(1, cWDS, 0x2a, bytes([0x10, 1, 0, 0])); print("WDS profile list:", r, t.get(1, b"?").hex())
+    lst = t.get(1, b"")
+    n, p, idxs = (lst[0] if lst else 0), 1, []
+    for _ in range(n):
+        idxs.append(lst[p + 1]); p += 3 + lst[p + 2]
+    for i in idxs:
+        (r, t) = req(1, cWDS, 0x2b, bytes([1, 2, 0, 0, i]))
+        print("  profile %d:" % i, r, {hex(k): (v.decode("ascii", "replace") if k in (0x10, 0x14) else v.hex()) for k, v in t.items() if k != 2})
 
 if "--wds" in sys.argv:
     apn = (sys.argv[sys.argv.index("--wds") + 1] if len(sys.argv) > sys.argv.index("--wds") + 1 else "internet").encode()
-    (r, t) = req(1, cWDS, 0x20, bytes([0x14, len(apn), 0]) + apn)
+    # TLV 0x14 = APN, TLV 0x19 = IP family preference (4 = IPv4)
+    (r, t) = req(1, cWDS, 0x20, bytes([0x14, len(apn), 0]) + apn + bytes([0x19, 1, 0, 4]))
     print("WDS start network (apn %s):" % apn.decode(), r, {hex(k): v.hex() for k, v in t.items() if k != 2})
     (r, t) = req(1, cWDS, 0x22); print("WDS packet status:", r, t.get(1, b"?").hex())
 
