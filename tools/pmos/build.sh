@@ -73,7 +73,8 @@ OLD=$(strings "$BASE/init" | grep -o '/lib/modules/[^/]*/rfkill.ko' | head -1 | 
 [ ${#OLD} = ${#REL} ] || { echo "release length differs ($OLD vs $REL): rebuild the init from source" >&2; exit 1; }
 LC_ALL=C sed -i "s/$OLD/$REL/g" "$O/inst/init"
 cp /tmp/n9build/apk/x/sbin/apk.static "$O/inst/bin/apk.static"
-mkdir -p "$O/inst/etc/n9-apk-keys"; cp "$O/keys"/*.pub "$O/inst/etc/n9-apk-keys/"
+mkdir -p "$O/inst/etc/n9-apk-keys" "$O/inst/etc/ssl/certs"; cp "$O/keys"/*.pub "$O/inst/etc/n9-apk-keys/"
+cp /etc/ssl/certs/ca-certificates.crt "$O/inst/etc/ssl/cert.pem"	# apk.static (OpenSSL) CA file for the https mirrors
 install -m755 "$HERE/install-rootfs.sh" "$HERE/finish-rootfs.sh" "$O/inst/bin/"
 (cd "$O/inst" && find . | cpio -o -H newc --quiet | gzip -9 > "$O/inst.gz")
 python3 -I "$T/bootimg-swap-ramdisk.py" "$BIMG" "$O/inst.gz" "$D/n9pmos-inst-stripped.img" "$O/kernel" | tail -1

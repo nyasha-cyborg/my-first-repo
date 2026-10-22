@@ -15,17 +15,26 @@ A=https://dl-cdn.alpinelinux.org/alpine/$ALP
 PKGS=${PKGS:-"postmarketos-base device-htc-flounder device-htc-flounder-nonfree-firmware postmarketos-ui-phosh
 	mesa-dri-gallium mesa-egl mesa-gles kmscube glmark2 mpv yt-dlp firefox openssh alsa-utils alsa-ucm-conf
 	networkmanager-wifi wpa_supplicant e2fsprogs htop"}
-APK="/bin/apk.static --arch aarch64 --keys-dir /etc/n9-apk-keys --no-progress --timeout 120"
+APK="/bin/apk.static -U --arch aarch64 --keys-dir /etc/n9-apk-keys --no-progress --timeout 120"
 R=/mnt/pmos
 say() { echo "pmos-install: $*"; }
+
+# the test init's DHCP hook writes "nameserver A B" on one line, which no resolver parses: one per line
+ns=$(sed -n 's/^nameserver//p' /etc/resolv.conf 2>/dev/null | tr ' ' '\n' | grep -E '^[0-9.]+$' | awk '!s[$0]++')
+[ -n "$ns" ] || ns=1.1.1.1
+for n in $ns; do echo "nameserver $n"; done > /etc/resolv.conf
 
 mkdir -p /data /tmp/e2fs $R
 grep -q " /data " /proc/mounts || mount -t ext4 -o noatime /dev/mmcblk0p31 /data
 mkdir -p /data/pmos
 say "userdata mounted, $(df -m /data | awk 'NR==2{print $4}') MiB free"
 
+# apk.static (OpenSSL) reads /etc/ssl/cert.pem relative to --root: give every target root a copy
+certs() { mkdir -p "$1/etc/ssl"; cp /etc/ssl/cert.pem "$1/etc/ssl/cert.pem"; }
+
 # 1. e2fsprogs in a throwaway staging root (busybox has no mke2fs)
 if [ ! -x /tmp/e2fs/sbin/mke2fs ]; then
+	certs /tmp/e2fs
 	$APK --root /tmp/e2fs --initdb -X $A/main add e2fsprogs > /tmp/e2fs.log 2>&1 || { tail -5 /tmp/e2fs.log; exit 1; }
 fi
 
@@ -49,6 +58,7 @@ for d in dev proc sys; do
 done
 
 # 3. packages
+certs $R
 mkdir -p $R/etc/apk/keys
 cp /etc/n9-apk-keys/* $R/etc/apk/keys/
 printf '%s\n' "$M" "$A/main" "$A/community" > $R/etc/apk/repositories
