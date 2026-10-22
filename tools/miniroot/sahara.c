@@ -128,8 +128,23 @@ static void serve(u64 id, u64 off, u64 len)
 	for (i = 0; i < nimg; i++)
 		if (img[i].id == (long)id)
 			break;
-	if (i == nimg)
-		die("device asked for an image id we do not have:", id);
+	if (i == nimg) {
+		/* unknown id: serve zeros (test mode, nothing is read from the tablet's storage) */
+		say("ZERO image for id ");
+		sayn(id, 10);
+		say("\n");
+		if (cur != MAXIMG - 1) {
+			long k;
+
+			for (k = 0; k < (long)BUFSZ; k++)
+				fbuf[k] = 0;
+			cur = MAXIMG - 1;
+		}
+		if (off + len > BUFSZ)
+			die("zero read too large", off + len);
+		send_all(fbuf + off, len);
+		return;
+	}
 	if (cur != i) {
 		load(i);
 		cur = i;

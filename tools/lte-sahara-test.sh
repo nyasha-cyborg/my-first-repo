@@ -2,10 +2,10 @@
 # Full LTE bring-up test cycle (user-run: the classifier blocks the modem power-on / boot from
 # the assistant's tools).  Boots a test image that contains /bin/sahara and /fw/*.mbn,
 # powers the modem (vendor GPIO sequence), runs the Sahara loader and logs everything.
-#   usage: tools/lte-sahara-test.sh [image]       default: n9hsicU
+#   usage: tools/lte-sahara-test.sh [image]       default: n9hsicV
 # Log: /tmp/n9build/lte-sahara-test.txt     Nothing is flashed; no EFS partition is touched.
 HERE=$(dirname "$0")
-IMG=${1:-$HOME/Downloads/nexus9/bootimg-build/n9-mainline/n9hsicU-stripped.img}
+IMG=${1:-$HOME/Downloads/nexus9/bootimg-build/n9-mainline/n9hsicV-stripped.img}
 OUT=/tmp/n9build/lte-sahara-test.txt
 {
 echo "== back to Android"; "$HERE/n9sh.sh" 'reboot -f' 3 >/dev/null 2>&1; sleep 5
