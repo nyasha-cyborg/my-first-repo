@@ -7,7 +7,7 @@ R=/mnt/pmos
 U=${PMOS_USER:-user}
 PW=${PMOS_PASSWORD:-147147}		# pmbootstrap's default; change it on the tablet with passwd
 say() { echo "pmos-finish: $*"; }
-c() { chroot $R "$@"; }
+c() { chroot $R /usr/bin/env PATH=/usr/sbin:/usr/bin:/sbin:/bin "$@"; }
 
 echo n9 > $R/etc/hostname
 grep -q "^$U:" $R/etc/passwd || c adduser -D -s /bin/ash -g "" $U
@@ -40,7 +40,8 @@ grep -q ttyGS0 $R/etc/securetty 2>/dev/null || echo ttyGS0 >> $R/etc/securetty
 # WiFi from the installer's wpa_supplicant.conf (first network block)
 if [ -f /etc/wpa_supplicant.conf ]; then
 	SSID=$(sed -n 's/^[[:space:]]*ssid="\(.*\)"/\1/p' /etc/wpa_supplicant.conf | head -1)
-	PSK=$(sed -n 's/^[[:space:]]*psk="\(.*\)"/\1/p' /etc/wpa_supplicant.conf | head -1)
+	# psk is either a quoted passphrase or the derived 64-hex key; NetworkManager takes both forms
+	PSK=$(sed -n -e 's/^[[:space:]]*psk="\(.*\)"/\1/p' -e 's/^[[:space:]]*psk=\([0-9a-fA-F]\{64\}\)[[:space:]]*$/\1/p' /etc/wpa_supplicant.conf | head -1)
 	if [ -n "$SSID" ] && [ -n "$PSK" ]; then
 		D=$R/etc/NetworkManager/system-connections
 		mkdir -p $D
