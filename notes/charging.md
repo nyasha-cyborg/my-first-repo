@@ -46,9 +46,13 @@ for an SDP port, not a driver bug. The battery was near full (CV taper), so +190
 
 Logger (`/tmp/charge.log`, 10 s samples) started on `n9hsicI2`, cable moved laptop -> wall charger by the user for 5 min,
 then back. The tablet came back in **Android with `ro.boot.bootreason=watchdog`, Android uptime 266 s** at that point:
-mainline hung within seconds of the cable change and the 120 s... watchdog reset it, so the charger session ran in
+mainline hung within seconds of the cable change and the hardware watchdog reset it, so the charger session ran in
 Android/hboot and the tmpfs log was lost. The eMMC rolling record was stale (ends at uptime 316 s, the logger was past
 850 s), so no kernel log of the hang. Unknown yet: is it the USB unplug itself (gadget disconnect / VBUS loss) or the
 charger plug (DCP detection, bq24190/palmas VBUS interrupts)? **Blocker for pmOS** (plugging in a charger must work).
 Next: stream the charge log and /proc/kmsg over WiFi (tablet `nc -l`, host `socat` connects out; ufw on the host),
 then separate (a) unplug + replug to the laptop from (b) unplug -> wall charger.
+
+**Parked 2026-10-23 12:20 (user):** fix later, pmOS install comes first. Until then: charge with the tablet off or in
+Android, or keep it on the laptop cable while mainline runs; do not move the cable while mainline is up. The WiFi
+streaming setup above (tablet `nc -l -p 5555/5556`, host `socat TCP:192.168.1.100:<port> -`) is the plan for the retest.
