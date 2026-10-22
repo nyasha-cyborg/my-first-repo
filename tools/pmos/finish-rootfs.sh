@@ -57,8 +57,8 @@ cat > $R/etc/local.d/n9-kmsg.start <<'EOF'
 EOF
 chmod +x $R/etc/local.d/n9-kmsg.start
 c rc-update add local default >/dev/null 2>&1 || true
-# the Phosh greeter only once the display hang is understood: start it by hand (rc-service greetd start)
-GREETD_AUTOSTART=${GREETD_AUTOSTART:-0}
+# Phosh greeter autostart (GREETD_AUTOSTART=0 to start it by hand; the watchdog covers a hang)
+GREETD_AUTOSTART=${GREETD_AUTOSTART:-1}
 
 # services (OpenRC); missing ones are skipped
 [ "$GREETD_AUTOSTART" = 1 ] || c rc-update del greetd default >/dev/null 2>&1 || true

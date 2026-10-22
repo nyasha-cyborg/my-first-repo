@@ -51,3 +51,11 @@ Until then everything is tested with `fastboot boot`.
 - Access: `ssh user@<ip>` and `ssh root@<ip>` with the laptop key only (PermitRootLogin prohibit-password).
 - `openssh` in PKGS pulled the non-PAM sshd (pmOS's `UsePAM` policy line then errors, sshd still works): removed from PKGS.
 - `n9-modem` service: stopped at boot — not looked at yet.
+- 12:25 first boot hung ~2 min after greetd started (mode B: gadget enumerated, no shell, no WiFi); no watchdog in that
+  boot -> power cycle. Now: watchdog armed + fed, kernel log in /var/log/kmsg.log (5 s sync), greetd opt-in.
+- 12:50 second boot stable. User saw the text console (fbcon works). kmscube (llvmpipe) on card0: **cube visible** —
+  KMS scanout works (it quit after <1 s only because its stdin was closed: run it as `sleep 40 | kmscube ...`).
+- 12:56 greetd started by hand: phoc + gnome-session (non-systemd fallback) + phosh-osk-stevia + phrog. **The user saw
+  the PIN screen, typed 147147 with the touch keyboard and logged in** (slow, software rendering). Phosh session
+  c16 on seat0/tty7: phoc, gnome-session --session=phosh, phosh. Touch works. greetd autostart re-enabled.
+- The 12:25 hang is unexplained (no log); kmsg.log now keeps evidence if it recurs.
