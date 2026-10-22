@@ -13,7 +13,7 @@ SIZE_MB=${SIZE_MB:-12288}
 M=https://mirror.postmarketos.org/postmarketos/$PMOS
 A=https://dl-cdn.alpinelinux.org/alpine/$ALP
 PKGS=${PKGS:-"postmarketos-base device-htc-flounder device-htc-flounder-nonfree-firmware postmarketos-ui-phosh
-	mesa-dri-gallium mesa-egl mesa-gles kmscube glmark2 mpv yt-dlp firefox openssh alsa-utils alsa-ucm-conf
+	mesa-dri-gallium mesa-egl mesa-gles kmscube mpv yt-dlp firefox openssh alsa-utils alsa-ucm-conf
 	networkmanager-wifi wpa_supplicant e2fsprogs htop"}
 APK="/bin/apk.static -U --arch aarch64 --keys-dir /etc/n9-apk-keys --no-progress --timeout 120"
 R=/mnt/pmos
@@ -28,6 +28,12 @@ mkdir -p /data /tmp/e2fs $R
 grep -q " /data " /proc/mounts || mount -t ext4 -o noatime /dev/mmcblk0p31 /data
 mkdir -p /data/pmos
 say "userdata mounted, $(df -m /data | awk 'NR==2{print $4}') MiB free"
+# evidence that survives a reset (one install was cut by a watchdog reset): kernel log + memory every 10 s
+if [ ! -f /tmp/n9-installlog.pid ]; then
+	(cat /proc/kmsg >> /data/pmos/install-kmsg.log) </dev/null >/dev/null 2>&1 &
+	(while true; do echo "$(cat /proc/uptime) $(grep -E '^(MemFree|MemAvailable|Dirty):' /proc/meminfo | tr -s ' ' | tr '\n' ' ') load $(cut -d' ' -f1-3 /proc/loadavg)" >> /data/pmos/install-mem.log; sync; sleep 10; done) </dev/null >/dev/null 2>&1 &
+	echo $! > /tmp/n9-installlog.pid
+fi
 
 # apk.static (OpenSSL) reads /etc/ssl/cert.pem relative to --root: give every target root a copy
 certs() { mkdir -p "$1/etc/ssl"; cp /etc/ssl/cert.pem "$1/etc/ssl/cert.pem"; }
@@ -48,6 +54,10 @@ if [ ! -f /data/pmos/rootfs.img ]; then
 	say "created /data/pmos/rootfs.img (${SIZE_MB} MiB, ext4)"
 fi
 if ! grep -q " $R " /proc/mounts; then
+	# a reset mid-install leaves the image dirty: repair before mounting
+	mkdir -p /tmp/e2fs/data; grep -q " /tmp/e2fs/data " /proc/mounts || mount -o bind /data /tmp/e2fs/data
+	chroot /tmp/e2fs /sbin/e2fsck -p /data/pmos/rootfs.img || chroot /tmp/e2fs /sbin/e2fsck -fy /data/pmos/rootfs.img || true
+	umount /tmp/e2fs/data
 	L=$(losetup -f)
 	losetup $L /data/pmos/rootfs.img
 	mount -t ext4 -o noatime $L $R

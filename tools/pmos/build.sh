@@ -20,6 +20,12 @@ D=$HOME/Downloads/nexus9/bootimg-build/n9-mainline
 VF=$HOME/Downloads/nexus9/google-volantisg-n4f27p/vendor-files/mdm/image
 CLANG="clang --target=aarch64-linux-gnu -nostdlib -static -O2 -fuse-ld=lld -fno-stack-protector -fno-builtin"
 mk() { make -s -C "$KDIR" O="$KOUT" ARCH=arm64 LLVM=1 "$@"; }
+setcmd() {	# image cmdline: the v0 header's 512-byte field at offset 64
+	python3 -I -c 'import sys
+p, c = sys.argv[1], sys.argv[2].encode()
+b = bytearray(open(p, "rb").read()); b[64:576] = c + bytes(512 - len(c)); open(p, "wb").write(b)
+print("cmdline", p.rsplit("/", 1)[-1] + ":", c.decode())' "$1" "$2"
+}
 
 REL=$(mk kernelrelease)
 case $REL in *-dirty) echo "kernel tree is dirty ($REL): commit first" >&2; exit 1;; esac
@@ -78,6 +84,8 @@ cp /etc/ssl/certs/ca-certificates.crt "$O/inst/etc/ssl/cert.pem"	# apk.static (O
 install -m755 "$HERE/install-rootfs.sh" "$HERE/finish-rootfs.sh" "$O/inst/bin/"
 (cd "$O/inst" && find . | cpio -o -H newc --quiet | gzip -9 > "$O/inst.gz")
 python3 -I "$T/bootimg-swap-ramdisk.py" "$BIMG" "$O/inst.gz" "$D/n9pmos-inst-stripped.img" "$O/kernel" | tail -1
+setcmd "$D/n9pmos-inst-stripped.img" "androidboot.hardware=flounder buildvariant=user console=tty0"	# no watchdog arming:
+	# a long apk run got the test init's busybox feeder killed and the 90 s watchdog reset the tablet mid-install
 
 # 2. pmOS boot image
 mkdir -p "$O/boot"/{bin,dev,proc,sys,root,data}
@@ -85,13 +93,5 @@ cp "$BASE/bin/busybox" "$O/boot/bin/busybox"
 install -m755 "$HERE/init" "$O/boot/init"
 (cd "$O/boot" && find . | cpio -o -H newc --quiet | gzip -9 > "$O/boot.gz")
 python3 -I "$T/bootimg-swap-ramdisk.py" "$BIMG" "$O/boot.gz" "$D/n9pmos-boot-stripped.img" "$O/kernel" | tail -1
-python3 -I - "$D/n9pmos-boot-stripped.img" <<'PY'
-import sys
-p = sys.argv[1]
-b = bytearray(open(p, 'rb').read())
-cmd = b"androidboot.hardware=flounder console=tty0 quiet loglevel=4"
-b[64:64 + 512] = cmd + bytes(512 - len(cmd))
-open(p, 'wb').write(b)
-print("pmOS boot cmdline:", cmd.decode())
-PY
+setcmd "$D/n9pmos-boot-stripped.img" "androidboot.hardware=flounder console=tty0 quiet loglevel=4"
 echo "release $REL: $D/n9pmos-inst-stripped.img, $D/n9pmos-boot-stripped.img, $O/overlay.tgz"
