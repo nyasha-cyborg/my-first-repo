@@ -1,18 +1,21 @@
 #!/sbin/openrc-run
 # Nexus 9 LTE modem bring-up (HSIC, MDM9x25).  Install as /etc/init.d/n9-modem.
-# Needs /usr/lib/n9-modem/{modem-gpio-min,sahara,mdm-boot.sh,mdm-data.sh} and the firmware images in
-# /lib/firmware/n9-modem (see tools/rootfs/provision-modem-fw.sh).  Never writes any partition.
-description="Boot the LTE modem (Sahara) and expose QMI (cdc-wdm)"
+# Needs /usr/lib/n9-modem/{modem-gpio-min,sahara,qmi-connect,mdm-boot.sh,mdm-data.sh,mdm-net.sh} and the firmware
+# images in /lib/firmware/n9-modem (see tools/rootfs/provision-modem-fw.sh).  Never writes any partition.
+# /etc/conf.d/n9-modem:  APN="wapaccess.co.nz"   (empty = boot the modem and expose QMI only, no data call)
+#                        METRIC=200  RESOLV=0     (see mdm-net.sh)
+description="Boot the LTE modem (Sahara), expose QMI (cdc-wdm) and optionally start the data call on wwan0"
 depend() { need localmount; after modules; }
 start() {
 	ebegin "Booting the LTE modem"
 	modprobe qmi_wwan 2>/dev/null
-	FW=/lib/firmware/n9-modem DSP1=/lib/firmware/n9-modem/dsp1.mbn \
-		/usr/lib/n9-modem/mdm-boot.sh > /run/mdm-boot.log 2>&1
+	FW=/lib/firmware/n9-modem DSP1=/lib/firmware/n9-modem/dsp1.mbn APN="$APN" METRIC="${METRIC:-200}" \
+		RESOLV="${RESOLV:-0}" /usr/lib/n9-modem/mdm-boot.sh > /run/mdm-boot.log 2>&1
 	eend $? "see /run/mdm-boot.log"
 }
 stop() {
 	ebegin "Stopping the LTE modem"
+	ip link set wwan0 down 2>/dev/null
 	pkill modem-gpio-min
 	eend 0
 }

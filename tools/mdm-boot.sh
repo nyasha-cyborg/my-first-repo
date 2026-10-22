@@ -49,3 +49,7 @@ done
 sleep 3
 say "modem enumerated as 05c6:9048: $(ls /dev/cdc-wdm* 2>/dev/null | tr '\n' ' ')"
 tail -1 /tmp/mdm.log
+# with an APN set, also bring up the data call and wwan0 (tools/mdm-net.sh)
+if [ -n "$APN" ]; then
+	"$HERE/mdm-net.sh" || exit 5
+fi

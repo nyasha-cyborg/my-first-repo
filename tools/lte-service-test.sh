@@ -40,5 +40,21 @@ for i in $(seq 1 40); do
 	case "$L" in *"05c6:9048"*|*"never"*|*"cannot"*) break;; esac
 done
 echo "== final"; "$HERE/n9sh.sh" 'cat /tmp/mdm-boot.log; ls /dev/cdc-wdm* 2>&1; tail -1 /tmp/mdm.log' 12
+# APN=<apn>: also test the data call (the image's /bin/mdm-boot.sh predates mdm-net.sh, so run it from /tmp)
+if [ -n "$APN" ]; then
+	echo "== data call (APN $APN)"
+	clang --target=aarch64-linux-gnu -nostdlib -static -O2 -fuse-ld=lld -fno-stack-protector -fno-builtin \
+		-o /tmp/n9build/qmi-connect "$HERE/miniroot/qmi-connect.c"
+	python3 -I "$HERE/n9push.py" /tmp/n9build/qmi-connect /tmp/qmi-connect | tail -1
+	python3 -I "$HERE/n9push.py" "$HERE/mdm-net.sh" /tmp/mdm-net.sh | tail -1
+	"$HERE/n9sh.sh" "chmod +x /tmp/qmi-connect /tmp/mdm-net.sh; (APN=$APN /tmp/mdm-net.sh > /tmp/mdm-net.log 2>&1 &); sleep 1; echo started" 10
+	for i in $(seq 1 40); do
+		sleep 5
+		L=$("$HERE/n9sh.sh" 'cat /tmp/mdm-net.log' 8 2>&1 | tr '\n' '|')
+		echo "[$((i*5))s] $L"
+		case "$L" in *"mdm-net: "*) break;; esac
+	done
+	"$HERE/n9sh.sh" 'ip route | grep wwan0; ping -c 4 -W 3 -I wwan0 1.1.1.1 | tail -2; nslookup example.com $(sed -n "s/QMI_DNS1=//p" /tmp/mdm-net.env) 2>&1 | tail -2' 40
+fi
 echo flush
 } 2>&1 | tee "$OUT"
