@@ -1,0 +1,46 @@
+From 95115d84d8b84217badb8e64f1f1a16d790dd51e Mon Sep 17 00:00:00 2001
+From: nyasha <nmushambi@proton.me>
+Date: Thu, 22 Oct 2026 18:41:43 +1300
+Subject: [PATCH 2/5] usb: tegra: HSIC debug dump after power on (temporary)
+
+---
+ arch/arm64/boot/dts/nvidia/tegra132-flounder.dts |  1 +
+ drivers/usb/phy/phy-tegra-usb.c                  | 10 ++++++++++
+ 2 files changed, 11 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts b/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
+index 31f0004b4..0e69626c5 100644
+--- a/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
++++ b/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
+@@ -1657,6 +1657,7 @@ pllx_throttle_trip {
+ 
+ 
+ &phy3 {
++	status = "okay";
+ 	phy_type = "hsic";
+ 	phys = <&hsic1>;
+ 	phy-names = "hsic";
+diff --git a/drivers/usb/phy/phy-tegra-usb.c b/drivers/usb/phy/phy-tegra-usb.c
+index 2553e0293..b09d2ac0c 100644
+--- a/drivers/usb/phy/phy-tegra-usb.c
++++ b/drivers/usb/phy/phy-tegra-usb.c
+@@ -839,6 +839,16 @@ static int hsic_phy_power_on(struct tegra_usb_phy *phy)
+ 	hsic_rmw(base, UHSIC_MISC_CFG0, 0, UHSIC_MISC_CFG0_PORT_POWER);
+ 	udelay(1);
+ 
++	dev_info(phy->u_phy.dev,
++		 "n9: hsic up: susp=%08x pads1=%08x pads0=%08x misc0=%08x devlc=%08x portsc=%08x usbsts=%08x\n",
++		 readl_relaxed(base + USB_SUSP_CTRL),
++		 readl_relaxed(base + UHSIC_PADS_CFG1),
++		 readl_relaxed(base + UHSIC_PADS_CFG0),
++		 readl_relaxed(base + UHSIC_MISC_CFG0),
++		 readl_relaxed(base + TEGRA_USB_HOSTPC1_DEVLC),
++		 readl_relaxed(base + TEGRA_USB_PORTSC1_HOSTPC),
++		 readl_relaxed(base + 0x134));
++
+ 	return 0;
+ 
+ power_off_pad:
+-- 
+2.56.0
+

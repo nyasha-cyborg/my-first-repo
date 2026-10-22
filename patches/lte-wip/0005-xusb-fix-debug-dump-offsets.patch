@@ -1,0 +1,27 @@
+From e846893ae9847a4ab55dcb67d9d6df6b89b2ed58 Mon Sep 17 00:00:00 2001
+From: nyasha <nmushambi@proton.me>
+Date: Thu, 22 Oct 2026 18:49:35 +1300
+Subject: [PATCH 5/5] xusb: fix debug dump offsets
+
+---
+ drivers/phy/tegra/xusb-tegra124.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/phy/tegra/xusb-tegra124.c b/drivers/phy/tegra/xusb-tegra124.c
+index b4bdbc6d7..f022ed964 100644
+--- a/drivers/phy/tegra/xusb-tegra124.c
++++ b/drivers/phy/tegra/xusb-tegra124.c
+@@ -964,8 +964,8 @@ static int tegra124_hsic_phy_power_on(struct phy *phy)
+ 		 padctl_readl(padctl, XUSB_PADCTL_HSIC_PADX_CTL0(index)),
+ 		 padctl_readl(padctl, XUSB_PADCTL_HSIC_PADX_CTL1(index)),
+ 		 padctl_readl(padctl, XUSB_PADCTL_HSIC_PADX_CTL2(index)),
+-		 padctl_readl(padctl, XUSB_PADCTL_HSIC_PAD_TRK_CTL),
+-		 padctl_readl(padctl, XUSB_PADCTL_USB2_PAD_MUX));
++		 padctl_readl(padctl, 0x0e0),
++		 padctl_readl(padctl, 0x004));
+ 
+ 	return 0;
+ }
+-- 
+2.56.0
+

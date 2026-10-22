@@ -1,0 +1,101 @@
+From 3219cf7e331c12688d1a1d89fa0a58a4e5d69b56 Mon Sep 17 00:00:00 2001
+From: nyasha <nmushambi@proton.me>
+Date: Thu, 22 Oct 2026 18:49:14 +1300
+Subject: [PATCH 4/5] usb/phy: tegra HSIC: power both pad lanes and dump pad
+ registers (experiment)
+
+---
+ arch/arm64/boot/dts/nvidia/tegra132-flounder.dts |  4 ++--
+ drivers/phy/tegra/xusb-tegra124.c                |  8 ++++++++
+ drivers/usb/phy/phy-tegra-usb.c                  | 16 ++++++++++++++++
+ include/linux/usb/tegra_usb_phy.h                |  1 +
+ 4 files changed, 27 insertions(+), 2 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts b/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
+index 0e69626c5..ac4f8998d 100644
+--- a/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
++++ b/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
+@@ -1659,6 +1659,6 @@ pllx_throttle_trip {
+ &phy3 {
+ 	status = "okay";
+ 	phy_type = "hsic";
+-	phys = <&hsic1>;
+-	phy-names = "hsic";
++	phys = <&hsic1>, <&hsic0>;
++	phy-names = "hsic", "hsic2";
+ };
+diff --git a/drivers/phy/tegra/xusb-tegra124.c b/drivers/phy/tegra/xusb-tegra124.c
+index dadb9dacc..b4bdbc6d7 100644
+--- a/drivers/phy/tegra/xusb-tegra124.c
++++ b/drivers/phy/tegra/xusb-tegra124.c
+@@ -959,6 +959,14 @@ static int tegra124_hsic_phy_power_on(struct phy *phy)
+ 		 XUSB_PADCTL_HSIC_PAD_CTL1_RPU_STROBE;
+ 	padctl_writel(padctl, value, XUSB_PADCTL_HSIC_PADX_CTL1(index));
+ 
++	dev_info(padctl->dev,
++		 "n9: hsic%u pad: ctl0=%08x ctl1=%08x ctl2=%08x trk=%08x mux=%08x\n", index,
++		 padctl_readl(padctl, XUSB_PADCTL_HSIC_PADX_CTL0(index)),
++		 padctl_readl(padctl, XUSB_PADCTL_HSIC_PADX_CTL1(index)),
++		 padctl_readl(padctl, XUSB_PADCTL_HSIC_PADX_CTL2(index)),
++		 padctl_readl(padctl, XUSB_PADCTL_HSIC_PAD_TRK_CTL),
++		 padctl_readl(padctl, XUSB_PADCTL_USB2_PAD_MUX));
++
+ 	return 0;
+ }
+ 
+diff --git a/drivers/usb/phy/phy-tegra-usb.c b/drivers/usb/phy/phy-tegra-usb.c
+index b09d2ac0c..5e0666c44 100644
+--- a/drivers/usb/phy/phy-tegra-usb.c
++++ b/drivers/usb/phy/phy-tegra-usb.c
+@@ -782,6 +782,11 @@ static int hsic_phy_power_on(struct tegra_usb_phy *phy)
+ 		}
+ 	}
+ 
++	if (phy->hsic_pad2) {
++		phy_init(phy->hsic_pad2);
++		phy_power_on(phy->hsic_pad2);
++	}
++
+ 	val = readl_relaxed(base + UHSIC_PADS_CFG1);
+ 	writel_relaxed(val & ~UHSIC_PADS_CFG1_PD_MASK, base + UHSIC_PADS_CFG1);
+ 	writel_relaxed((val & ~UHSIC_PADS_CFG1_PD_MASK) | 0x89,
+@@ -868,6 +873,11 @@ static int hsic_phy_power_off(struct tegra_usb_phy *phy)
+ 	hsic_rmw(base, UHSIC_PADS_CFG1, 0, UHSIC_PADS_CFG1_POWER_DOWN);
+ 	utmi_wait_register(base + USB_SUSP_CTRL, USB_PHY_CLK_VALID, 0);
+ 
++	if (phy->hsic_pad2) {
++		phy_power_off(phy->hsic_pad2);
++		phy_exit(phy->hsic_pad2);
++	}
++
+ 	if (phy->hsic_pad) {
+ 		phy_power_off(phy->hsic_pad);
+ 		phy_exit(phy->hsic_pad);
+@@ -1525,6 +1535,12 @@ static int tegra_usb_phy_probe(struct platform_device *pdev)
+ 			return dev_err_probe(&pdev->dev,
+ 					     PTR_ERR(tegra_phy->hsic_pad),
+ 					     "Failed to get HSIC pad PHY\n");
++
++		tegra_phy->hsic_pad2 = devm_phy_optional_get(&pdev->dev, "hsic2");
++		if (IS_ERR(tegra_phy->hsic_pad2))
++			return dev_err_probe(&pdev->dev,
++					     PTR_ERR(tegra_phy->hsic_pad2),
++					     "Failed to get second HSIC pad PHY\n");
+ 		break;
+ 
+ 	case USBPHY_INTERFACE_MODE_ULPI:
+diff --git a/include/linux/usb/tegra_usb_phy.h b/include/linux/usb/tegra_usb_phy.h
+index c7dfd62f9..48c24c550 100644
+--- a/include/linux/usb/tegra_usb_phy.h
++++ b/include/linux/usb/tegra_usb_phy.h
+@@ -76,6 +76,7 @@ struct tegra_usb_phy {
+ 	bool is_ulpi_phy;
+ 	bool is_hsic_phy;
+ 	struct phy *hsic_pad;
++	struct phy *hsic_pad2;
+ 	struct gpio_desc *reset_gpio;
+ 	struct reset_control *pad_rst;
+ 	bool wakeup_enabled;
+-- 
+2.56.0
+

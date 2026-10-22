@@ -231,3 +231,41 @@ lanes + `usb@7d008000` host + `phy3` hsic in the flounder DT; image `n9hsicC`).
   problem. Next: HSIC pad trims (xusb-padctl `HSIC_PADx_CTL0..2`: rx strobe/data trim,
   tx rtune/slew, termination) from Android's values, and the vendor host bring-up
   quirks (`usb_phy_bringup_host_controller`).
+
+## 2026-10-22 19:05 (device 06:05) — HSIC tuning experiments, no enumeration yet
+
+Kernel `ge846893ae984` (image `n9hsicE`), built with the new `tools/build-test-image.sh`.
+Patches exported to `patches/lte-wip/` (see its README).
+
+Observed with the modem powered (HSIC_READY = 1) in either order (host first, or modem
+first then `unbind`/`bind` of `7d008000.usb` — the vendor order is modem first):
+- Pad registers after `tegra124_hsic_phy_power_on`: `ctl0=0x88 ctl1=0x480 ctl2=0
+  trk(0xe0)=0 mux=0` for both lanes; PHY: `susp=0x809c0 pads1=0x91 pads0=0x8a88
+  misc0=0x44f8e devlc=0x86000202`.
+- `usb 1-1: new high-speed USB device` then `device descriptor read/64, error -71`,
+  `device not accepting address N, error -71`, `unable to enumerate USB device`.
+  A connect is seen (PORTSC CCS) and speed detected, the first control transfer dies.
+- Tried, no effect (each = unbind/bind + 4-5 s, `phy_tegra_xusb` module parameters):
+  rx strobe/data trim 0/2/4/7/10/15; tx rtune n/p over {0,4,8,12,15}; strobe trim
+  0..31 in steps of 3; powering both HSIC lanes (hsic-0 and hsic-1).
+
+Ideas not yet tried (most promising first):
+1. **HSIC tracking clock**: mainline Tegra124 has no `hsic_trk` clock (no entry in
+   `clk-tegra124.c` / dt-bindings) and the xusb HSIC lane code has no tracking /
+   calibration step; the vendor sets the STRB_TRIM register (0xe0) from board data and
+   ends `HSIC_PAD_CTL1` with bit 3 (PD_TRX) set after a 25-50 us delay (mainline leaves
+   it clear). Try the vendor final value `ctl1 = 0x488` and a `trk` clock.
+2. Vendor host quirk `usb_phy_bringup_host_controller`: host reset, PORTSC
+   `PP`, a PORTSC test-control toggle (PTC = 5 then 0), then wait CCS/PE, then suspend
+   the port; the generic chipidea path does none of it. Could matter because HSIC has
+   no chirp handshake.
+3. Board pad table of the vendor xhci driver (`hsic_pad_enable`: rx strobe/data trim,
+   tx rtune/slew, `trk` start timer) lives in vendor board data not in the DT; find it
+   in the Image (`tegra_xusb_pdata`) to get the real values.
+4. Modem side: AP2MDM_WAKEUP / VDD_MIN lines untouched; the boot ROM may need a
+   specific wake handshake; the vendor `qcom_usb_modem_power` driver also runs
+   `mdm_hsic_phy_*` callbacks that are mostly logging.
+5. The device resets the tablet if registers of the UHSIC block are read from outside
+   the driver (`regdump.ko`); only in-driver dumps are safe.
+
+The tablet is left in Android; the modem power GPIOs fall back on reboot.
