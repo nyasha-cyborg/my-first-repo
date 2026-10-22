@@ -214,3 +214,20 @@ mainline: `vdd-out2-5v0` 5 V (the `vdd_5v0_mdm` consumer), `avdd-dsi-csi` 1.2 V
   device (expected: `05c6:9008`-style download mode).
 - Safe state: nothing written to storage; the modem stays powered until a reset or
   power-cycle (HSIC_READY still high after the tool exited).
+
+## 2026-10-22 18:45 (device 05:45) — HSIC host enumerates a USB device from the modem
+
+Kernel `g95115d84d8b8` (linux-flounder: new HSIC mode in `phy-tegra-usb.c`, HSIC pad
+lanes + `usb@7d008000` host + `phy3` hsic in the flounder DT; image `n9hsicC`).
+- PHY power-on works: `SUSP_CTRL=0x000809c0` (CLK_VALID set), `PADS_CFG1=0x91`,
+  `DEVLC=0x86000202` (PTS = HSIC), no timeout. (Reading the UHSIC registers from
+  outside the driver with `regdump.ko` **hung the tablet** — the watchdog rebooted it;
+  use in-driver prints.)
+- After the modem power-on (`modem-gpio-min hold`, HSIC_READY = 1) the USB core logs
+  `usb 1-1: new high-speed USB device number 3 using ci_hdrc` repeatedly, then
+  `device descriptor read/64, error -71` and `device not accepting address N, error -71`.
+  So the modem is **detected as a high-speed device on the HSIC port**; enumeration
+  fails at the first control transfers with EPROTO = a signalling/tuning or timing
+  problem. Next: HSIC pad trims (xusb-padctl `HSIC_PADx_CTL0..2`: rx strobe/data trim,
+  tx rtune/slew, termination) from Android's values, and the vendor host bring-up
+  quirks (`usb_phy_bringup_host_controller`).
