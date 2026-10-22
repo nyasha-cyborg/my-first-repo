@@ -621,3 +621,19 @@ unplug/plug, and see whether LEVEL_HIGH without invert is the cleaner fix).
 - Tools: `tools/stage-modules.sh`, `tools/n9sh.sh`, `tools/soak-dbg.sh`,
   `tools/miniroot/{btscan-min,i2cget-min,tone-min}.c`; init gained
   `/etc/n9-selfreset` (stop pinging the watchdog after ~160 s).
+
+## 2026-10-22 17:50 — PMIC interrupt delivery check (kernel g5d830bfca033)
+
+- `rtc0` = palmas-rtc, `rtc1` = tegra_rtc (its clock reads 1970, so an epoch
+  alarm set from `date +%s` is not a valid test there; only rtc0 counts).
+- Palmas parent IRQ (LIC 86, edge): count 8466 by 174 s uptime, then **0 new in
+  10 s** at idle. So the boot-time burst is over; no storm now.
+- RTC alarm on rtc0 set +5 s: `wakealarm` stayed set after expiry, child IRQ
+  `palmas 8 ... rtc` count stayed 0, and all PMIC INT status regs (page 0x5a,
+  0x10-0x1c) read 0 afterwards. So either the alarm is not arming at the PMIC
+  or the interrupt is consumed before the status can be read; delivery after
+  the `nvidia,invert-interrupt` removal is therefore still **unverified**.
+- Next: read the Palmas RTC registers (alarm interrupt enable bit) right after
+  setting the alarm; trigger a known PMIC event (USB VBUS plug: `palmas_usb_vbus`
+  counted 1 so far) and see whether the parent count moves; compare with
+  Android's `/proc/interrupts` over a plug/unplug. Deferred by the user.

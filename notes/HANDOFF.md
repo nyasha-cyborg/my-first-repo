@@ -274,3 +274,8 @@ Never `cat` a regmap debugfs file while the storm runs: it wedges the shell.
 3. Audio bring-up (`audio.md`), touch events, installed boot (needs approval
    to flash).
 4. Upstream: pwrseq/LPO ordering, probe-time power, VBUS comparator fix.
+
+## Deferred by the user (2026-10-22)
+Headphones (rt5506 + rt5677 routing) and "final improvements" (volume/softvol
+cap, amp boost tuning, patch cleanup for upstream) are parked until later. PMIC
+interrupt delivery check started, result in `stability-debug.md` (unverified).
