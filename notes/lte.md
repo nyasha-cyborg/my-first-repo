@@ -308,3 +308,34 @@ Missing observability: `CONFIG_DYNAMIC_DEBUG` is off in this kernel, no logic an
 Permission-check note: during this experiment the auto-mode classifier blocked
 `modem-gpio-min hold` twice and driver unbind/bind + dyndbg once; the user explicitly
 approved the power-on (risk discussed in the chat), it then ran fine.
+
+## 2026-10-22 21:55 — the EHCI "connect" is a phantom; vendor bring-up quirks tried
+
+- REA `tegra_ehci_probe` (vendor): nothing HSIC-specific (platform-data bytes, phy open,
+  usb_add_hcd). `tegra_usb_phy_power_on.part.6`: enables regulator + three clocks, then
+  runs the PHY ops wrapped in board pre/post hooks. The board hooks `mdm_hsic_phy_init/
+  open/pre_resume/...` only log (and timestamp). No hidden register work there.
+- `usb_phy_bringup_host_controller` (vendor, `uhsic_phy_*`): USBCMD reset, USBMODE host,
+  DEVLC PTS=HSIC, PORTSC.PP, **PORTSC.PTC = 5 (Force_Enable_HS) for ~43 us then 0**
+  (only if ASYNCLISTADDR == 0), wait CCS and PE, clear USBSTS PCI, suspend the port.
+  Mirrored in `hsic_phy_port_power()` (kernel `ga8c25f1bca64`, image `n9hsicP`,
+  param `hsic_force_hs`): PORTSC goes 0x1005 (PP|PE|CCS) but enumeration still fails
+  with -71. (The wait helper sleeps under the hub-control spinlock: "scheduling while
+  atomic" splat; harmless, needs a `readl_poll_timeout_atomic` if kept.)
+- `vddio_hsic` = Palmas LDO5 `avdd-dsi-csi` (1.2 V, always-on): rail is fine.
+- **Control experiment (decisive): with the modem NOT powered (cold Android boot,
+  `modem-gpio-min read` = all inputs 0, HSIC_READY = 0) the EHCI port reports exactly the
+  same thing: CCS=1, line state J (PORTSC 0x00601801), "new high-speed USB device",
+  `device descriptor read/64, error -71`. UHSIC regs 0xc04-0xc34 are identical with the
+  modem on and off.** So the "connect" the whole -71 chase was based on is produced by
+  the controller's own pad pulls (UHSIC_PADS_CFG1 = 0x91) and says nothing about the
+  modem. Every earlier "no effect" result (trims, strobe, PD_TRX, vendor init writes,
+  pll_u_480m, force-HS) was measured against a link that may not have a device on it.
+- The xHCI route (real HSIC idle detect) saw no connect with the modem on: consistent
+  with the modem not driving HSIC idle at all (or the pads not reaching it).
+- Vendor `mdm_subsys_powerup` waits up to 60 s for MDM2AP_STATUS = 1 before it loads the
+  HSIC host; in all tests STATUS stays 0 (HSIC_READY = 1). So the modem may not be in the
+  state where it drives HSIC. Open: what raises STATUS (boot-ROM download stage?).
+- Android on this unit: `androidboot.baseband=ROW`, vendor kernel registers the modem
+  (`mdm_init: Registering mdm modem`, all AP2MDM_* out low, PMIC_RESET_N low): the SKU
+  has a modem but Android here never powers it (no mdm_helper in the ROM).

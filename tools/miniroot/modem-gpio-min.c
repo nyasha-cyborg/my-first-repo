@@ -7,7 +7,9 @@
  *                                     inputs for [secs] (default 20) and exit;
  *                                     lines are released on exit (outputs fall
  *                                     back to inputs), so pair with `hold`.
- *        modem-gpio-min hold          power on and stay running (outputs held)
+ *        modem-gpio-min hold [mask]   power on and stay running (outputs held);
+ *                                     mask bit0 = AP2MDM_WAKEUP high, bit1 =
+ *                                     AP2MDM_ERRFATAL high (experiments)
  * build: clang --target=aarch64-linux-gnu -nostdlib -static -O2 -fuse-ld=lld \
  *              -fno-stack-protector -fno-builtin -o modem-gpio-min tools/miniroot/modem-gpio-min.c
  */
@@ -189,6 +191,17 @@ void main2(long *sp)
 	out("AP2MDM_STATUS high\n");
 	setvals(o, 4, (1ULL << 3) | (1ULL << 1));
 	msleep(240);
+	if (mode[0] == 'h' && sp[0] > 2) {
+		unsigned long long v = (1ULL << 3) | (1ULL << 1);
+
+		if (secs & 1)
+			v |= 1ULL << 0;	/* AP2MDM_WAKEUP */
+		if (secs & 2)
+			v |= 1ULL << 2;	/* AP2MDM_ERRFATAL */
+		setvals(o, 4, v);
+		outnum("outputs=", (long)v);
+		out("\n");
+	}
 	for (i = 0; i < (mode[0] == 'h' ? 100000 : secs); i++) {
 		out("t+");
 		outnum("", i);
