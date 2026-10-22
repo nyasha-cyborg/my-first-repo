@@ -609,3 +609,15 @@ ModemManager/oFono + wwan0 data path, (4) cleanup/upstreamable HSIC PHY patches.
 `tools/rootfs/n9-modem.initd` (OpenRC service running `mdm-boot.sh`) and `tools/rootfs/provision-modem-fw.sh`
 (extracts the modem images from the official volantisg zip into /lib/firmware/n9-modem). Untested in a
 real rootfs (the test image is a ramdisk); paths differ from the test image only by FW/DSP1 variables.
+
+## 2026-10-23 09:10 — SIM inserted: card ready, radio online, not registering (yet)
+
+- Service test (`tools/lte-service-test.sh`) failed twice at the 44 MB `dsp1.mbn` serial push (no ACK at 28 MB / 32 MB, tablet
+  then hung ~10+ min; 1.8 GB RAM free, so not memory). **Workaround that works:** `split -b 8M` the file, push each part with
+  `n9push.py`, `cat p?? > /tmp/dsp1.mbn` on the tablet (sha256 matched host). Note `/tmp/n9build` is tmpfs and vanishes on host
+  reboot: `mkdir -p /tmp/n9build` first, `qmiraw` must be rebuilt (clang line in `tools/miniroot/qmiraw.c`) and pushed.
+- `mdm-boot.sh` then ran clean: sahara 15 images, STATUS=1 at t+26, 05c6:9048, cdc-wdm0..4.
+- `qmi-probe.py --online`: UIM card status = card present, USIM app state 7 (ready); DMS mode online (0); NAS serving system
+  stays reg_state 2 (searching), RAT 8 (LTE), signal ~0, for >2.5 min. Not yet explained: antenna/RF NV, carrier NV (rcdata),
+  APN/PLMN, or no coverage. Each probe run leaks a QMI client id (no release).
+- Next: NAS get_system_info / PLMN scan, check which rcdata overlay matches the SIM's carrier, check coverage by trying other bands.
