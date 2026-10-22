@@ -41,3 +41,14 @@ for an SDP port, not a driver bug. The battery was near full (CV taper), so +190
   effect per the DT comment: Android's meter is confused afterwards until a battery disconnect. Decide when choosing
   whether Android stays on the tablet.
 - Charging at a low state of charge (full 2.9 A CC phase) not observed yet.
+
+## 2026-10-23 12:10 — moving the cable from the laptop to a wall charger kills mainline
+
+Logger (`/tmp/charge.log`, 10 s samples) started on `n9hsicI2`, cable moved laptop -> wall charger by the user for 5 min,
+then back. The tablet came back in **Android with `ro.boot.bootreason=watchdog`, Android uptime 266 s** at that point:
+mainline hung within seconds of the cable change and the 120 s... watchdog reset it, so the charger session ran in
+Android/hboot and the tmpfs log was lost. The eMMC rolling record was stale (ends at uptime 316 s, the logger was past
+850 s), so no kernel log of the hang. Unknown yet: is it the USB unplug itself (gadget disconnect / VBUS loss) or the
+charger plug (DCP detection, bq24190/palmas VBUS interrupts)? **Blocker for pmOS** (plugging in a charger must work).
+Next: stream the charge log and /proc/kmsg over WiFi (tablet `nc -l`, host `socat` connects out; ufw on the host),
+then separate (a) unplug + replug to the laptop from (b) unplug -> wall charger.
