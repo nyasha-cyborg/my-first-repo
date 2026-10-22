@@ -455,3 +455,22 @@ WRONG; every HSIC experiment (pads, trims, PMC, force-HS, ...) was on a controll
 nothing connected, which is why the phantom connect and -71 were independent of the modem.
 Fix = move the HSIC setup in the flounder DT (and the test image) from `usb@7d008000`/`phy3` to
 `usb@7d004000`/`phy2`; the UHSIC register recipe is the same per controller (+0xc00).
+
+## 2026-10-22 23:50 — MILESTONE: the modem's boot ROM enumerates on mainline (USB2 HSIC host)
+
+Image `n9hsicS` (kernel `g7fd3d31d0c6f`: DT moves the HSIC host to `usb@7d004000`/`phy2`),
+`tools/lte-power-test.sh` (run by the user, the classifier blocks the modem power-on from my tools):
+```
+inputs before: all 0; power on: MDM2AP_STATUS=0 HSIC_READY=1
+usb 1-1: new high-speed USB device number 6 using ci_hdrc
+usb 1-1: language id specifier not provided by device, defaulting to English
+T: Bus=01 Lev=01 Dev#=6 Spd=480   P: Vendor=05c6 ProdID=9008   S: Product=QHSUSB__BULK
+I: If#=0 Cls=ff Sub=ff Prot=ff #EPs=2 Driver=(none)     PORTSC=0x1005 (CCS|PE|PP)
+```
+The earlier -71 with the modem off/on was a controller with nothing attached (USB3). With the
+modem off the USB2 controller still shows a phantom "new high-speed USB device" + -71 (pad
+pulls), but when the modem is powered a real device enumerates on a later attempt.
+The PHY recipe that works is the already-committed UHSIC one (no force-HS, no PMC change needed
+-- PMC USB_AO release is vendor-conform and kept). Next: Sahara client (PBL asks for image
+ids; `ks -s id:file` list in the qcks notes above), `qcserial`/usbfs, firmware from
+`~/Downloads/nexus9/google-volantisg-n4f27p/vendor-files/mdm/image`.
