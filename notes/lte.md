@@ -698,3 +698,18 @@ Working order per boot (all from the host, tablet in the n9hsicI2 test image):
 
 Next: turn steps 2-4 into the rootfs service (or ModemManager: it does raw-ip, WDS and the initial bearer APN itself, given
 `qmi_wwan` + cdc-wdm), HTTP test, longer soak, the console stalls during long serial transfers.
+
+## 2026-10-23 11:30 — MILESTONE 7: data call from the device-side service, cold boot
+
+`APN=wapaccess.co.nz tools/lte-service-test.sh` (image n9hsicI2, mdm-net.sh + qmi-connect pushed to /tmp because the image's
+/bin/mdm-boot.sh predates them): mdm-boot as before (boot ROM after ~12 s, 15 Sahara images, 9048), then within 5 s
+`qmi-connect`: profile 1 APN error 0, raw IP error 0, online error 0, call up on the first START_NETWORK;
+`mdm-net: wwan0 up: 10.245.22.210/30 gw 10.245.22.209 dns 122.56.237.1 210.55.111.1 mtu 1500`, default route via wwan0
+metric 200, `ping -I wwan0 1.1.1.1` 4/4 (27-77 ms).
+- The DNS check timed out because WiFi stayed the preferred default route and the query to Spark's resolver left via
+  wlan0 (Spark resolvers only answer their own customers). Not an LTE problem; with LTE as the only/preferred route, or
+  RESOLV=1 with METRIC below WiFi's, it resolves (manual test at 11:00 with a host route via wwan0 worked).
+- n9push printed CHECKSUM MISMATCH for the two small files although both ran correctly (pusher quirk; not chased: the
+  serial console only matters for the test images, the goal is an installed pmOS).
+- For the rootfs: install `qmi-connect`, `mdm-net.sh` next to `mdm-boot.sh` in /usr/lib/n9-modem and set APN in
+  /etc/conf.d/n9-modem (tools/rootfs/n9-modem.initd).
