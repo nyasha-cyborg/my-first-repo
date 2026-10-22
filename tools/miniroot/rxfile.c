@@ -66,7 +66,7 @@ void main2(long *sp)
 	struct tio old, raw;
 	u64 total = 0, got = 0;
 	u32 sum = 0;
-	long fd, r, i;
+	long fd, r, i, tty;
 
 	if (sp[0] < 3)
 		sc(SYS_exit, 2, 0, 0);
@@ -75,20 +75,24 @@ void main2(long *sp)
 	fd = sc(SYS_openat, AT_FDCWD, (long)argv[1], O_WRONLY_CREAT_TRUNC);
 	if (fd < 0)
 		sc(SYS_exit, 1, 0, 0);
-	sc(SYS_ioctl, 0, TCGETS, (long)&old);
+	/* the console shell runs commands with </dev/null: open the gadget tty ourselves */
+	tty = sc(SYS_openat, AT_FDCWD, (long)"/dev/ttyGS0", 2 | 0400 /* O_RDWR|O_NOCTTY */);
+	if (tty < 0)
+		sc(SYS_exit, 1, 0, 0);
+	sc(SYS_ioctl, tty, TCGETS, (long)&old);
 	raw = old;
 	raw.iflag = 0;
 	raw.oflag = 0;
 	raw.lflag = 0;
 	raw.cc[6] = 1;	/* VMIN */
 	raw.cc[5] = 0;	/* VTIME */
-	sc(SYS_ioctl, 0, TCSETS, (long)&raw);
+	sc(SYS_ioctl, tty, TCSETS, (long)&raw);
 	say("RXREADY\n");
 	while (got < total) {
 		u64 want = total - got > 4096 ? 4096 : total - got, have = 0;
 
 		while (have < want) {
-			r = sc(SYS_read, 0, (long)buf + have, want - have);
+			r = sc(SYS_read, tty, (long)buf + have, want - have);
 			if (r <= 0)
 				goto out;
 			have += r;
@@ -101,7 +105,7 @@ void main2(long *sp)
 	}
 out:
 	sc(SYS_close, fd, 0, 0);
-	sc(SYS_ioctl, 0, TCSETS, (long)&old);
+	sc(SYS_ioctl, tty, TCSETS, (long)&old);
 	say("\nrx ok ");
 	hex(got);
 	say(" sum=");
