@@ -269,3 +269,10 @@ Ideas not yet tried (most promising first):
    the driver (`regdump.ko`); only in-driver dumps are safe.
 
 The tablet is left in Android; the modem power GPIOs fall back on reboot.
+
+Later (19:10): also tried the vendor `_usb_phy_init` writes (`+0x498 |= 0x30`,
+`USBMODE &= ~0x10`, `DEVLC &= ~BIT(28)`; image `n9hsicG`, kernel `g9282a7e23cae`):
+same -71 failure. Remaining untried: HSIC tracking clock/calibration (no `hsic_trk`
+clock in mainline Tegra124), the vendor board pad table values, the vendor EHCI
+HSIC port-reset special handling (vendor `ehci-tegra` hub control, not read yet),
+and checking that chipidea actually forces `PFSC` for `phy_mode = hsic`.

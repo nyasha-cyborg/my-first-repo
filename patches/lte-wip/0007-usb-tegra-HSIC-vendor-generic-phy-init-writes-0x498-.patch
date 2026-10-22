@@ -1,0 +1,30 @@
+From 9282a7e23caeb91ef86f0c4428ce34363a3a42bc Mon Sep 17 00:00:00 2001
+From: nyasha <nmushambi@proton.me>
+Date: Thu, 22 Oct 2026 19:01:04 +1300
+Subject: [PATCH 7/7] usb: tegra HSIC: vendor generic phy init writes (0x498,
+ SDIS, DEVLC bit 28)
+
+---
+ drivers/usb/phy/phy-tegra-usb.c | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/drivers/usb/phy/phy-tegra-usb.c b/drivers/usb/phy/phy-tegra-usb.c
+index 5e0666c44..1d194e94f 100644
+--- a/drivers/usb/phy/phy-tegra-usb.c
++++ b/drivers/usb/phy/phy-tegra-usb.c
+@@ -820,7 +820,12 @@ static int hsic_phy_power_on(struct tegra_usb_phy *phy)
+ 	hsic_rmw(base, USB_SUSP_CTRL, 0, USB_SUSP_CLR);
+ 	hsic_rmw(base, USB_SUSP_CTRL, USB_SUSP_CLR, 0);
+ 
++	/* vendor _usb_phy_init(): generic controller setup */
++	hsic_rmw(base, TEGRA_USB_HOSTPC1_DEVLC, BIT(28), 0);
++	hsic_rmw(base, 0x498, 0, 0x30);
++
+ 	hsic_rmw(base, TEGRA_USB_USBMODE, 0, 3);
++	hsic_rmw(base, TEGRA_USB_USBMODE, 0x10, 0);
+ 	val = readl_relaxed(base + TEGRA_USB_HOSTPC1_DEVLC);
+ 	writel_relaxed((val & 0x09ffffff) | 0x84000000,
+ 		       base + TEGRA_USB_HOSTPC1_DEVLC);
+-- 
+2.56.0
+

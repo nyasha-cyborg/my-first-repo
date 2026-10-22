@@ -1,7 +1,7 @@
 From 3219cf7e331c12688d1a1d89fa0a58a4e5d69b56 Mon Sep 17 00:00:00 2001
 From: nyasha <nmushambi@proton.me>
 Date: Thu, 22 Oct 2026 18:49:14 +1300
-Subject: [PATCH 4/6] usb/phy: tegra HSIC: power both pad lanes and dump pad
+Subject: [PATCH 4/7] usb/phy: tegra HSIC: power both pad lanes and dump pad
  registers (experiment)
 
 ---

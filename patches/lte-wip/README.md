@@ -1,6 +1,6 @@
 # LTE modem: HSIC host work in progress (not for upstream as is)
 
-Six kernel commits on `usb-bringup` (local tree), on top of `5d830bfca`:
+Seven kernel commits on `usb-bringup` (local tree), on top of `5d830bfca`:
 1. `032f3c38c` HSIC `phy_type` in `phy-tegra-usb.c` (UHSIC block recipe from the vendor
    driver), NULL-safe HSIC pad supply in `xusb-tegra124.c`, flounder DT: HSIC pad lanes
    + `usb@7d008000` host + `phy3` hsic.
@@ -10,6 +10,7 @@ Six kernel commits on `usb-bringup` (local tree), on top of `5d830bfca`:
 4. `3219cf7e3` power both HSIC pad lanes + pad register dump, experiment.
 5. `e846893ae` fix debug offsets.
 6. `e7505a04e` `hsic_pd_trx` knob (vendor sets PD_TRX again after the pad delay).
+7. `9282a7e23` vendor generic `_usb_phy_init` writes (0x498 |= 0x30, USBMODE.SDIS clear, DEVLC bit 28): no effect.
 
 State and findings: `notes/lte.md`. Status: PHY powers up, the modem is detected as a
 high-speed device on the HSIC port, enumeration fails with EPROTO (-71).
