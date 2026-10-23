@@ -1,0 +1,58 @@
+From c5e6025e97b648b21a0986a2a6b35cafec7ffdaa Mon Sep 17 00:00:00 2001
+From: nyasha <nmushambi@proton.me>
+Date: Sat, 24 Oct 2026 02:49:55 +1300
+Subject: [PATCH] WIP media: tegra-vde: T124 CABAC (BSE-V 0xA4 bit 0 + SXE 0x48
+ bit 20), WP flag experiments
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/media/platform/nvidia/tegra-vde/h264.c | 17 ++++++++++++++++-
+ 1 file changed, 16 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/media/platform/nvidia/tegra-vde/h264.c b/drivers/media/platform/nvidia/tegra-vde/h264.c
+index d6e77e891..0070881ba 100644
+--- a/drivers/media/platform/nvidia/tegra-vde/h264.c
++++ b/drivers/media/platform/nvidia/tegra-vde/h264.c
+@@ -456,8 +456,18 @@ static int tegra_vde_setup_hw_context(struct tegra_vde *vde,
+ 		value |= !!ctx->weighted_pred_flag << 17;
+ 		value |= (ctx->weighted_bipred_idc & 3) << 18;
+ 	}
++	if (vde->soc->t124_layout && (t124_mask & BIT(19))) {
++		/* alternative order: bipred idc in 17-18, weighted_pred in 19 */
++		value &= ~(0x7 << 17);
++		value |= (ctx->weighted_bipred_idc & 3) << 17;
++		value |= !!ctx->weighted_pred_flag << 19;
++	}
++	if (vde->soc->t124_layout && (t124_mask & BIT(18)))
++		value |= !!ctx->entropy_coding_mode_flag << 20;	/* T124 SXE 0x48 bit 20 (guess: CABAC) */
+ 
+ 	tegra_vde_writel(vde, value, vde->sxe, 0x48);
++	if (vde->soc->t124_layout && (t124_mask & BIT(18)))
++		tegra_vde_writel(vde, !!ctx->entropy_coding_mode_flag, vde->bsev, 0xA4);	/* T124 BSE-V 0xa4 bit 0 */
+ 
+ 	value = 0x0C000000;
+ 	value |= !!(dpb_frames[0].flags & FLAG_B_FRAME) << 24;
+@@ -477,6 +487,11 @@ static int tegra_vde_setup_hw_context(struct tegra_vde *vde,
+ 	value = 0x10000005;
+ 	value |= ctx->pic_width_in_mbs << 11;
+ 	value |= ctx->pic_height_in_mbs << 3;
++	if (vde->soc->t124_layout && (t124_mask & BIT(16)) &&
++	    (dpb_frames[0].flags & FLAG_B_FRAME))
++		value |= BIT(20);
++	if (vde->soc->t124_layout && (t124_mask & BIT(17)))
++		value |= BIT(20);
+ 
+ 	tegra_vde_writel(vde, value, vde->mbe, 0x80);
+ 
+@@ -963,7 +978,7 @@ static int tegra_vde_h264_setup_context(struct tegra_ctx *ctx,
+ 
+ 	/* CABAC unsupported by hardware, requires software preprocessing */
+ 	if ((h->pps->flags & V4L2_H264_PPS_FLAG_ENTROPY_CODING_MODE) &&
+-	    !(vde->soc->t124_layout && (t124_mask & BIT(12))))
++	    !(vde->soc->t124_layout && (t124_mask & (BIT(12) | BIT(18)))))
+ 		return -EOPNOTSUPP;
+ 
+ 	if (h->decode_params->flags & V4L2_H264_DECODE_PARAM_FLAG_FIELD_PIC)
+-- 
+2.56.0
+

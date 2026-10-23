@@ -64,9 +64,32 @@ Patches: `patches/candidates/vde/` (3 WIP commits in linux-flounder, last 5a4d2f
 - Test hygiene: references must come from a complete avdec decode (identity eos-after=1 emits another
   frame); /tmp on the tablet is on the rootfs; 124 MB dumps fill it fast.
 
+## 2026-10-24 04:30 — CABAC works; real YouTube streams still wrong on inter frames
+
+- **CABAC bit-exact** (Main CABAC clip, 30/30 frames): BSE-V 0xA4 bit 0 = entropy_coding_mode_flag and
+  SXE 0x48 bit 20 = the same flag (stock fn_060c8: BSE-V 0xa4 = transform_8x8<<3 | scaling<<2 |
+  mono<<1 | entropy). My earlier guess SXE 0x44 bit 1 is wrong (it breaks decoding; likely
+  redundant_pic_cnt_present). Good mask now **313344** (bits 11, 14, 15, 18).
+- Feature matrix at 640x360 (x264): Main plain 100 %, POC type 0 100 %, CABAC 100 %, B-frames drift
+  (frames 0-3 exact, then 97 % -> 81 % by frame 29, B-pyramid references), weighted P 86-91 %.
+- **Real YouTube 720p (avc1.4D401F, Main L3.1, CABAC, weighted_pred 1, bipred idc 2, POC 0):** I-frames
+  100 %, inter frames almost all wrong (exact ~3 %, MAD ~14). The opening fade (frames 2-6, weights)
+  stays dark in hardware -> explicit weights are parsed but **not applied**. The alternative bit order
+  for SXE 0x48 17-19 breaks parsing, so the parse flags are right; the weights need something else.
+- Hardware output has one duplicated frame near the start (192 vs 191 frames): output ordering issue.
+- Microcode leads not yet read: per-slice H.264 code (weights, ref lists) — fn_03568/fn_034a8/1ff0 are
+  other codecs. fn_013a0: BSE-V 0x804-byte slots are bitstream scatter-gather lists (count + 256
+  addr/len pairs), not CABAC tables.
+- Meanwhile (software): /etc/mpv/mpv.conf in the overlay (tools/pmos/etc-mpv): <=480p H.264, vo=gpu,
+  profile=fast, skiploopfilter=nonkey. Streaming 480p from YouTube still drops ~374 frames / 25 s
+  (local 480p file: ~80) — network + audio + demux compete for the two cores.
+
 ## Next
 
-0. B-frames (direct/co-located: MBE reg 8/9 buffer layout 0x40 B/MB per frame index, SXE 0x40 bits 22-23),
+0. Weighted prediction application (find the slice-level microcode / MCE registers), then B-frame drift
+   (direct/co-located), output ordering, V4L2 format + modifier for the block-linear output, padded plane
+   sizes, then a GStreamer/mpv playback path.
+0b. B-frames (direct/co-located: MBE reg 8/9 buffer layout 0x40 B/MB per frame index, SXE 0x40 bits 22-23),
    weighted prediction values, CABAC (BSE-V 0x31800 block + context tables from fn_02e84/fn_013a0).
 1. Layout: decode an all-intra random-noise clip, locate unique 16-byte runs of the avdec reference in
    the hardware output -> tile geometry (luma, chroma).
