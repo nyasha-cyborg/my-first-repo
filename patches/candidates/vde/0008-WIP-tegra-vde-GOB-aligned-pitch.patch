@@ -1,0 +1,119 @@
+From 1adf32a2f1fa0b437e549d8c04c98917ba08e6cc Mon Sep 17 00:00:00 2001
+From: nyasha <nmushambi@proton.me>
+Date: Sat, 24 Oct 2026 11:44:34 +1300
+Subject: [PATCH] WIP tegra-vde: GOB-aligned capture pitch; use real
+ RefPicList1[0] for MBE reg2; fmt logs
+
+Output is block-linear with 64-byte GOBs, so bytesperline must be a multiple of
+64 (width aligned to 128; chroma stays 64). Common widths are already aligned.
+Also make t124_mask2 shared for v4l2.c logging and fix the co-located A2/A3
+source to the actual list1 slot (still no effect alone).
+
+Co-Authored-By: Claude Code <noreply@anthropic.com>
+---
+ .../media/platform/nvidia/tegra-vde/h264.c    |  8 +++----
+ .../media/platform/nvidia/tegra-vde/v4l2.c    | 23 ++++++++++++++++++-
+ drivers/media/platform/nvidia/tegra-vde/vde.h |  2 ++
+ 3 files changed, 28 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/media/platform/nvidia/tegra-vde/h264.c b/drivers/media/platform/nvidia/tegra-vde/h264.c
+index e9de93eef..85d3d0770 100644
+--- a/drivers/media/platform/nvidia/tegra-vde/h264.c
++++ b/drivers/media/platform/nvidia/tegra-vde/h264.c
+@@ -159,7 +159,7 @@ module_param(t124_mask, uint, 0644);
+ MODULE_PARM_DESC(t124_mask, "bring-up: T124 register values to apply (bitmask)");
+ 
+ /* second experiment mask, for changes that do not fit t124_mask anymore */
+-static unsigned int t124_mask2;
++unsigned int t124_mask2;
+ module_param(t124_mask2, uint, 0644);
+ MODULE_PARM_DESC(t124_mask2, "bring-up: T124 experiments, mask 2 (bit0 = MBE list1 commands, bit1 = frame log)");
+ 
+@@ -678,7 +678,8 @@ static int tegra_vde_setup_hw_context(struct tegra_vde *vde,
+ 	if (vde->soc->t124_layout && (t124_mask & BIT(22)) &&
+ 	    (dpb_frames[0].flags & FLAG_B_FRAME) && ctx->dpb_frames_nb > 1) {
+ 		/* stock fn_04828: MBE 0xA reg 2/3 = co-located buffer of RefPicList1[0] */
+-		unsigned int l1 = ctx->dpb_ref_frames_with_earlier_poc_nb + 1;
++		unsigned int l1 = ctx->num_refs_l1 ? ctx->ref_slot_l1[0] :
++				  ctx->dpb_ref_frames_with_earlier_poc_nb + 1;
+ 
+ 		if (l1 >= ctx->dpb_frames_nb)
+ 			l1 = 1;
+@@ -1108,8 +1109,7 @@ static int tegra_vde_h264_setup_frames(struct tegra_ctx *ctx,
+ 	 * T124: the MBE needs RefPicList1 explicitly. dpb_frames[] (slots 1..N)
+ 	 * is in b0 order, so translate each b1 entry to its b0 slot.
+ 	 */
+-	if ((h->decode_params->flags & V4L2_H264_DECODE_PARAM_FLAG_BFRAME) &&
+-	    (t124_mask2 & BIT(0))) {
++	if (h->decode_params->flags & V4L2_H264_DECODE_PARAM_FLAG_BFRAME) {
+ 		unsigned int j;
+ 
+ 		for (i = 0; i < b.num_valid && i < ARRAY_SIZE(h264->ref_slot_l1); i++) {
+diff --git a/drivers/media/platform/nvidia/tegra-vde/v4l2.c b/drivers/media/platform/nvidia/tegra-vde/v4l2.c
+index f1a2a1dc8..da2950b84 100644
+--- a/drivers/media/platform/nvidia/tegra-vde/v4l2.c
++++ b/drivers/media/platform/nvidia/tegra-vde/v4l2.c
+@@ -454,11 +454,15 @@ static void tegra_fill_pixfmt_mp(struct v4l2_pix_format_mplane *pixfmt,
+ 			 * VDE is connected to Graphics Memory using 128bit port,
+ 			 * all memory accesses are made using 16B atoms.
+ 			 *
++			 * T124/T132 output is NVIDIA block-linear with 64-byte-wide
++			 * GOBs, so the stride must be a whole number of GOBs (align
++			 * width to 128B; chroma is exactly half and stays 64B).
++			 *
+ 			 * V4L requires Cb/Cr strides to be exactly half of the
+ 			 * Y stride, hence we're aligning Y to 16B x 2.
+ 			 */
+ 			plane = &pixfmt->plane_fmt[i];
+-			plane->bytesperline = ALIGN(width, VDE_ATOM * 2) / hdiv;
++			plane->bytesperline = ALIGN(width, 128) / hdiv;
+ 			plane->sizeimage = plane->bytesperline * height / vdiv;
+ 		}
+ 
+@@ -476,6 +480,12 @@ static void tegra_reset_decoded_fmt(struct tegra_ctx *ctx)
+ 			     ctx->coded_fmt_desc->decoded_fmts[0],
+ 			     ctx->coded_fmt.fmt.pix_mp.width,
+ 			     ctx->coded_fmt.fmt.pix_mp.height);
++
++	if (t124_mask2 & BIT(6))
++		dev_info(ctx->vde->dev, "n9dbg reset-dec-fmt: %ux%u bpl=%u size=%u\n",
++			 f->fmt.pix_mp.width, f->fmt.pix_mp.height,
++			 f->fmt.pix_mp.plane_fmt[0].bytesperline,
++			 f->fmt.pix_mp.plane_fmt[0].sizeimage);
+ }
+ 
+ static void tegra_job_finish(struct tegra_ctx *ctx,
+@@ -569,6 +579,17 @@ static int tegra_try_decoded_fmt(struct file *file, void *priv,
+ 			     pix_mp->width, pix_mp->height);
+ 	pix_mp->field = V4L2_FIELD_NONE;
+ 
++	if (t124_mask2 & BIT(6))
++		dev_info(ctx->vde->dev,
++			 "n9dbg fmt: %ux%u bpl=%u/%u/%u size=%u/%u/%u\n",
++			 pix_mp->width, pix_mp->height,
++			 pix_mp->plane_fmt[0].bytesperline,
++			 pix_mp->plane_fmt[1].bytesperline,
++			 pix_mp->plane_fmt[2].bytesperline,
++			 pix_mp->plane_fmt[0].sizeimage,
++			 pix_mp->plane_fmt[1].sizeimage,
++			 pix_mp->plane_fmt[2].sizeimage);
++
+ 	return 0;
+ }
+ 
+diff --git a/drivers/media/platform/nvidia/tegra-vde/vde.h b/drivers/media/platform/nvidia/tegra-vde/vde.h
+index ff5d947ed..7826b74d6 100644
+--- a/drivers/media/platform/nvidia/tegra-vde/vde.h
++++ b/drivers/media/platform/nvidia/tegra-vde/vde.h
+@@ -143,6 +143,8 @@ int tegra_vde_alloc_bo(struct tegra_vde *vde,
+ 		       size_t size);
+ void tegra_vde_free_bo(struct tegra_vde_bo *bo);
+ 
++extern unsigned int t124_mask2;
++
+ struct tegra_ctx_h264 {
+ 	const struct v4l2_ctrl_h264_decode_params *decode_params;
+ 	const struct v4l2_ctrl_h264_sps *sps;
+-- 
+2.56.0
+
