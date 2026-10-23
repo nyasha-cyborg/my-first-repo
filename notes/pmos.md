@@ -114,3 +114,22 @@ greeter/session idle blank.
 Test setup (boot 17:45): baseline (software rendering, bluetooth/rfkill/n9-modem off) + n9-health + regulator
 tracepoints streamed into the kernel log (`/etc/local.d/n9-regtrace.start`, tools/pmos/n9-regtrace.start).
 Plan: idle-delay 30 s -> force a blank -> look for regulator events + PMIC -121 at that moment.
+
+## 2026-10-23 18:00 — screen blank reproduces the PMIC I2C failure (not memory, not GPU, not BT)
+
+Baseline boot (software rendering, bluetooth/rfkill/n9-modem off, n9-health on, autologin worked: session c1 on
+seat0 at boot). dconf `idle-delay=30` -> at 122.7 s DPMS Off (bl_power 4) and at that exact moment a burst of
+`dummy 4-0059: Failed to read IRQ status: -121` (~10 ms, 12 lines). n9-health just before: MemAvailable 1079M,
+SwapFree 2756M, CmaFree 255M -> NOT memory. This time the system survived (still alive 6 min later); the 700 s
+death in the previous session was the same burst. Reproducible trigger = display blank.
+- regulator_summary while blanked: panel consumers (54300000.dsi.0-avdd/-iovdd, dsi avdd-dsi-csi) = 0, but
+  `ac001000.framebuffer-*` (simple-framebuffer) still hold avdd-lcd / iovdd-lcd / avdd-dsi-csi -> rails never
+  switch off; simplefb leaks them on takeover (boot `WARNING regulator_put` + `avdd-dsi-csi: failed to disable:
+  -EREMOTEIO` inside the boot-time PMIC burst).
+- REA, vendor panel `dsi_j_qxga_8_9_{disable,postpoweron}`: GPIO table lcmio_1v8=130(Q2) avdd_4v=136(R0)
+  dcdc_en=245(EE5) panel_rst=61(H5) = our DT. Our flounder driver `panel-jdi-lpm089a128a.c` already reproduces the
+  vendor order/delays (off: rst, 1 ms, dcdc, 15 ms, avdd, iovdd, 10 ms; on: iovdd, avdd, 1 ms, dcdc, 15 ms, reset).
+  So the panel sequence is not the difference; candidates: leaked rails staying on, backlight, DSI/DC power-down.
+- No ftrace regulator events in this kernel (tracefs absent) -> n9-regtrace does nothing; regulator_summary
+  snapshots instead.
+Next: backlight-only off/on (bl_power) vs DPMS; then drop the simple-framebuffer supplies in the DT.
