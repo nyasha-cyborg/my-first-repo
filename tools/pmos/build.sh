@@ -93,6 +93,20 @@ setcmd "$D/n9pmos-inst-stripped.img" "androidboot.hardware=flounder buildvariant
 # 2. pmOS boot image
 mkdir -p "$O/boot"/{bin,dev,proc,sys,root,data}
 cp "$BASE/bin/busybox" "$O/boot/bin/busybox"
+# e2fsck for the rootfs image (dynamic, Alpine v3.24) + its libraries and the musl loader
+E=/tmp/n9build/e2s
+if [ ! -x "$E/sbin/e2fsck" ]; then
+	mkdir -p "$E/etc/apk/keys" "$E/etc/ssl"; cp "$O/keys"/*.pub "$E/etc/apk/keys/"
+	cp /etc/ssl/certs/ca-certificates.crt "$E/etc/ssl/cert.pem"
+	unshare -r /tmp/n9build/xbuild/apkx/sbin/apk.static --root "$E" --arch aarch64 --initdb --scripts=no -U \
+		-X "https://dl-cdn.alpinelinux.org/alpine/$ALP/main" add e2fsprogs >/dev/null 2>&1 || true
+fi
+mkdir -p "$O/boot/sbin" "$O/boot/lib" "$O/boot/usr/lib"
+cp -L "$E/sbin/e2fsck" "$O/boot/sbin/e2fsck"
+cp -L "$E/lib/ld-musl-aarch64.so.1" "$O/boot/lib/"; ln -sf ld-musl-aarch64.so.1 "$O/boot/lib/libc.musl-aarch64.so.1"
+for l in libext2fs.so.2 libcom_err.so.2 libblkid.so.1 libuuid.so.1 libe2p.so.2; do
+	cp -L "$(ls "$E"/usr/lib/$l "$E"/lib/$l 2>/dev/null | head -1)" "$O/boot/usr/lib/$l"
+done
 install -m755 "$HERE/init" "$O/boot/init"
 (cd "$O/boot" && find . | cpio -o -H newc --quiet | gzip -9 > "$O/boot.gz")
 python3 -I "$T/bootimg-swap-ramdisk.py" "$BIMG" "$O/boot.gz" "$D/n9pmos-boot-stripped.img" "$O/kernel" | tail -1

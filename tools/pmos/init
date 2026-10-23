@@ -9,7 +9,12 @@ export PATH=/bin
 mount -t proc proc /proc
 mount -t sysfs sysfs /sys
 mount -t devtmpfs devtmpfs /dev 2>/dev/null
-log() { echo "<6>n9pmos: $*" > /dev/kmsg; }
+# progress goes to the kernel log and, once userdata is mounted, to /data/pmos/boot-init.log (synced: survives a
+# stall before OpenRC's own logging starts)
+log() {
+	echo "<6>n9pmos: $*" > /dev/kmsg
+	[ -d /data/pmos ] && { echo "$(cut -d' ' -f1 /proc/uptime) $*" >> /data/pmos/boot-init.log; sync; }
+}
 rescue() {
 	log "FAILED: $* -- rescue shell on ttyGS0"
 	while true; do
@@ -25,8 +30,17 @@ for i in $(seq 1 100); do [ -b $UDA ] && break; sleep 0.1; done
 mkdir -p /data /root
 mount -t ext4 -o noatime $UDA /data || rescue "mount userdata"
 [ -f /data/$IMG ] || rescue "no /data/$IMG"
+[ -f /data/pmos/boot-init.log ] && tail -c 16384 /data/pmos/boot-init.log > /data/pmos/boot-init.log.1 && rm /data/pmos/boot-init.log
+log "userdata mounted"
+# repair the image after a hang/reset before mounting it (-p: only safe fixes; exit 4+ = needs a human)
+/sbin/e2fsck -p /data/$IMG > /data/pmos/fsck.log 2>&1
+rc=$?
+log "e2fsck rc=$rc"
+[ $rc -ge 4 ] && rescue "e2fsck rc=$rc on /data/$IMG (see /data/pmos/fsck.log)"
 L=$(losetup -f) && losetup $L /data/$IMG || rescue "losetup"
+log "loop $L"
 mount -t ext4 -o noatime $L /root || rescue "mount rootfs"
+log "rootfs mounted"
 [ -x /root/sbin/init ] || rescue "no /sbin/init in the rootfs"
 mkdir -p /root/android-data
 mount --move /data /root/android-data
