@@ -58,10 +58,11 @@ work on. Kept current by the previous agent at each test cycle (last update: 202
      The SXE parses the weight table (removing the WP flag breaks the stream) but never applies it;
      REA shows no weight values anywhere in the host↔microcode interface. Accept as a limitation
      (only fades/crossfades affected). Do not retry register guesses.
-  2. **B-frames drift, much improved 2026-10-25.** T124 IRAM ref entry bit 25 is "DPB entry in use";
-     mainline wrote `!(FLAG_B_FRAME)`, marking B references unusable. With bit 25 = 1 for all T124 refs:
-     `m_b` 91.81 → 97.80 %, `bpyrnormal` 93.53 → 99.29 %. Remaining late drift has no confirmed
-     cause yet (see NEXT TASK and notes/vde.md).
+  2. **B-frames: main clips bit-exact 2026-10-25.** T124 IRAM ref entry bit 25 is "DPB entry in use"
+     (was `!(FLAG_B_FRAME)`), and the driver now applies H.264 ref_pic_list_modification with a small
+     in-kernel slice parser. `m_b` is **100.00 %**, all I/P/plain-B/CABAC clips 100 %. Only
+     `bpyrnormal` has a late event: display frames 84-89 wrong (first bad 84, Y 91.9-95.6 %), and
+     `bdirtemporal` is 98.60 % (temporal-direct issue, separate).
 - Ruled out (dead ends):
   - POC in the reference-list low bits (bit 21: worse; the hardware wants frame_num).
   - SXE 0x5c alone (needs the bit-20 list copy).
@@ -81,25 +82,22 @@ work on. Kept current by the previous agent at each test cycle (last update: 202
 
 ## NEXT TASK — finish B frames: reference list modification (start here)
 
-State: bit 25 fix landed (m_b 97.80 %, bpyrnormal 99.29 %, bpyrnone / direct-spatial / I / P all 100 %).
-Remaining drift starts late (display 24 in m_b, 58 in bpyrnormal, 31 in a keyint=250 variant) and the
-cause is **not yet known**. Ruled out this cycle: list1 MBE commands, MBE A reg2/3, MBE per-MB buffer,
-unwrapped ref frame_num, ref count/pyramid depth (a ref=1 pyramid clip still drifts), plain
-correlation with ref_pic_list_modification (present from POC 12 but those frames are exact), and the
-frame_num 15->0 wrap (the keyint=250 clip wraps too but fails elsewhere).
+State: `m_b` is **bit-exact 100 %**. The last mechanism was fixed by parsing
+`ref_pic_list_modification` from the first slice header in the kernel and reordering list0/list1
+(H.264 8.2.4.3). All other test clips are 100 % except:
+- `bpyrnormal`: frames 84-89 wrong (first bad display 84, then 95.6 -> 90.1 %). The clip's second
+  frame_num wrap is around there; needs a per-MB/MV analysis like the m_b one (was decisive).
+- `bdirtemporal`: 98.60 % (temporal direct mode; separate issue, needs co-located MV work).
+- v720/WP clips: expected failures from the weighted-prediction hardware limitation.
 
-Problem for the modification path: the driver builds lists from POC only.
-`V4L2_CID_STATELESS_H264_SLICE_PARAMS` is registered and prepared, but GStreamer's v4l2slh264dec
-leaves `ref_pic_list0/1` zeroed in frame-based mode (it calls
-`gst_h264_decoder_set_process_ref_pic_lists(dec, is_slice_based)`), so userspace cannot supply the
-modified lists today.
-
-Options, in order:
-1. Re-run the per-MB error analysis on the *new* first-bad frames (m_b display 24) — block type,
-   partition size, list0 vs list1, reference used — to identify the remaining mechanism.
-2. Kernel-side slice-header parser for `ref_pic_list_modification` if the analysis points there.
-3. Re-check whether P-frame list0 modification and B-pyramid interact (m_b's first bad frame is a B
-   whose list1[0] is a modified P list entry).
+Next steps:
+1. Re-run the m_b-style per-MB analysis on bpyrnormal display 84 (which picture is predicted from
+   where; decode order around the second wrap). Add mask2 bit1 parse logging to confirm the parser
+   handles those slices (ops/POC).
+2. Temporal direct: find where the co-located picture's MVs come from (MBE reg 8/9 aux base, 0x40 B/MB
+   per frame), compare with the stock sequence; the earlier bit22 test used the wrong mechanism.
+3. Long-term refs and multi-slice frames are knowably incomplete in the parser (first slice only,
+   long-term bails).
 
 Also open (lower value): SXE 0x40 stock sets bits 15+16 (0x18000) where our bit-13 code writes
 `0xc<<13` (bits 14/15); align and retest. Then output ordering, padded plane sizes, block-linear V4L2
