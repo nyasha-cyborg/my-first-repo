@@ -137,3 +137,8 @@ Next: backlight-only off/on (bl_power) vs DPMS; then drop the simple-framebuffer
   user's session bus; `wlopm` is refused by phoc). 3 cycles: every DPMS **off** = +20..41 PMIC errors, every **on** = 0.
   Backlight-only off/on (bl_power 4/0) = 0 errors. Waking via the power button = 0 errors. Trigger = display
   power-down path. Next: `panel_jdi_lpm089a128a.keep_power=1` (series 0037) keeps panel rails + DC-DC on at blank.
+- 18:30 keep_power test (kernel gda5b5a71ad89, same boot, PowerSaveMode 3/0 via D-Bus):
+  keep_power=0: cycles with PMIC errors 2/3 (+36, +30); keep_power=1: 0/3. With simplefb holding avdd/iovdd, the only
+  hardware switched at blank is panel reset (H5) + dcdc_en (EE5): one of those trips the PMIC (I2C NAK + IRQ storm).
+  Interim fix candidate: `panel_jdi_lpm089a128a.keep_power=1` on the pmOS cmdline. Root cause next: let the rails
+  really switch off like Android (drop simple-framebuffer *-supply), then retest keep_power=0.
