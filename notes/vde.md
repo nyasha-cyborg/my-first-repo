@@ -167,12 +167,18 @@ was marked unusable**. Fix: set bit 25 for every T124 ref (`vde->soc->t124_layou
 `m_b` 91.81 → **97.80 %** (first bad 4 → 24), `bpyrnormal` 93.53 → **99.29 %** (5 → 58),
 `bpyrnone` stays 100 %. The bit is one of the two B-only fields (the other, bit 24, was already 1).
 
-Remaining error starts late and tracks `ref_pic_list_modification` (m_b: 9 slices with mod_l0;
-bpyrnormal: 25; no l1 mods). The driver cannot see modified lists: GStreamer's `v4l2slh264dec`
-does supply `V4L2_CID_STATELESS_H264_SLICE_PARAMS` (control now registered; mask2 bit 5 logs it) but
-the struct is all-zero in frame-based mode, so `ref_pic_list0/1` and per-slice counts are unavailable.
-Next option is a kernel-side slice-header parser for ref list modification, or userspace that
-populates the control properly.
+Remaining drift, cause **not identified**. Facts gathered:
+- m_b: display frames 0-23 exact, 24-29 wrong; the first bad POC is 48, which is where the *P*
+  slices' `ref_pic_list_modification` (mod_l0=1, ops [0,1,0,3]) starts to matter... but mods are
+  already present from POC 12 while POC 12-44 frames are exact. A B-pyramid clip at `ref=1` also
+  drifts (98.94 %, first bad display 58), and a keyint=250 clip drifts worse (89.78 %, first bad 31),
+  so neither modification presence nor the frame_num wrap (15 -> 0 at decode index 23) explains it.
+- The driver cannot see modified lists anyway: GStreamer's `v4l2slh264dec` supplies
+  `V4L2_CID_STATELESS_H264_SLICE_PARAMS` (control registered; mask2 bit 5 logs it) but leaves
+  ref_pic_list0/1 zeroed in frame-based mode (`gst_h264_decoder_set_process_ref_pic_lists(dec,
+  is_slice_based)`), so this cannot be fixed from userspace with the current plugin.
+- Next ideas: compare per-MB error types on the new first-bad frames (likely list0 modification on
+  P frames + B-pyramid references); kernel-side slice-header parser for modification; or accept.
 
 Dead ends this cycle (all zero effect): MBE list1 `0xC4000000` group commands (t124_mask2 bit 0,
 implemented and verified to run); MBE A reg 2/3 colocated aux (t124 bit 22) alone or with the fix;

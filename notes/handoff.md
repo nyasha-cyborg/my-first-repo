@@ -60,9 +60,8 @@ work on. Kept current by the previous agent at each test cycle (last update: 202
      (only fades/crossfades affected). Do not retry register guesses.
   2. **B-frames drift, much improved 2026-10-25.** T124 IRAM ref entry bit 25 is "DPB entry in use";
      mainline wrote `!(FLAG_B_FRAME)`, marking B references unusable. With bit 25 = 1 for all T124 refs:
-     `m_b` 91.81 → 97.80 %, `bpyrnormal` 93.53 → 99.29 %. Remaining late drift tracks
-     `ref_pic_list_modification`, which the driver cannot get from GStreamer (SLICE_PARAMS arrives
-     all-zero); see notes/vde.md.
+     `m_b` 91.81 → 97.80 %, `bpyrnormal` 93.53 → 99.29 %. Remaining late drift has no confirmed
+     cause yet (see NEXT TASK and notes/vde.md).
 - Ruled out (dead ends):
   - POC in the reference-list low bits (bit 21: worse; the hardware wants frame_num).
   - SXE 0x5c alone (needs the bit-20 list copy).
@@ -83,23 +82,24 @@ work on. Kept current by the previous agent at each test cycle (last update: 202
 ## NEXT TASK — finish B frames: reference list modification (start here)
 
 State: bit 25 fix landed (m_b 97.80 %, bpyrnormal 99.29 %, bpyrnone / direct-spatial / I / P all 100 %).
-Remaining errors start late (display frame 24 in m_b, 58 in bpyrnormal) and correlate with
-`ref_pic_list_modification` on list0 (9 slices in m_b, 25 in bpyrnormal; no list1 mods).
+Remaining drift starts late (display 24 in m_b, 58 in bpyrnormal, 31 in a keyint=250 variant) and the
+cause is **not yet known**. Ruled out this cycle: list1 MBE commands, MBE A reg2/3, MBE per-MB buffer,
+unwrapped ref frame_num, ref count/pyramid depth (a ref=1 pyramid clip still drifts), plain
+correlation with ref_pic_list_modification (present from POC 12 but those frames are exact), and the
+frame_num 15->0 wrap (the keyint=250 clip wraps too but fails elsewhere).
 
-Problem: the driver builds lists from POC only. The control `V4L2_CID_STATELESS_H264_SLICE_PARAMS` is
-now registered in `v4l2.c` and `ctx->h264.slice_params` is prepared, but GStreamer's v4l2slh264dec
-sends it all-zero in frame-based mode (mask2 bit 5 logs it), so `ref_pic_list0/1` cannot be used.
+Problem for the modification path: the driver builds lists from POC only.
+`V4L2_CID_STATELESS_H264_SLICE_PARAMS` is registered and prepared, but GStreamer's v4l2slh264dec
+leaves `ref_pic_list0/1` zeroed in frame-based mode (it calls
+`gst_h264_decoder_set_process_ref_pic_lists(dec, is_slice_based)`), so userspace cannot supply the
+modified lists today.
 
 Options, in order:
-1. Find a userspace that populates SLICE_PARAMS (check the installed GStreamer version; newer
-   gstv4l2codecs may send slice params only when the driver advertises something extra, or try
-   `v4l2-compliance`/a custom feeder). If lists arrive, order `dpb_frames[]` by
-   `slice_params->ref_pic_list0` and build `ref_slot_l1` from `ref_pic_list1`.
-2. Kernel-side slice-header parser for `ref_pic_list_modification` (needs slice start offsets; the
-   bitstream is contiguous in the src buffer; SPS/PPS are in the controls). Bigger change.
-3. Confirm the theory cheaply before 1/2: the errors should disappear on a stream with modifications
-   excised. x264 cannot disable them directly; an ffmpeg bitstream filter (h264_metadata) cannot
-   rewrite list mods either. A test clip with `ref=1`/no pyramid already shows no mods and is 100 %.
+1. Re-run the per-MB error analysis on the *new* first-bad frames (m_b display 24) — block type,
+   partition size, list0 vs list1, reference used — to identify the remaining mechanism.
+2. Kernel-side slice-header parser for `ref_pic_list_modification` if the analysis points there.
+3. Re-check whether P-frame list0 modification and B-pyramid interact (m_b's first bad frame is a B
+   whose list1[0] is a modified P list entry).
 
 Also open (lower value): SXE 0x40 stock sets bits 15+16 (0x18000) where our bit-13 code writes
 `0xc<<13` (bits 14/15); align and retest. Then output ordering, padded plane sizes, block-linear V4L2
