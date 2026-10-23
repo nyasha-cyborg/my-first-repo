@@ -1,0 +1,288 @@
+From f2dc575b40685760e68cc11add6144513ecc3510 Mon Sep 17 00:00:00 2001
+From: nyasha <nmushambi@proton.me>
+Date: Sat, 24 Oct 2026 10:38:04 +1300
+Subject: [PATCH] WIP tegra-vde T124: local-memory layout, POC refs, co-located
+ reg, FC cmd, 2nd chroma, codec-init (t124_mask bits 20-27)
+
+---
+ .../media/platform/nvidia/tegra-vde/h264.c    | 127 +++++++++++++++++-
+ drivers/media/platform/nvidia/tegra-vde/vde.c |   3 +
+ drivers/media/platform/nvidia/tegra-vde/vde.h |   2 +
+ 3 files changed, 128 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/media/platform/nvidia/tegra-vde/h264.c b/drivers/media/platform/nvidia/tegra-vde/h264.c
+index 0070881ba..e1716dd9f 100644
+--- a/drivers/media/platform/nvidia/tegra-vde/h264.c
++++ b/drivers/media/platform/nvidia/tegra-vde/h264.c
+@@ -34,6 +34,7 @@ struct tegra_vde_h264_decoder_ctx {
+ 	unsigned int deblocking_filter_control_present_flag;
+ 	unsigned int constrained_intra_pred_flag;
+ 	unsigned int chroma_qp_index_offset;
++	unsigned int second_chroma_qp_index_offset;
+ 	unsigned int pic_order_present_flag;
+ 	unsigned int entropy_coding_mode_flag;
+ 	unsigned int weighted_pred_flag;
+@@ -213,6 +214,18 @@ static void tegra_vde_setup_iram_entry(struct tegra_vde *vde,
+ 	iram_tables[0x20 * table + row * 2 + 1] = value2;
+ }
+ 
++/*
++ * Low bits of a reference list entry: frame_num on T20-T114; the stock T124 AVP
++ * microcode (fn_04828) puts the POC there (18 bits, bit 18 = long-term).
++ */
++static u32 tegra_vde_ref_id(struct tegra_video_frame *frame)
++{
++	if (t124_mask & BIT(21))
++		return frame->poc & 0x3ffff;
++
++	return frame->frame_num;
++}
++
+ static void tegra_vde_setup_iram_tables(struct tegra_vde *vde,
+ 					struct tegra_video_frame *dpb_frames,
+ 					unsigned int ref_frames_nb,
+@@ -234,7 +247,7 @@ static void tegra_vde_setup_iram_tables(struct tegra_vde *vde,
+ 			value  = (i + 1) << 26;
+ 			value |= !(frame->flags & FLAG_B_FRAME) << 25;
+ 			value |= 1 << 24;
+-			value |= frame->frame_num;
++			value |= tegra_vde_ref_id(frame);
+ 		} else {
+ 			aux_addr = 0x6ADEAD00;
+ 			value = 0x3f;
+@@ -264,7 +277,7 @@ static void tegra_vde_setup_iram_tables(struct tegra_vde *vde,
+ 		value  = (k + 1) << 26;
+ 		value |= !(frame->flags & FLAG_B_FRAME) << 25;
+ 		value |= 1 << 24;
+-		value |= frame->frame_num;
++		value |= tegra_vde_ref_id(frame);
+ 
+ 		tegra_vde_setup_iram_entry(vde, 2, i, value, aux_addr);
+ 	}
+@@ -277,12 +290,70 @@ static void tegra_vde_setup_iram_tables(struct tegra_vde *vde,
+ 		value  = (k + 1) << 26;
+ 		value |= !(frame->flags & FLAG_B_FRAME) << 25;
+ 		value |= 1 << 24;
+-		value |= frame->frame_num;
++		value |= tegra_vde_ref_id(frame);
+ 
+ 		tegra_vde_setup_iram_entry(vde, 2, i, value, aux_addr);
+ 	}
+ }
+ 
++/*
++ * T124/T132 VDE local memory (word addresses), from the stock AVP microcode
++ * (fn_060c8 / fn_04828): slice-group bitmap ending at 0x1000, 0x1020 (BSE-V
++ * 0x98/0x9c, 0x2e00), SXE scratch 0x1820 (0x400 words, zeroed per frame), MCE
++ * 0x1c20, reference lists 0x3620 (SXE 0x5c; 0x74 = +0x100), scaling lists 0x38b4.
++ * The T20 layout (0x150/0x54c/0x63c/0xe34) leaves the SXE scratch only 0xf0 words.
++ */
++static void tegra_vde_t124_layout(struct tegra_vde *vde, unsigned int macroblocks_nb)
++{
++	u32 n = min_t(u32, (macroblocks_nb + 7) >> 3, 0x1000);
++
++	tegra_vde_writel(vde, (0x1000 - n) & ~3, vde->sxe, 0x54);
++	tegra_vde_writel(vde, 0x00001820, vde->sxe, 0x58);
++	tegra_vde_writel(vde, 0x00003620, vde->sxe, 0x5C);
++	tegra_vde_writel(vde, 0x00001000, vde->sxe, 0x70);
++	tegra_vde_writel(vde, 0x00003720, vde->sxe, 0x74);
++	tegra_vde_writel(vde, 0x1c201c20, vde->mce, 0x10);
++	tegra_vde_writel(vde, 0x00001020, vde->bsev, 0x98);
++	tegra_vde_writel(vde, 0x00001020, vde->bsev, 0x9C);
++	if (vde->t124_x2c00)
++		tegra_vde_writel(vde, 0x00001020, vde->t124_x2c00, 0x200);
++}
++
++/* T124 BSE-V command: zero @len words of local memory at @addr (two words) */
++static int tegra_vde_t124_bsev_zero(struct tegra_vde *vde, u32 addr, u32 len)
++{
++	int err;
++
++	err = tegra_vde_push_to_bsev_icmdqueue(vde, 0x84000000 | (len & 0x1fff) << 12 |
++					       (addr & 0xfff), false);
++	if (err)
++		return err;
++
++	return tegra_vde_push_to_bsev_icmdqueue(vde, addr & 0x3fff, true);
++}
++
++static int tegra_vde_t124_bsev_lists(struct tegra_vde *vde, unsigned int macroblocks_nb)
++{
++	u32 n = min_t(u32, (macroblocks_nb + 7) >> 3, 0x1000);
++	int err;
++
++	err = tegra_vde_t124_bsev_zero(vde, (0x1000 - n) & ~3, n);
++	if (err)
++		return err;
++
++	err = tegra_vde_t124_bsev_zero(vde, 0x1820, 0x400);
++	if (err)
++		return err;
++
++	/* copy the 4 reference lists (0x80 words) from IRAM to 0x3620 */
++	err = tegra_vde_push_to_bsev_icmdqueue(vde, 0x80000080, false);
++	if (err)
++		return err;
++
++	return tegra_vde_push_to_bsev_icmdqueue(vde, 0x36200000 |
++						((vde->iram_lists_addr >> 2) & 0xFFFF), true);
++}
++
+ static int tegra_vde_setup_hw_context(struct tegra_vde *vde,
+ 				      struct tegra_vde_h264_decoder_ctx *ctx,
+ 				      struct tegra_video_frame *dpb_frames,
+@@ -350,6 +421,18 @@ static int tegra_vde_setup_hw_context(struct tegra_vde *vde,
+ 
+ 			tegra_vde_writel(vde, (v & 0xffeffffd) | 1, vde->ppe, 0x0C);
+ 		}
++		if (t124_mask & BIT(20))
++			tegra_vde_t124_layout(vde, macroblocks_nb);
++		/* stock codec init fn_03a50(5 = H.264) and fn_060c8 */
++		if (t124_mask & BIT(25))
++			tegra_vde_writel(vde, 0x00000035, vde->sxe, 0x08);
++		if (t124_mask & BIT(26))
++			tegra_vde_writel(vde, 0x00000400, vde->mbe, 0x84);
++		if (t124_mask & BIT(27)) {
++			tegra_vde_writel(vde, 0x4000 | (ctx->pic_width_in_mbs > 7 ? 0x10 : 0),
++					 vde->vdma, 0x00);
++			tegra_vde_writel(vde, 0x00000001, vde->vdma, 0x1C);
++		}
+ 		if (t124_mask & BIT(8))
+ 			dev_info(vde->dev, "n9dbg ppe 00 %08x 08 %08x 0c %08x 14 %08x 28 %08x\n",
+ 				 tegra_vde_readl(vde, vde->ppe, 0x00), tegra_vde_readl(vde, vde->ppe, 0x08),
+@@ -386,6 +469,13 @@ static int tegra_vde_setup_hw_context(struct tegra_vde *vde,
+ 	if (err)
+ 		return err;
+ 
++	if (vde->soc->t124_layout && (t124_mask & BIT(20))) {
++		err = tegra_vde_t124_bsev_lists(vde, macroblocks_nb);
++		if (err)
++			return err;
++		goto bsev_lists_done;
++	}
++
+ 	err = tegra_vde_push_to_bsev_icmdqueue(vde, 0x800003FC, false);
+ 	if (err)
+ 		return err;
+@@ -411,6 +501,8 @@ static int tegra_vde_setup_hw_context(struct tegra_vde *vde,
+ 	if (err)
+ 		return err;
+ 
++bsev_lists_done:
++
+ 	value = 0x00800005;
+ 	value |= ctx->pic_width_in_mbs << 11;
+ 	value |= ctx->pic_height_in_mbs << 3;
+@@ -462,6 +554,8 @@ static int tegra_vde_setup_hw_context(struct tegra_vde *vde,
+ 		value |= (ctx->weighted_bipred_idc & 3) << 17;
+ 		value |= !!ctx->weighted_pred_flag << 19;
+ 	}
++	if (vde->soc->t124_layout && (t124_mask & BIT(24)))
++		value |= ctx->second_chroma_qp_index_offset << 22;	/* T124 SXE 0x48 22-26 */
+ 	if (vde->soc->t124_layout && (t124_mask & BIT(18)))
+ 		value |= !!ctx->entropy_coding_mode_flag << 20;	/* T124 SXE 0x48 bit 20 (guess: CABAC) */
+ 
+@@ -508,6 +602,8 @@ static int tegra_vde_setup_hw_context(struct tegra_vde *vde,
+ 
+ 	value = 0x20000000;
+ 	value |= ctx->chroma_qp_index_offset << 8;
++	if (vde->soc->t124_layout && (t124_mask & BIT(24)))
++		value |= ctx->second_chroma_qp_index_offset << 22;	/* stock fn_060c8 */
+ 
+ 	tegra_vde_writel(vde, value, vde->mbe, 0x80);
+ 
+@@ -520,7 +616,17 @@ static int tegra_vde_setup_hw_context(struct tegra_vde *vde,
+ 	}
+ 
+ 	tegra_vde_mbe_set_0xa_reg(vde, 0, 0x000009FC);
+-	tegra_vde_mbe_set_0xa_reg(vde, 2, 0x61DEAD00);
++	if (vde->soc->t124_layout && (t124_mask & BIT(22)) &&
++	    (dpb_frames[0].flags & FLAG_B_FRAME) && ctx->dpb_frames_nb > 1) {
++		/* stock fn_04828: MBE 0xA reg 2/3 = co-located buffer of RefPicList1[0] */
++		unsigned int l1 = ctx->dpb_ref_frames_with_earlier_poc_nb + 1;
++
++		if (l1 >= ctx->dpb_frames_nb)
++			l1 = 1;
++		tegra_vde_mbe_set_0xa_reg(vde, 2, dpb_frames[l1].aux_addr);
++	} else {
++		tegra_vde_mbe_set_0xa_reg(vde, 2, 0x61DEAD00);
++	}
+ 	if ((t124_mask & BIT(10)) && vde->soc->t124_layout) {
+ 		/*
+ 		 * Stock AVP microcode: MBE 0xA reg 4/5 = a buffer of 0x60 bytes
+@@ -545,6 +651,10 @@ static int tegra_vde_setup_hw_context(struct tegra_vde *vde,
+ 	if (!ctx->baseline_profile)
+ 		value |= !!(dpb_frames[0].flags & FLAG_REFERENCE) << 1;
+ 
++	/* stock fn_060c8, no FRExt tools (Baseline/Main): always 0xfc000011 */
++	if (vde->soc->t124_layout && (t124_mask & BIT(23)))
++		value = 0xFC000011;
++
+ 	tegra_vde_writel(vde, value, vde->mbe, 0x80);
+ 
+ 	err = tegra_vde_wait_mbe(vde);
+@@ -832,11 +942,15 @@ static int tegra_vde_h264_setup_frame(struct tegra_ctx *ctx,
+ 
+ 	if (id == 0) {
+ 		frame_num = h->decode_params->frame_num;
++		vde->frames[id].poc = min(h->decode_params->top_field_order_cnt,
++					  h->decode_params->bottom_field_order_cnt);
+ 
+ 		if (h->decode_params->nal_ref_idc)
+ 			flags |= FLAG_REFERENCE;
+ 	} else {
+ 		frame_num = b->refs[ref_id].frame_num;
++		vde->frames[id].poc = min(b->refs[ref_id].top_field_order_cnt,
++					  b->refs[ref_id].bottom_field_order_cnt);
+ 	}
+ 
+ 	if (tb->b_frame)
+@@ -1016,6 +1130,11 @@ static int tegra_vde_h264_setup_context(struct tegra_ctx *ctx,
+ 	h264->num_ref_idx_l0_active_minus1	= h->pps->num_ref_idx_l0_default_active_minus1;
+ 	h264->num_ref_idx_l1_active_minus1	= h->pps->num_ref_idx_l1_default_active_minus1;
+ 	h264->chroma_qp_index_offset		= h->pps->chroma_qp_index_offset & 0x1f;
++	/* without transform_8x8/scaling (Main) the second offset equals the first */
++	if (h->pps->flags & V4L2_H264_PPS_FLAG_TRANSFORM_8X8_MODE)
++		h264->second_chroma_qp_index_offset = h->pps->second_chroma_qp_index_offset & 0x1f;
++	else
++		h264->second_chroma_qp_index_offset = h264->chroma_qp_index_offset;
+ 	h264->pic_init_qp			= h->pps->pic_init_qp_minus26 + 26;
+ 
+ 	err = tegra_vde_h264_setup_frames(ctx, h264);
+diff --git a/drivers/media/platform/nvidia/tegra-vde/vde.c b/drivers/media/platform/nvidia/tegra-vde/vde.c
+index 5470e94c3..4f2db5646 100644
+--- a/drivers/media/platform/nvidia/tegra-vde/vde.c
++++ b/drivers/media/platform/nvidia/tegra-vde/vde.c
+@@ -273,6 +273,9 @@ static int tegra_vde_probe(struct platform_device *pdev)
+ 	if (IS_ERR(vde->ppb))
+ 		return PTR_ERR(vde->ppb);
+ 
++	if (vde->soc->t124_layout)
++		vde->t124_x2c00 = devm_ioremap(dev, 0x60032c00, 0x400);	/* bring-up */
++
+ 	vde->vdma = devm_platform_ioremap_resource_byname(pdev, "vdma");
+ 	if (IS_ERR(vde->vdma))
+ 		return PTR_ERR(vde->vdma);
+diff --git a/drivers/media/platform/nvidia/tegra-vde/vde.h b/drivers/media/platform/nvidia/tegra-vde/vde.h
+index 4f33fba6e..edff277a6 100644
+--- a/drivers/media/platform/nvidia/tegra-vde/vde.h
++++ b/drivers/media/platform/nvidia/tegra-vde/vde.h
+@@ -59,6 +59,7 @@ struct tegra_video_frame {
+ 	dma_addr_t cr_addr;
+ 	dma_addr_t aux_addr;
+ 	u32 frame_num;
++	s32 poc;			/* T124: ref list entries carry the POC */
+ 	u32 flags;
+ 	u32 luma_atoms_pitch;
+ 	u32 chroma_atoms_pitch;
+@@ -103,6 +104,7 @@ struct tegra_vde {
+ 	void __iomem *ppb;
+ 	void __iomem *vdma;
+ 	void __iomem *frameid;
++	void __iomem *t124_x2c00;	/* T124: 0x60032c00 block (stock writes 0x2e00) */
+ 	resource_size_t frameid_size;
+ 	struct tegra_vde_bo *t124_mb_bo;	/* T124: 0x60 bytes per MB (MBE 0xA reg 4/5) */
+ 	struct device *dev;
+-- 
+2.56.0
+

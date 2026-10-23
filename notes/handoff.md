@@ -70,11 +70,67 @@ work on. Kept current by the previous agent at each test cycle (last update: 202
 - Microcode map: `fn_02040` H.264 frame driver, `fn_060c8` per-frame setup, `fn_04828` slice/ref
   lists + SXE 0x60/0x64/0x4c/0xdc, `fn_03a50` codec init, `fn_00830`/`fn_00868` BSE-V local-memory
   zero/copy commands. Local memory is addressed in words.
-- Next ideas for WP:
-  - Write SXE 0x60 (num_ref_idx l0<<22 | l1<<27), 0x64 (0x10000 | flags) and 0xdc (0x4407500) as
-    `fn_04828` does.
-  - Find where the parsed weights land (local memory 0x1c20 / MCE).
-  - Check whether the V4L2 PRED_WEIGHTS control has to be programmed by the host.
+- The kernel code for bits 20-27 is committed in `~/code/linux-flounder` (local) and exported as
+  `patches/candidates/vde/0005-*.patch`.
+
+## NEXT TASK — step by step (start here)
+
+### Test A: per-slice SXE registers from `fn_04828` (weighted-prediction lead)
+
+The stock slice code writes four SXE registers that mainline never writes. They are the strongest
+remaining lead for "weights parsed but not applied". Decompiled values (frame pictures, no MBAFF):
+
+| reg | stock value |
+|-----|-------------|
+| SXE 0x60 | `(slicecnt & 0x3f) << 16 | num_ref_idx_l0_active_minus1 << 22 | num_ref_idx_l1_active_minus1 << 27` (`slicecnt` = microcode field param_2[0x39], unknown; try 0) |
+| SXE 0x64 | `0x10000` (bit 19 = field pic, bit 20 = param_2[9], bit 21 = param_2[2]; all 0 for progressive) |
+| SXE 0xdc | `0x4407500` (constant) |
+| SXE 0x50 | `0` |
+
+1. In `drivers/media/platform/nvidia/tegra-vde/h264.c`, `tegra_vde_setup_hw_context()`, right after
+   the `tegra_vde_writel(vde, value, vde->sxe, 0x4C);` line, add:
+   ```c
+   if (vde->soc->t124_layout && (t124_mask & BIT(28))) {
+   	/* stock fn_04828: per-slice SXE setup */
+   	tegra_vde_writel(vde, ctx->num_ref_idx_l0_active_minus1 << 22 |
+   			 ctx->num_ref_idx_l1_active_minus1 << 27, vde->sxe, 0x60);
+   	tegra_vde_writel(vde, 0x00010000, vde->sxe, 0x64);
+   	tegra_vde_writel(vde, 0x04407500, vde->sxe, 0xDC);
+   	tegra_vde_writel(vde, 0x00000000, vde->sxe, 0x50);
+   }
+   ```
+   Also try each register alone (split into bits 28/29/30 if the combined test changes anything).
+2. Rebuild the module, strip it and copy it to the tablet (commands above).
+3. Run (base mask 1361920 + bit 28 = 1361920 + 268435456 = **269797376**):
+   ```
+   tools/vde-test.sh 1361920   m_wp m_b v720:12
+   tools/vde-test.sh 269797376 m_wp m_b v720:12
+   ```
+4. Success criterion: `v720_12` luma score rises from 23 % (frames 3-12 at 0 %). Watch `faults=` /
+   `errs=` too: a hang or MBE timeout means the value is wrong. If the tablet stops answering, wait up to
+   5 min (watchdog), then `tools/pmos/pmboot.sh <vdetest img>`.
+
+### Test B: B-frame bits 22 / 23 (not yet run)
+
+```
+tools/vde-test.sh $((1361920 + (1<<22)))            m_b
+tools/vde-test.sh $((1361920 + (1<<23)))            m_b
+tools/vde-test.sh $((1361920 + (1<<22) + (1<<23))) m_b
+```
+Baseline `m_b`: Y 91.81 % (min 81.34), first imperfect frame 4. Bit 22 = MBE reg 2/3 = co-located
+buffer of RefPicList1[0]; bit 23 = MBE final command `0xfc000011` (stock value for non-High streams).
+
+### If Test A gives nothing (in order)
+
+1. REA: find where the parsed weights land. Local memory: MCE base 0x1c20 (`MCE 0x10 = 0x1c201c20`).
+   Search the microcode for reads of BSE-V/MCE registers after slice decode, or writes to 0x60032400-
+   0x600324ff in `fn_04828` / `fn_01ff0` / `fn_01754`.
+2. Check whether `libnvmm` (host side, in `/tmp/n9build/vendor-video/lib*`) parses pred_weight_table and
+   sends weights to the AVP: REA it for "weight"/"luma_log2" strings or a loop over 32 refs x (w, o).
+   If the host supplies weights, tegra-vde must use the V4L2 `PRED_WEIGHTS` control and copy the
+   weights into local memory with a BSE-V copy command (see `tegra_vde_t124_bsev_lists()`).
+3. After every cycle: update this file and notes/vde.md (hypothesis, result, dead ends), export the
+   kernel diff to `patches/candidates/vde/`, commit and push the nexus9 repo.
 
 ## Other open items (see notes/gpu.md)
 
