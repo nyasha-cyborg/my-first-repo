@@ -36,7 +36,9 @@ log "userdata mounted"
 /sbin/e2fsck -p /data/$IMG > /data/pmos/fsck.log 2>&1
 rc=$?
 log "e2fsck rc=$rc"
-[ $rc -ge 4 ] && rescue "e2fsck rc=$rc on /data/$IMG (see /data/pmos/fsck.log)"
+# 126/127: the checker itself could not run -> boot anyway; 4..8: real damage -> rescue shell
+case $rc in 126|127) log "WARNING: e2fsck did not run (rc=$rc), mounting unchecked";;
+	*) [ $rc -ge 4 ] && rescue "e2fsck rc=$rc on /data/$IMG (see /data/pmos/fsck.log)";; esac
 L=$(losetup -f) && losetup $L /data/$IMG || rescue "losetup"
 log "loop $L"
 mount -t ext4 -o noatime $L /root || rescue "mount rootfs"

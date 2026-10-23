@@ -104,8 +104,19 @@ fi
 mkdir -p "$O/boot/sbin" "$O/boot/lib" "$O/boot/usr/lib"
 cp -L "$E/sbin/e2fsck" "$O/boot/sbin/e2fsck"
 cp -L "$E/lib/ld-musl-aarch64.so.1" "$O/boot/lib/"; ln -sf ld-musl-aarch64.so.1 "$O/boot/lib/libc.musl-aarch64.so.1"
-for l in libext2fs.so.2 libcom_err.so.2 libblkid.so.1 libuuid.so.1 libe2p.so.2; do
-	cp -L "$(ls "$E"/usr/lib/$l "$E"/lib/$l 2>/dev/null | head -1)" "$O/boot/usr/lib/$l"
+# all shared libraries e2fsck needs, recursively (a hand-written list missed libeconf: e2fsck exited 127)
+need() { readelf -d "$1" 2>/dev/null | sed -n 's/.*Shared library: \[\(.*\)\]/\1/p'; }
+todo=$(need "$E/sbin/e2fsck"); done_libs=" libc.musl-aarch64.so.1 "
+while [ -n "$todo" ]; do
+	next=
+	for l in $todo; do
+		case "$done_libs" in *" $l "*) continue;; esac
+		done_libs="$done_libs$l "
+		f=$(ls "$E"/usr/lib/$l "$E"/lib/$l 2>/dev/null | head -1)
+		[ -n "$f" ] || { echo "e2fsck: missing $l" >&2; continue; }
+		cp -L "$f" "$O/boot/usr/lib/$l"; next="$next $(need "$f")"
+	done
+	todo=$next
 done
 install -m755 "$HERE/init" "$O/boot/init"
 (cd "$O/boot" && find . | cpio -o -H newc --quiet | gzip -9 > "$O/boot.gz")
