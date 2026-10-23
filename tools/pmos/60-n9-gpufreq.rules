@@ -1,0 +1,5 @@
+# n9: pin the GK20A clock as soon as nouveau registers its devfreq device (before greetd/phoc start).
+# simple_ondemand (the only governor built) reclocked ~40 times in 3 min; every reclock is a GPC PLL slide,
+# the step that timed out and hung the SoC, and a reclock racing GR init left FECS hung for the whole boot
+# (notes/gpu.md). min = max = one fixed clock: no transitions. Change both values together.
+ACTION=="add", SUBSYSTEM=="devfreq", KERNEL=="57000000.gpu", ATTR{max_freq}="612000000", ATTR{min_freq}="612000000"

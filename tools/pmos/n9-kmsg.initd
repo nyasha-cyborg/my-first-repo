@@ -1,10 +1,12 @@
 #!/sbin/openrc-run
 # n9: keep the kernel log across hangs from the start of boot (debug period).
-# /var/log/kmsg.log, synced every 5 s; the previous boot's log is kept as kmsg.log.1
+# /var/log/kmsg.log, synced every 5 s; the last 5 boots are kept as kmsg.log.1 (previous) .. kmsg.log.5
+# (one kept log was not enough: back-to-back early hangs rotated the interesting log away)
 description="Persist the kernel log (debug)"
 depend() { need devfs; before udev; }
 start() {
 	ebegin "Persisting the kernel log"
+	for i in 4 3 2 1; do [ -f /var/log/kmsg.log.$i ] && mv /var/log/kmsg.log.$i /var/log/kmsg.log.$((i + 1)); done
 	[ -f /var/log/kmsg.log ] && mv /var/log/kmsg.log /var/log/kmsg.log.1
 	start-stop-daemon --start --background --make-pidfile --pidfile /run/n9-kmsg.pid \
 		--exec /bin/sh -- -c 'cat /proc/kmsg >> /var/log/kmsg.log & while true; do sync; sleep 5; done'

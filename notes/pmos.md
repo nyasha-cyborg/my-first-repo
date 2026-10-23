@@ -155,5 +155,5 @@ cpu reaches 95000 mC`. soctherm_throt_cfg_parse() needs nvidia,gpu-throt-level; 
 lacked it -> the whole throttle rejected -> the flounder trips (passive 83, hot 93, critical 95 C) had no working
 cooling device -> Denver at up to 2.5 GHz + GPU heated straight into the 95 C hardware power cut.
 REA vendor flounder_soctherm_data: tegra-heavy (hw throttle) at 90 C, tegra-shutdown at 99 C.
-Fix: series 0039 adds nvidia,gpu-throt-level (kernel 4fd...); CPU capped at 2.295 GHz (stock); n9-health now logs
+Fix: series 0039 adds nvidia,gpu-throt-level (kernel g178dd2c295d4); CPU capped at 2.295 GHz (stock); n9-health now logs
 thermal zone temperatures and the CPU clock every 30 s.

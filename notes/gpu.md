@@ -62,3 +62,31 @@
   8 = 540 MHz) on the pmOS cmdline: one slide at init, none afterwards.
 - Open: whether STEPA/STEPB must be rewritten before every slide after GPU rail-gating (vendor does it), which
   would allow DVFS again; higher pinned clocks.
+
+## 2026-10-23 19:30 — random GR init failure; the real reclocker is devfreq, not the PMU
+
+- Symptom (kernel g178dd2c295d4, one boot in three seen): no Phosh, greetd crashed. dmesg:
+  `bus: MMIO read of 00000000 FAULT at 137000 [ PRIVRING ]` then `timeout`, `WARNING gf100.c:967
+  gf100_gr_init_ctxctl` (`gr: init failed, -110`) on phoc's first GR use. FECS starts (0x409800 bit 0) but never
+  answers method 0x10 (discover image size). Stuck for the whole boot: rmmod/modprobe nouveau, 540 MHz cap and
+  clearing the soctherm heavy GPU throttle (0x700e2468 -> 0x40000000 via /dev/mem) all still fail.
+- Not the series-0039 GPU throttle level: the next boot of the same image started GR fine (status In, no breach).
+- Found on the way: **`NvGk20aPstate` / fixed astate never held.** Mainline has `gk20a_devfreq` (simple_ondemand,
+  50 ms polling, the only governor built): its target sets `ustate_ac/dc`, which override `astate`. debugfs pstate
+  showed 852 MHz (failed boot, 1 transition) and 40 transitions in 3 min on a good boot. `NvGk20aDvfs=0` only stops
+  the PMU's own alarm. Every devfreq transition = a GPC PLL slide (the step that timed out and hung the SoC; series
+  0038 falls back to a full reprogram). 0x137000 = GPCPLL_CFG, read by devfreq `get_cur_freq` every poll.
+- Hypothesis (H1, testing): a devfreq reclock racing GR/FECS init leaves FECS hung; reclocks may also be the
+  "bright flashes".
+- Change: udev rule `tools/pmos/60-n9-gpufreq.rules` pins min = max = 612 MHz when the devfreq device appears
+  (before greetd): verified live, 0 transitions. `NvGk20aPstate=7` dropped from the cmdline (no effect).
+- Separate: two early resets after `fastboot boot`; boot-init.log.1 shows rootfs mounted only at 32 s (userdata at
+  24 s) on one of them, inside `tegra_wdt.heartbeat=60` that nothing pets before OpenRC's boot runlevel. Cmdline now
+  `heartbeat=180` (busybox watchdog sets 60 s once it starts).
+- 19:25-19:41 `tools/pmos/gpu-boot-test.sh 4` (rule + heartbeat=180): cycles 1-2 GR ok, 0 PRIVRING, 612 MHz,
+  1 transition (the pin), greetd started (the `pgrep -x phoc` check said down: unverified, check the process
+  name). Cycles 3-4: pmOS answered SSH, then went silent within 90 s (no ping, serial gadget enumerated but
+  mute) -> watchdog reset to Android at 19:44. Next pmOS boot: SSH up for a moment, then gone; from ~19:50 the
+  tablet is absent from USB entirely (no adb/fastboot/gadget) -> power cycle needed (or battery empty).
+  Early hangs now 4 of the last 8 pmOS boots; their kmsg logs were lost to rotation. Next: stream `dmesg -w`
+  from the first SSH second (the 20:03 attempt found no tablet), and keep kmsg.log.2+ (rotation keeps only 1).
