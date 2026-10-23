@@ -109,6 +109,15 @@ Test how-to: edit h264.c, rebuild the module, scp it, `tools/vde-test.sh <mask> 
 `MASK2=n`). After every cycle: update this file and notes/vde.md, export the kernel diff to
 `patches/candidates/vde/`, commit and push the nexus9 repo.
 
+## Playback path (next milestone after B frames)
+
+`tegra_fill_pixfmt_mp()` now aligns the capture pitch to 64-byte GOBs (width to 128) — common widths
+are unchanged and still 100 %. GStreamer's v4l2slh264dec compacts output to tight caps strides in our
+test pipeline, so padded-width clips can only be validated through a modifier-aware path. The full
+plan (private block-linear fourcc + INTEGER64 DRM modifier control, GStreamer patch, detile fallback)
+is in notes/vde.md "Playback path plan". Do not raise the profile control above MAIN until
+transform_8x8 and scaling lists work.
+
 ## Other open items (see notes/gpu.md)
 
 - Flickering blocks during video (a sync race, not caused by the WC change); backlight unsteady at low
