@@ -46,17 +46,17 @@ if [ -e $R/etc/init.d/watchdog ]; then
 	printf 'WATCHDOG_OPTS="-t 10 -T 60"\nWATCHDOG_DEV="/dev/watchdog"\n' > $R/etc/conf.d/watchdog
 	c rc-update add watchdog boot >/dev/null 2>&1 && say "watchdog fed from the boot runlevel"
 fi
-# kernel log that survives a hang/reset: /var/log/kmsg.log, synced every 5 s (debug period)
-mkdir -p $R/etc/local.d
-cat > $R/etc/local.d/n9-kmsg.start <<'EOF'
-#!/bin/sh
-# n9: keep the kernel log across hangs (rotates at boot, previous boot in kmsg.log.1)
-[ -f /var/log/kmsg.log ] && mv /var/log/kmsg.log /var/log/kmsg.log.1
-(cat /proc/kmsg >> /var/log/kmsg.log) </dev/null >/dev/null 2>&1 &
-(while true; do sync /var/log/kmsg.log 2>/dev/null || sync; sleep 5; done) </dev/null >/dev/null 2>&1 &
-EOF
-chmod +x $R/etc/local.d/n9-kmsg.start
-c rc-update add local default >/dev/null 2>&1 || true
+# kernel log that survives a hang/reset, from the start of boot: n9-kmsg (sysinit) -> /var/log/kmsg.log
+# (5 s sync, previous boot kept as kmsg.log.1); OpenRC's own log in /var/log/rc.log
+rm -f $R/etc/local.d/n9-kmsg.start
+[ -x $R/etc/init.d/n9-kmsg ] && ln -sf /etc/init.d/n9-kmsg $R/etc/runlevels/sysinit/n9-kmsg
+grep -q '^rc_logger=' $R/etc/rc.conf || echo 'rc_logger="YES"' >> $R/etc/rc.conf
+# our n9-modem service drives the modem: ModemManager would fight it, qcserial would claim the boot ROM
+# (05c6:9008) that sahara needs; no IIO sensors are exposed on this board
+c rc-update del modemmanager default >/dev/null 2>&1 || true
+c rc-update del iio-sensor-proxy default >/dev/null 2>&1 || true
+mkdir -p $R/etc/modprobe.d
+printf '# n9: the modem boot ROM (05c6:9008) is driven by sahara over usbfs\nblacklist qcserial\n' > $R/etc/modprobe.d/n9-modem.conf
 # Phosh greeter autostart (GREETD_AUTOSTART=0 to start it by hand; the watchdog covers a hang)
 GREETD_AUTOSTART=${GREETD_AUTOSTART:-1}
 
