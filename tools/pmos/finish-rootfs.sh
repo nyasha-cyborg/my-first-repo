@@ -28,11 +28,16 @@ say "sshd: key login only"
 # seatd works. (Do not add "openssh" to PKGS: it pulls the non-PAM sshd that rejects pmOS's UsePAM policy.)
 c apk add -q seatd seatd-openrc >/dev/null 2>&1 || say "seatd install failed (needs network)"
 for u in greetd $U; do c addgroup $u seat 2>/dev/null || true; done
-# GPU: Mesa tegra+nouveau segfaults on the first draw (notes/gpu.md): software rendering until fixed.
-# greetd starts the greeter with a clean PAM environment, so this must be in /etc/environment (pam_env).
-for kv in GBM_ALWAYS_SOFTWARE=1 LIBGL_ALWAYS_SOFTWARE=1 WLR_RENDERER=pixman; do
-	grep -q "^${kv%%=*}=" $R/etc/environment 2>/dev/null || echo "$kv" >> $R/etc/environment
-done
+# GPU: stock Mesa's tegra wrapper crashes (notes/gpu.md); the overlay ships a patched Mesa in /opt/mesa-n9
+# (tools/pmos/mesa/build-mesa.sh). greetd gives the greeter a clean PAM environment: use /etc/environment.
+sed -i '/^GBM_ALWAYS_SOFTWARE=/d; /^LIBGL_ALWAYS_SOFTWARE=/d; /^WLR_RENDERER=/d; /^LD_LIBRARY_PATH=/d' $R/etc/environment 2>/dev/null || true
+if [ -f $R/opt/mesa-n9/lib/libgallium-26.1.6.so ]; then
+	echo "LD_LIBRARY_PATH=/opt/mesa-n9/lib" >> $R/etc/environment
+	say "GPU: patched Mesa from /opt/mesa-n9"
+else	# fallback: software rendering (pixman compositor, llvmpipe clients)
+	printf 'GBM_ALWAYS_SOFTWARE=1\nLIBGL_ALWAYS_SOFTWARE=1\nWLR_RENDERER=pixman\n' >> $R/etc/environment
+	say "GPU: no patched Mesa, software rendering"
+fi
 # root over SSH with the same key only (passwords stay off)
 if [ -f $R/home/$U/.ssh/authorized_keys ]; then
 	mkdir -p $R/root/.ssh; cp $R/home/$U/.ssh/authorized_keys $R/root/.ssh/

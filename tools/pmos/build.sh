@@ -60,6 +60,8 @@ install -m755 "$T/rootfs/n9-modem.initd" "$O/ov/etc/init.d/n9-modem"
 install -m755 "$HERE/n9-kmsg.initd" "$O/ov/etc/init.d/n9-kmsg"
 K=$(ls "$HOME"/.ssh/id_*.pub 2>/dev/null | head -1 || true)
 if [ -n "$K" ]; then mkdir -p "$O/ov/home/user/.ssh"; cp "$K" "$O/ov/home/user/.ssh/authorized_keys"; fi
+# patched Mesa (GPU), built by tools/pmos/mesa/build-mesa.sh
+[ -d /tmp/n9build/xbuild/dest/opt/mesa-n9 ] && cp -a /tmp/n9build/xbuild/dest/opt "$O/ov/" || echo "warning: no patched Mesa (run tools/pmos/mesa/build-mesa.sh)"
 tar -C "$O/ov" --owner=0 --group=0 -czf "$O/overlay.tgz" .
 echo "overlay: $(du -m "$O/overlay.tgz" | cut -f1) MiB"
 
