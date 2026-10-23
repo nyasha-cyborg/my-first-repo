@@ -58,6 +58,8 @@ $CLANG -o "$O/ov/usr/lib/n9-modem/qmi-connect" "$T/miniroot/qmi-connect.c"
 cp "$T/mdm-boot.sh" "$T/mdm-data.sh" "$T/mdm-net.sh" "$O/ov/usr/lib/n9-modem/"
 install -m755 "$T/rootfs/n9-modem.initd" "$O/ov/etc/init.d/n9-modem"
 install -m755 "$HERE/n9-kmsg.initd" "$O/ov/etc/init.d/n9-kmsg"
+install -m755 "$HERE/n9-health.initd" "$O/ov/etc/init.d/n9-health"
+install -m755 "$HERE/n9-health.sh" "$O/ov/usr/lib/n9-modem/n9-health.sh"
 K=$(ls "$HOME"/.ssh/id_*.pub 2>/dev/null | head -1 || true)
 if [ -n "$K" ]; then mkdir -p "$O/ov/home/user/.ssh"; cp "$K" "$O/ov/home/user/.ssh/authorized_keys"; fi
 # patched Mesa (GPU), built by tools/pmos/mesa/build-mesa.sh

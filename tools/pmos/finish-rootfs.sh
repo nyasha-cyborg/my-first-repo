@@ -51,7 +51,9 @@ if [ -f $R/home/$U/.ssh/authorized_keys ]; then
 fi
 
 # watchdog: the boot cmdline arms tegra_wdt (early_start); busybox watchdog feeds it from the boot runlevel,
-# so a hang resets the tablet instead of stranding it (first pmOS boot hung right after phoc's modeset)
+# so a hang resets the tablet instead of stranding it (first pmOS boot hung right after phoc's modeset).
+# In the default runlevel n9-health takes over and feeds only while sshd + fork/exec work (busybox kept feeding
+# through "mode B" stalls: ping alive, sshd/getty/session dead, no reset for hours).
 if [ -e $R/etc/init.d/watchdog ]; then
 	printf 'WATCHDOG_OPTS="-t 10 -T 60"\nWATCHDOG_DEV="/dev/watchdog"\n' > $R/etc/conf.d/watchdog
 	c rc-update add watchdog boot >/dev/null 2>&1 && say "watchdog fed from the boot runlevel"
@@ -88,7 +90,7 @@ fi
 
 # services (OpenRC); missing ones are skipped
 [ "$GREETD_AUTOSTART" = 1 ] || c rc-update del greetd default >/dev/null 2>&1 || true
-for s in sshd seatd networkmanager $([ "$GREETD_AUTOSTART" = 1 ] && echo greetd) n9-modem bluetooth chronyd; do
+for s in sshd n9-health seatd networkmanager $([ "$GREETD_AUTOSTART" = 1 ] && echo greetd) n9-modem bluetooth chronyd; do
 	[ -e $R/etc/init.d/$s ] && c rc-update add $s default >/dev/null 2>&1 && say "enabled $s"
 done
 # root autologin on the USB serial gadget (debug console; g_serial is built into the kernel)

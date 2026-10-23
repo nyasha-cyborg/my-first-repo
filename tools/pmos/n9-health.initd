@@ -1,0 +1,20 @@
+#!/sbin/openrc-run
+# n9: health-checked watchdog feeder + periodic health log (debug period).
+# busybox watchdog kept feeding while sshd/getty/the session were dead ("mode B"), so the tablet never reset.
+# This feeder pets /dev/watchdog only while the system really works: sshd accepts a TCP connection and a
+# fork+exec completes within 5 s. Otherwise it stops petting and tegra_wdt resets the board (heartbeat=60).
+# Every 30 s it also writes memory/load/top processes to the kernel log (kept on disk by n9-kmsg).
+description="Health-checked watchdog feeder and health log"
+depend() { after sshd; }
+start() {
+	ebegin "Starting the n9 health watchdog"
+	rc-service watchdog stop >/dev/null 2>&1
+	start-stop-daemon --start --background --make-pidfile --pidfile /run/n9-health.pid \
+		--exec /usr/lib/n9-modem/n9-health.sh
+	eend $?
+}
+stop() {
+	ebegin "Stopping the n9 health watchdog"
+	start-stop-daemon --stop --pidfile /run/n9-health.pid
+	eend $?
+}
