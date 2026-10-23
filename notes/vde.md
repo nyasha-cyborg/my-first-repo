@@ -107,10 +107,16 @@ Default on T124, mask2 bit 7 can force/disable it; mask2 bit 1 logs parse result
 `m_b` 97.80 → **100.00 %**, `bpyrnormal` 99.29 → **99.47 %** (first bad 58 → 84), everything else
 unchanged. `bdirtemporal` is still 98.60 % (separate temporal-direct issue).
 
-Remaining: bpyrnormal has a late 2-frame event at display 84 (same style as the pre-fix transients;
-needs per-MB analysis — check whether it is another list edge case such as a B-list or POC-wrap
-interaction). GStreamer still cannot supply SLICE_PARAMS lists in frame-based mode; the in-kernel
-parser is the workaround (userspace path exists for multi-slice/long-term later).
+Remaining: one independent failure in bpyrnormal (display 87, decode #84; later frames propagate).
+Per-MB/MV analysis: the slice is the first P after a frame_num wrap with three list0 modifications
+(expected [83,81,79]), but the hardware used the *base* order [81,83,79] — a clean top-two swap; every
+other modified slice in the clip is honoured, including a post-wrap P at decode #88 with base != spec.
+Host emulation of `n9_h264_parse_slice`/`n9_apply_mods` on that exact AU returns the correct list, so
+the runtime parse must have failed for that AU. Leading cause: an emulation-prevention 0x03 inside the
+slice header (not stripped) → fixed by copying the header with EPBs removed before bit parsing
+(2026-10-25, unverified — tablet died before the test). A log with the parsed fn/poc/ops per frame is
+available (t124_mask2 bit 1). GStreamer still cannot supply SLICE_PARAMS lists in frame-based mode;
+the in-kernel parser is the workaround (multi-slice/long-term remain best effort).
 
 Dead ends: MBE list1 `0xC4000000` group commands (mask2 bit 0, verified to run, no effect); MBE A reg
 2/3 colocated aux (t124 bit 22); MBE per-MB buffer (bit 10); unwrapped ref `frame_num` (mask2 bit 3);

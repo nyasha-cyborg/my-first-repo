@@ -1,0 +1,134 @@
+From 49506a523a8e21b941855359332a3fb4d9994b61 Mon Sep 17 00:00:00 2001
+From: nyasha <nmushambi@proton.me>
+Date: Sat, 24 Oct 2026 12:56:45 +1300
+Subject: [PATCH] WIP tegra-vde: strip emulation-prevention bytes in the H.264
+ slice parser; safer log
+
+The single remaining bpyrnormal failure (AU at decode #84) used the base ref
+list instead of the modified one; host emulation of the parser on that exact
+AU succeeds, so the runtime parse likely choked on a 00 00 03 sequence in the
+slice header. Copy the header with EPBs removed before bit parsing. Also use
+the active dpb_id list in the debug log instead of an uninitialized array.
+Unverified: tablet dropped off the network before the test.
+
+Co-Authored-By: Claude Code <noreply@anthropic.com>
+---
+ .../media/platform/nvidia/tegra-vde/h264.c    | 61 ++++++++++++++++---
+ 1 file changed, 52 insertions(+), 9 deletions(-)
+
+diff --git a/drivers/media/platform/nvidia/tegra-vde/h264.c b/drivers/media/platform/nvidia/tegra-vde/h264.c
+index 002fa871a..5c632c556 100644
+--- a/drivers/media/platform/nvidia/tegra-vde/h264.c
++++ b/drivers/media/platform/nvidia/tegra-vde/h264.c
+@@ -1054,6 +1054,9 @@ struct n9_h264_mods {
+ 	unsigned int l0_nb;
+ 	struct n9_h264_mod l1[32];
+ 	unsigned int l1_nb;
++	u32 frame_num;
++	u32 poc_lsb;
++	u32 slice_type;
+ };
+ 
+ struct n9_br {
+@@ -1133,6 +1136,7 @@ static int n9_h264_parse_slice(const u8 *data, size_t len,
+ 	const struct v4l2_ctrl_h264_sps *sps = h->sps;
+ 	const struct v4l2_ctrl_h264_pps *pps = h->pps;
+ 	struct n9_br br;
++	u8 scratch[256];
+ 	size_t i = 0, hdr = 0;
+ 	u32 nal_type, slice_type;
+ 	unsigned int log2_fn, log2_poc;
+@@ -1144,10 +1148,6 @@ static int n9_h264_parse_slice(const u8 *data, size_t len,
+ 			i += 4;
+ 			if (nal_type == 1 || nal_type == 5) {
+ 				hdr = i;
+-				br.p = data + hdr;
+-				br.len = len - hdr;
+-				br.bit = 0;
+-				br.err = false;
+ 				break;
+ 			}
+ 			continue;
+@@ -1157,21 +1157,49 @@ static int n9_h264_parse_slice(const u8 *data, size_t len,
+ 	if (!hdr)
+ 		return -ENOENT;
+ 
++	/*
++	 * Copy the header into a scratch buffer with emulation-prevention
++	 * bytes removed; a 0x03 in the slice header would otherwise shift
++	 * every field after it.
++	 */
++	{
++		u8 tmp[256];
++		unsigned int n = 0, zeros = 0;
++		size_t j;
++
++		for (j = hdr; j < len && n < sizeof(tmp); j++) {
++			u8 c = data[j];
++
++			if (zeros >= 2 && c == 3) {
++				zeros = 0;
++				continue;
++			}
++			tmp[n++] = c;
++			zeros = c ? 0 : zeros + 1;
++		}
++		memcpy(scratch, tmp, n);
++		br.p = scratch;
++		br.len = n;
++		br.bit = 0;
++		br.err = false;
++	}
++
+ 	log2_fn = sps->log2_max_frame_num_minus4 + 4;
+ 	log2_poc = sps->log2_max_pic_order_cnt_lsb_minus4 + 4;
+ 
+ 	n9_br_ue(&br);			/* first_mb_in_slice */
+ 	slice_type = n9_br_ue(&br) % 5;
+ 	n9_br_ue(&br);			/* pic_parameter_set_id */
+-	n9_br_u(&br, log2_fn);		/* frame_num */
++	mods->frame_num = n9_br_u(&br, log2_fn);
+ 	if (!(sps->flags & V4L2_H264_SPS_FLAG_FRAME_MBS_ONLY) &&
+ 	    n9_br_u(&br, 1)) {		/* field_pic_flag */
+ 		return -EOPNOTSUPP;
+ 	}
+ 	if (nal_type == 5)
+ 		n9_br_ue(&br);		/* idr_pic_id */
++	mods->slice_type = slice_type;
+ 	if (sps->pic_order_cnt_type == 0) {
+-		n9_br_u(&br, log2_poc);	/* pic_order_cnt_lsb */
++		mods->poc_lsb = n9_br_u(&br, log2_poc);
+ 		if ((pps->flags &
+ 		     V4L2_H264_PPS_FLAG_BOTTOM_FIELD_PIC_ORDER_IN_FRAME_PRESENT))
+ 			n9_br_se(&br);	/* delta_pic_order_cnt_bottom */
+@@ -1306,9 +1334,24 @@ static int tegra_vde_h264_setup_frames(struct tegra_ctx *ctx,
+ 			n9_h264_parse_slice(vaddr, vb2_get_plane_payload(&src->vb2_buf, 0),
+ 					    h, &mods) : -ENOMEM;
+ 
+-		if (t124_mask2 & BIT(1))
+-			dev_info(ctx->vde->dev, "n9dbg mods: vaddr=%d err=%d l0=%u l1=%u\n",
+-				 vaddr != NULL, perr, mods.l0_nb, mods.l1_nb);
++		if (t124_mask2 & BIT(1)) {
++			u32 l0[4] = {0}, l0fn[4] = {0};
++			unsigned int k;
++
++			for (k = 0; k < 4 && k < b.num_valid; k++) {
++				unsigned int idx = dpb_id[k].index;
++
++				if (idx >= V4L2_H264_NUM_DPB_ENTRIES)
++					break;
++				l0[k] = idx;
++				l0fn[k] = (u32)b.refs[idx].frame_num & 0x1f;
++			}
++			dev_info(ctx->vde->dev,
++				 "n9dbg mods: err=%d st=%u fn=%u poc=%u l0mod=%u l1mod=%u list0=%u/%u/%u/%u fn=%u/%u/%u/%u\n",
++				 perr, mods.slice_type, mods.frame_num, mods.poc_lsb,
++				 mods.l0_nb, mods.l1_nb, l0[0], l0[1], l0[2], l0[3],
++				 l0fn[0], l0fn[1], l0fn[2], l0fn[3]);
++		}
+ 
+ 		if (!perr) {
+ 			if (h->decode_params->flags & V4L2_H264_DECODE_PARAM_FLAG_BFRAME) {
+-- 
+2.56.0
+
