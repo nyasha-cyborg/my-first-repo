@@ -13,10 +13,17 @@ serial() { lsusb | grep -q 0525:a4a7 && timeout 20 "$HERE/../n9sh.sh" "$1" "${2:
 
 to_bootloader() {
 	fastboot devices | grep -q . && return 0
-	if ! timeout 15 $SSH 'reboot bootloader' >/dev/null 2>&1; then
+	# pmOS: skip the driver shutdown path (it has hung the tablet for minutes): set the PMC reboot-mode
+	# "bootloader" bit (SCRATCH0 bit 30, as reboot-mode does) and reset at once via SysRq
+	if ! timeout 15 $SSH 'sync; python3 -c "
+import mmap,os,struct
+f=os.open(\"/dev/mem\",os.O_RDWR|os.O_SYNC); m=mmap.mmap(f,0x1000,mmap.MAP_SHARED,mmap.PROT_READ|mmap.PROT_WRITE,offset=0x7000e000)
+v=struct.unpack(\"<I\",m[0x450:0x454])[0]; m[0x450:0x454]=struct.pack(\"<I\",v|(1<<30))
+" && echo b > /proc/sysrq-trigger' >/dev/null 2>&1; then
 		serial 'reboot bootloader' 3 >/dev/null || adb reboot bootloader >/dev/null 2>&1
 	fi
-	for i in $(seq 1 90); do
+	# a hung shutdown is reset by the watchdog (heartbeat 180 s), so wait up to ~5 min
+	for i in $(seq 1 150); do
 		fastboot devices | grep -q . && return 0
 		adb devices | grep -q 'device$' && adb reboot bootloader >/dev/null 2>&1
 		sleep 2
