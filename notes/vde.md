@@ -84,6 +84,11 @@ Patches: `patches/candidates/vde/` (3 WIP commits in linux-flounder, last 5a4d2f
   profile=fast, skiploopfilter=nonkey. Streaming 480p from YouTube still drops ~374 frames / 25 s
   (local 480p file: ~80) — network + audio + demux compete for the two cores.
 
+- Dead end 04:45: SXE 0x5c = 0x3620 faults even with a 64 KiB secure_bo (SXE 0x7c), so 0x54-0x74 are
+  not offsets into that buffer. Hypothesis for weights: on T124 the AVP/host side programs per-slice
+  data (the microcode writes 20 MBE ref-list entries from a host table, +0x1c); weights may need the
+  V4L2 slice-based API (V4L2_CID_STATELESS_H264_PRED_WEIGHTS) instead of frame-based decoding.
+
 ## Next
 
 0. Weighted prediction application (find the slice-level microcode / MCE registers), then B-frame drift
