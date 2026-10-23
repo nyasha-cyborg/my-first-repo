@@ -33,6 +33,11 @@ for u in greetd $U; do c addgroup $u seat 2>/dev/null || true; done
 sed -i '/^GBM_ALWAYS_SOFTWARE=/d; /^LIBGL_ALWAYS_SOFTWARE=/d; /^WLR_RENDERER=/d; /^LD_LIBRARY_PATH=/d' $R/etc/environment 2>/dev/null || true
 if [ -f $R/opt/mesa-n9/lib/libgallium-26.1.6.so ]; then
 	echo "LD_LIBRARY_PATH=/opt/mesa-n9/lib" >> $R/etc/environment
+	# that Mesa has no desktop libGL and no llvmpipe: gnome-session's acceleration check fails and shows its
+	# failure screen instead of the greeter. Phosh renders with GLES; skip the check (PATH: /usr/local first).
+	mkdir -p $R/usr/local/bin
+	printf '#!/bin/sh\nexec /usr/bin/gnome-session --disable-acceleration-check "$@"\n' > $R/usr/local/bin/gnome-session
+	chmod 755 $R/usr/local/bin/gnome-session
 	say "GPU: patched Mesa from /opt/mesa-n9"
 else	# fallback: software rendering (pixman compositor, llvmpipe clients)
 	printf 'GBM_ALWAYS_SOFTWARE=1\nLIBGL_ALWAYS_SOFTWARE=1\nWLR_RENDERER=pixman\n' >> $R/etc/environment
