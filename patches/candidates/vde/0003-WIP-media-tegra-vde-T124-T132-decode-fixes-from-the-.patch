@@ -1,0 +1,273 @@
+From 5a4d2fdf573ff520f6e8de9665b11507268927b8 Mon Sep 17 00:00:00 2001
+From: nyasha <nmushambi@proton.me>
+Date: Sat, 24 Oct 2026 02:32:25 +1300
+Subject: [PATCH 3/3] WIP media: tegra-vde: T124/T132 decode fixes from the
+ stock AVP microcode (REA)
+
+Bring-up state, behind the t124_mask module parameter while being verified:
+- bit 11: frame-id luma entries carry bit 31 (progressive frame), as the
+  stock microcode does; fixes the bottom 4 rows of every macroblock and
+  the SMMU faults -> Baseline and Main (plain, POC type 0) bit-exact
+- bit 14: SXE 0x40 bits 17-20 are the picture structure on T124, not
+  !baseline; Main-profile I-frames parse
+- bit 15: SXE 0x48 bit 17 weighted_pred_flag, 18-19 weighted_bipred_idc
+- bit 12: allow CABAC + SXE 0x44 bit 1 (partial: I-frame only)
+- frame-id window 0x500 (T124 second plane-address set at 0x380-0x4ff)
+- experiments: bits 0-10 (SXE/MCE/BSE-V/PPE values, MBE reg 4/5 buffer)
+Output layout: NVIDIA block-linear, 1-GOB block height, per plane.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ arch/arm64/boot/dts/nvidia/tegra132.dtsi      |   2 +-
+ .../media/platform/nvidia/tegra-vde/h264.c    | 105 +++++++++++++++++-
+ drivers/media/platform/nvidia/tegra-vde/vde.c |   4 +
+ drivers/media/platform/nvidia/tegra-vde/vde.h |   4 +
+ 4 files changed, 111 insertions(+), 4 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/nvidia/tegra132.dtsi b/arch/arm64/boot/dts/nvidia/tegra132.dtsi
+index f6cf268ef..9fcea0d94 100644
+--- a/arch/arm64/boot/dts/nvidia/tegra132.dtsi
++++ b/arch/arm64/boot/dts/nvidia/tegra132.dtsi
+@@ -349,7 +349,7 @@ vde@60030000 {
+ 		      <0x0 0x60032600 0x0  0x100>, /* Transform Engine */
+ 		      <0x0 0x60032800 0x0  0x100>, /* Pixel prediction block */
+ 		      <0x0 0x60032a00 0x0  0x100>, /* Video DMA */
+-		      <0x0 0x60033800 0x0  0x400>; /* Video frame controls */
++		      <0x0 0x60033800 0x0  0x500>; /* Video frame controls (T124: +0x380..0x4ff second plane set) */
+ 		reg-names = "sxe", "bsev", "mbe", "ppe", "mce",
+ 			    "tfe", "ppb", "vdma", "frameid";
+ 		iram = <&vde_pool>; /* IRAM region */
+diff --git a/drivers/media/platform/nvidia/tegra-vde/h264.c b/drivers/media/platform/nvidia/tegra-vde/h264.c
+index 2a2211671..d6e77e891 100644
+--- a/drivers/media/platform/nvidia/tegra-vde/h264.c
++++ b/drivers/media/platform/nvidia/tegra-vde/h264.c
+@@ -35,6 +35,9 @@ struct tegra_vde_h264_decoder_ctx {
+ 	unsigned int constrained_intra_pred_flag;
+ 	unsigned int chroma_qp_index_offset;
+ 	unsigned int pic_order_present_flag;
++	unsigned int entropy_coding_mode_flag;
++	unsigned int weighted_pred_flag;
++	unsigned int weighted_bipred_idc;
+ 	unsigned int num_ref_idx_l0_active_minus1;
+ 	unsigned int num_ref_idx_l1_active_minus1;
+ };
+@@ -147,6 +150,10 @@ static int tegra_vde_push_to_bsev_icmdqueue(struct tegra_vde *vde,
+ 	return tegra_vde_wait_bsev(vde, wait_dma);
+ }
+ 
++static unsigned int t124_mask;
++module_param(t124_mask, uint, 0644);
++MODULE_PARM_DESC(t124_mask, "bring-up: T124 register values to apply (bitmask)");
++
+ static void tegra_vde_setup_frameid(struct tegra_vde *vde,
+ 				    struct tegra_video_frame *frame,
+ 				    unsigned int frameid,
+@@ -158,11 +165,24 @@ static void tegra_vde_setup_frameid(struct tegra_vde *vde,
+ 	u32 value1 = frame ? ((frame->luma_atoms_pitch << 16) | mbs_height) : 0;
+ 	u32 value2 = frame ? ((frame->chroma_atoms_pitch << 6) | 1) : 0;
+ 
+-	tegra_vde_writel(vde, y_addr  >> 8, vde->frameid, 0x000 + frameid * 4);
++	/* stock T124 microcode, progressive frames: bit 31 set, second plane set unused */
++	tegra_vde_writel(vde, (y_addr >> 8) | ((t124_mask & BIT(11)) && frame ? BIT(31) : 0),
++			 vde->frameid, 0x000 + frameid * 4);
+ 	tegra_vde_writel(vde, cb_addr >> 8, vde->frameid, 0x100 + frameid * 4);
+ 	tegra_vde_writel(vde, cr_addr >> 8, vde->frameid, 0x180 + frameid * 4);
+ 	tegra_vde_writel(vde, value1,       vde->frameid, 0x080 + frameid * 4);
+ 	tegra_vde_writel(vde, value2,       vde->frameid, 0x280 + frameid * 4);
++
++	/*
++	 * T124/T132: a second set of per-frame plane addresses at 0x380/0x400/0x480
++	 * (stock AVP microcode writes (plane + offset) >> 8 there). Experiment: same
++	 * planes, offset 0.
++	 */
++	if (vde->frameid_size > 0x400 && !(t124_mask & BIT(9))) {
++		tegra_vde_writel(vde, y_addr  >> 8, vde->frameid, 0x380 + frameid * 4);
++		tegra_vde_writel(vde, cb_addr >> 8, vde->frameid, 0x400 + frameid * 4);
++		tegra_vde_writel(vde, cr_addr >> 8, vde->frameid, 0x480 + frameid * 4);
++	}
+ }
+ 
+ static void tegra_setup_frameidx(struct tegra_vde *vde,
+@@ -301,6 +321,42 @@ static int tegra_vde_setup_hw_context(struct tegra_vde *vde,
+ 	tegra_vde_writel(vde, 0x00000000, vde->bsev, 0x98);
+ 	tegra_vde_writel(vde, 0x00000060, vde->bsev, 0x9C);
+ 
++	if (vde->soc->t124_layout) {
++		/* bring-up: T124 values from the stock AVP microcode, per bit of t124_mask */
++		u32 n = min_t(u32, (macroblocks_nb + 7) >> 3, 0x1000);
++
++		if (t124_mask & BIT(0))
++			tegra_vde_writel(vde, (0x1000 - n) & ~3, vde->sxe, 0x54);
++		if (t124_mask & BIT(1))
++			tegra_vde_writel(vde, 0x00001820, vde->sxe, 0x58);
++		if (t124_mask & BIT(2))
++			tegra_vde_writel(vde, 0x00003620, vde->sxe, 0x5C);
++		if (t124_mask & BIT(3)) {
++			tegra_vde_writel(vde, 0x00001000, vde->sxe, 0x70);
++			tegra_vde_writel(vde, 0x00003720, vde->sxe, 0x74);
++		}
++		if (t124_mask & BIT(4))
++			tegra_vde_writel(vde, 0x1c201c20, vde->mce, 0x10);
++		if (t124_mask & BIT(5)) {
++			tegra_vde_writel(vde, 0x00001020, vde->bsev, 0x98);
++			tegra_vde_writel(vde, 0x00001020, vde->bsev, 0x9C);
++		}
++		if (t124_mask & BIT(6)) {
++			tegra_vde_writel(vde, 0x00000020, vde->ppe, 0x08);
++			tegra_vde_writel(vde, 0x00000003, vde->ppe, 0x00);
++		}
++		if (t124_mask & BIT(7)) {
++			u32 v = tegra_vde_readl(vde, vde->ppe, 0x0C);
++
++			tegra_vde_writel(vde, (v & 0xffeffffd) | 1, vde->ppe, 0x0C);
++		}
++		if (t124_mask & BIT(8))
++			dev_info(vde->dev, "n9dbg ppe 00 %08x 08 %08x 0c %08x 14 %08x 28 %08x\n",
++				 tegra_vde_readl(vde, vde->ppe, 0x00), tegra_vde_readl(vde, vde->ppe, 0x08),
++				 tegra_vde_readl(vde, vde->ppe, 0x0C), tegra_vde_readl(vde, vde->ppe, 0x14),
++				 tegra_vde_readl(vde, vde->ppe, 0x28));
++	}
++
+ 	memset(vde->iram + 128, 0, macroblocks_nb / 2);
+ 
+ 	tegra_setup_frameidx(vde, dpb_frames, ctx->dpb_frames_nb,
+@@ -367,11 +423,27 @@ static int tegra_vde_setup_hw_context(struct tegra_vde *vde,
+ 	value |= ctx->pic_order_cnt_type << 5;
+ 	value |= ctx->log2_max_frame_num;
+ 
++	if (vde->soc->t124_layout && (t124_mask & BIT(13))) {
++		/*
++		 * T124 SXE 0x40 (stock AVP microcode): bits 17-20 are the
++		 * picture structure (0 = frame), not "!baseline"; bits 13-16 a
++		 * constant 0b1100, bit 21 set for frame pictures, bit 26 set.
++		 */
++		value = BIT(26) | BIT(21) | (0xc << 13);
++		value |= ctx->log2_max_pic_order_cnt_lsb << 7;
++		value |= ctx->pic_order_cnt_type << 5;
++		value |= ctx->log2_max_frame_num;
++	}
++	if (vde->soc->t124_layout && (t124_mask & BIT(14)))
++		value &= ~(0xf << 17);	/* T124: bits 17-20 = picture structure, 0 = frame */
++
+ 	tegra_vde_writel(vde, value, vde->sxe, 0x40);
+ 
+ 	value = ctx->pic_init_qp << 25;
+ 	value |= !!(ctx->deblocking_filter_control_present_flag) << 2;
+ 	value |= !!ctx->pic_order_present_flag;
++	if (t124_mask & BIT(12))
++		value |= !!ctx->entropy_coding_mode_flag << 1;	/* T124 microcode: SXE 0x44 bit 1 */
+ 
+ 	tegra_vde_writel(vde, value, vde->sxe, 0x44);
+ 
+@@ -379,6 +451,11 @@ static int tegra_vde_setup_hw_context(struct tegra_vde *vde,
+ 	value |= ctx->num_ref_idx_l0_active_minus1 << 5;
+ 	value |= ctx->num_ref_idx_l1_active_minus1 << 10;
+ 	value |= !!ctx->constrained_intra_pred_flag << 15;
++	if (vde->soc->t124_layout && (t124_mask & BIT(15))) {
++		/* T124 SXE 0x48 (stock microcode): bit 17 weighted_pred, 18-19 weighted_bipred_idc */
++		value |= !!ctx->weighted_pred_flag << 17;
++		value |= (ctx->weighted_bipred_idc & 3) << 18;
++	}
+ 
+ 	tegra_vde_writel(vde, value, vde->sxe, 0x48);
+ 
+@@ -429,7 +506,21 @@ static int tegra_vde_setup_hw_context(struct tegra_vde *vde,
+ 
+ 	tegra_vde_mbe_set_0xa_reg(vde, 0, 0x000009FC);
+ 	tegra_vde_mbe_set_0xa_reg(vde, 2, 0x61DEAD00);
+-	tegra_vde_mbe_set_0xa_reg(vde, 4, 0x62DEAD00);
++	if ((t124_mask & BIT(10)) && vde->soc->t124_layout) {
++		/*
++		 * Stock AVP microcode: MBE 0xA reg 4/5 = a buffer of 0x60 bytes
++		 * per macroblock (zeroed at sequence start). Mainline programs a
++		 * dummy address there (unused on T20/T30).
++		 */
++		if (!vde->t124_mb_bo &&
++		    tegra_vde_alloc_bo(vde, &vde->t124_mb_bo, DMA_BIDIRECTIONAL,
++				       8192 * 0x60))
++			dev_err(dev, "n9dbg: no T124 MB buffer\n");
++		tegra_vde_mbe_set_0xa_reg(vde, 4, vde->t124_mb_bo ?
++					  vde->t124_mb_bo->dma_addr : 0x62DEAD00);
++	} else {
++		tegra_vde_mbe_set_0xa_reg(vde, 4, 0x62DEAD00);
++	}
+ 	tegra_vde_mbe_set_0xa_reg(vde, 6, 0x63DEAD00);
+ 	tegra_vde_mbe_set_0xa_reg(vde, 8, dpb_frames[0].aux_addr);
+ 
+@@ -871,7 +962,8 @@ static int tegra_vde_h264_setup_context(struct tegra_ctx *ctx,
+ 	tegra_vde_prepare_control_data(ctx, V4L2_CID_STATELESS_H264_PPS);
+ 
+ 	/* CABAC unsupported by hardware, requires software preprocessing */
+-	if (h->pps->flags & V4L2_H264_PPS_FLAG_ENTROPY_CODING_MODE)
++	if ((h->pps->flags & V4L2_H264_PPS_FLAG_ENTROPY_CODING_MODE) &&
++	    !(vde->soc->t124_layout && (t124_mask & BIT(12))))
+ 		return -EOPNOTSUPP;
+ 
+ 	if (h->decode_params->flags & V4L2_H264_DECODE_PARAM_FLAG_FIELD_PIC)
+@@ -886,12 +978,19 @@ static int tegra_vde_h264_setup_context(struct tegra_ctx *ctx,
+ 	if (h->pps->flags & V4L2_H264_PPS_FLAG_CONSTRAINED_INTRA_PRED)
+ 		h264->constrained_intra_pred_flag = 1;
+ 
++	if (h->pps->flags & V4L2_H264_PPS_FLAG_WEIGHTED_PRED)
++		h264->weighted_pred_flag = 1;
++	h264->weighted_bipred_idc = h->pps->weighted_bipred_idc;
++
+ 	if (h->pps->flags & V4L2_H264_PPS_FLAG_DEBLOCKING_FILTER_CONTROL_PRESENT)
+ 		h264->deblocking_filter_control_present_flag = 1;
+ 
+ 	if (h->pps->flags & V4L2_H264_PPS_FLAG_BOTTOM_FIELD_PIC_ORDER_IN_FRAME_PRESENT)
+ 		h264->pic_order_present_flag = 1;
+ 
++	if (h->pps->flags & V4L2_H264_PPS_FLAG_ENTROPY_CODING_MODE)
++		h264->entropy_coding_mode_flag = 1;
++
+ 	h264->level_idc				= to_tegra_vde_h264_level_idc(h->sps->level_idc);
+ 	h264->log2_max_pic_order_cnt_lsb	= h->sps->log2_max_pic_order_cnt_lsb_minus4 + 4;
+ 	h264->log2_max_frame_num		= h->sps->log2_max_frame_num_minus4 + 4;
+diff --git a/drivers/media/platform/nvidia/tegra-vde/vde.c b/drivers/media/platform/nvidia/tegra-vde/vde.c
+index 8c0d8d4fe..5470e94c3 100644
+--- a/drivers/media/platform/nvidia/tegra-vde/vde.c
++++ b/drivers/media/platform/nvidia/tegra-vde/vde.c
+@@ -281,6 +281,9 @@ static int tegra_vde_probe(struct platform_device *pdev)
+ 	if (IS_ERR(vde->frameid))
+ 		return PTR_ERR(vde->frameid);
+ 
++	vde->frameid_size = resource_size(platform_get_resource_byname(pdev,
++						IORESOURCE_MEM, "frameid"));
++
+ 	vde->clk = devm_clk_get(dev, NULL);
+ 	if (IS_ERR(vde->clk)) {
+ 		err = PTR_ERR(vde->clk);
+@@ -525,6 +528,7 @@ static const struct tegra_coded_fmt_desc tegra20_coded_fmts[] = {
+ 
+ static const struct tegra_vde_soc tegra124_vde_soc = {
+ 	.supports_ref_pic_marking = true,
++	.t124_layout = true,
+ 	.coded_fmts = tegra124_coded_fmts,
+ 	.num_coded_fmts = ARRAY_SIZE(tegra124_coded_fmts),
+ };
+diff --git a/drivers/media/platform/nvidia/tegra-vde/vde.h b/drivers/media/platform/nvidia/tegra-vde/vde.h
+index cd84165d6..4f33fba6e 100644
+--- a/drivers/media/platform/nvidia/tegra-vde/vde.h
++++ b/drivers/media/platform/nvidia/tegra-vde/vde.h
+@@ -75,6 +75,8 @@ struct tegra_coded_fmt_desc {
+ 
+ struct tegra_vde_soc {
+ 	bool supports_ref_pic_marking;
++	/* T124/T132: different internal memory layout (stock AVP microcode) */
++	bool t124_layout;
+ 	const struct tegra_coded_fmt_desc *coded_fmts;
+ 	u32 num_coded_fmts;
+ };
+@@ -101,6 +103,8 @@ struct tegra_vde {
+ 	void __iomem *ppb;
+ 	void __iomem *vdma;
+ 	void __iomem *frameid;
++	resource_size_t frameid_size;
++	struct tegra_vde_bo *t124_mb_bo;	/* T124: 0x60 bytes per MB (MBE 0xA reg 4/5) */
+ 	struct device *dev;
+ 	struct mutex lock;
+ 	struct mutex map_lock;
+-- 
+2.56.0
+

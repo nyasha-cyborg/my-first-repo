@@ -35,8 +35,39 @@ No mainline Tegra124/132 board has a VDE node.
 - Test clips (ffmpeg/libx264 on the tablet): base.mp4 (Baseline), mainp.mp4 (Main CABAC) fails after
   frame 1, maincavlc.mp4 / mainb.mp4 (Main CAVLC, B-frames) 59/60 frames accepted.
 
+## 2026-10-24 03:15 — bit-exact Baseline/Main; output layout known; B / WP / CABAC open
+
+Patches: `patches/candidates/vde/` (3 WIP commits in linux-flounder, last 5a4d2fdf5). Module parameter
+`tegra_vde.t124_mask` gates each T124 change; good set so far = 2048+16384+32768 = **51200**.
+
+- **Output layout (measured, bit-exact):** each plane (Y, Cb, Cr at the YUV420M plane offsets) is NVIDIA
+  block-linear with a block height of 1 GOB: offset(x,y) = ((y/8)*(pitch/64) + x/64)*512 +
+  ((x%64)/32)*256 + ((y%8)/2)*64 + ((x%32)/16)*32 + (y%2)*16 + x%16, pitch = plane width.
+  = DRM_FORMAT_MOD_NVIDIA_16BX2_BLOCK(0) / BLOCK_LINEAR_2D(h=0) per plane. tools/vde-detile.py.
+  Planes are padded to whole GOBs/MBs: 640x360 overflows its plane (driver sizes must be padded).
+- REA of nvavp_vid_ucode_alt.bin (Thumb; wrapper ELF with seeded `push {..,lr}` function symbols:
+  /tmp/n9build/rea-avp/vid_ucode_fn.elf): fn_03a50 codec init, fn_02e84 BSE-V setup (0x60031800 block:
+  DMA buffer, 0x804-byte slots — probably CABAC context tables), fn_06b8c bitstream DMA ring
+  (0x60032c34/c50), **fn_060c8 = H.264 per-frame setup** (frame-id tables, SXE 0x40/0x44/0x48 layouts,
+  MBE 0xA regs 4/5 = 0x60 B/MB buffer, 8/9 = co-located buffer 0x40 B/MB/frame).
+- Fixes found from fn_060c8:
+  - frame-id luma entry bit 31 for progressive frames (the second plane set 0x380/0x400/0x480 is only for
+    the other case) -> rows 12-15 of every MB were wrong and TPE faulted without it; now **100 %**.
+  - SXE 0x40 bits 17-20 = picture structure on T124 (mainline puts !baseline at bit 17) -> Main I-frames.
+  - SXE 0x48 bit 17 weighted_pred_flag, bits 18-19 weighted_bipred_idc -> WP streams parse.
+- Results (hardware vs avdec_h264, frame by frame):
+  Baseline 720p 90 frames 100 %; Main plain 100 %; Main POC type 0 100 %;
+  Main B-frames 81-92 % (bipred/direct wrong); Main weighted P 86-91 %; CABAC: I-frame only.
+- Dead ends: SXE 0x54/0x58/0x5c/0x70/0x74 T124 values (0x5c=0x3620 breaks P-frames, others no effect);
+  PPE 0x00/0x08/0x0c values; MBE reg 4/5 buffer (no effect alone); "deblocking line buffer" theory
+  (wrong rows matched neither the deblocked nor the undeblocked reference).
+- Test hygiene: references must come from a complete avdec decode (identity eos-after=1 emits another
+  frame); /tmp on the tablet is on the rootfs; 124 MB dumps fill it fast.
+
 ## Next
 
+0. B-frames (direct/co-located: MBE reg 8/9 buffer layout 0x40 B/MB per frame index, SXE 0x40 bits 22-23),
+   weighted prediction values, CABAC (BSE-V 0x31800 block + context tables from fn_02e84/fn_013a0).
 1. Layout: decode an all-intra random-noise clip, locate unique 16-byte runs of the avdec reference in
    the hardware output -> tile geometry (luma, chroma).
 2. SMMU faults: find which buffer the TPE reads (aux/colocated buffers?), compare the microcode setup.

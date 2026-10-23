@@ -1,0 +1,56 @@
+From 0fa4171fc82ce0762219667165f51f4bf10ad1c7 Mon Sep 17 00:00:00 2001
+From: nyasha <nmushambi@proton.me>
+Date: Sat, 24 Oct 2026 01:43:50 +1300
+Subject: [PATCH 2/3] WIP arm64: tegra132: VDE is at 0x60030000 on T124/T132
+
+The stock AVP video microcode (nvavp_vid_ucode_alt.bin) programs the VDE
+at 0x60030000 (SXE), 0x60031000 (BSE-V), 0x60032000.. (MBE/PPE/MCE/TFE/
+VDMA) and 0x60033800 (frame ids): the T20-T114 layout moved up. The
+old 0x6001a000 window reads 0xcacad0d0 on Tegra132.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ arch/arm64/boot/dts/nvidia/tegra132.dtsi | 26 +++++++++++++++---------
+ 1 file changed, 16 insertions(+), 10 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/nvidia/tegra132.dtsi b/arch/arm64/boot/dts/nvidia/tegra132.dtsi
+index fbbdd60af..f6cf268ef 100644
+--- a/arch/arm64/boot/dts/nvidia/tegra132.dtsi
++++ b/arch/arm64/boot/dts/nvidia/tegra132.dtsi
+@@ -333,17 +333,23 @@ gpio: gpio@6000d000 {
+ 		interrupt-controller;
+ 	};
+ 
+-	vde@6001a000 {
++	/*
++	 * T124/T132 moved the VDE to 0x60030000 (same block offsets as T20-T114):
++	 * the stock AVP video microcode (nvavp_vid_ucode_alt.bin) addresses SXE at
++	 * 0x60030000, BSE-V 0x60031000, MBE 0x60032000 ... frame-id 0x60033800;
++	 * 0x6001a000 reads 0xcacad0d0 on this SoC.
++	 */
++	vde@60030000 {
+ 		compatible = "nvidia,tegra132-vde", "nvidia,tegra124-vde";
+-		reg = <0x0 0x6001a000 0x0 0x1000>, /* Syntax Engine */
+-		      <0x0 0x6001b000 0x0 0x1000>, /* Video Bitstream Engine */
+-		      <0x0 0x6001c000 0x0  0x100>, /* Macroblock Engine */
+-		      <0x0 0x6001c200 0x0  0x100>, /* Post-processing Engine */
+-		      <0x0 0x6001c400 0x0  0x100>, /* Motion Compensation Engine */
+-		      <0x0 0x6001c600 0x0  0x100>, /* Transform Engine */
+-		      <0x0 0x6001c800 0x0  0x100>, /* Pixel prediction block */
+-		      <0x0 0x6001ca00 0x0  0x100>, /* Video DMA */
+-		      <0x0 0x6001d800 0x0  0x400>; /* Video frame controls */
++		reg = <0x0 0x60030000 0x0 0x1000>, /* Syntax Engine */
++		      <0x0 0x60031000 0x0 0x1000>, /* Video Bitstream Engine */
++		      <0x0 0x60032000 0x0  0x100>, /* Macroblock Engine */
++		      <0x0 0x60032200 0x0  0x100>, /* Post-processing Engine */
++		      <0x0 0x60032400 0x0  0x100>, /* Motion Compensation Engine */
++		      <0x0 0x60032600 0x0  0x100>, /* Transform Engine */
++		      <0x0 0x60032800 0x0  0x100>, /* Pixel prediction block */
++		      <0x0 0x60032a00 0x0  0x100>, /* Video DMA */
++		      <0x0 0x60033800 0x0  0x400>; /* Video frame controls */
+ 		reg-names = "sxe", "bsev", "mbe", "ppe", "mce",
+ 			    "tfe", "ppb", "vdma", "frameid";
+ 		iram = <&vde_pool>; /* IRAM region */
+-- 
+2.56.0
+
