@@ -70,6 +70,22 @@ printf '# n9: the modem boot ROM (05c6:9008) is driven by sahara over usbfs\nbla
 # Phosh greeter autostart (GREETD_AUTOSTART=0 to start it by hand; the watchdog covers a hang)
 GREETD_AUTOSTART=${GREETD_AUTOSTART:-1}
 
+# test builds (user's choice, 2026-10-23): no PIN — greetd logs $U straight into Phosh at boot and the screen
+# lock is off (system dconf default). N9_AUTOLOGIN=0 keeps the PIN.
+if [ "${N9_AUTOLOGIN:-1}" = 1 ]; then
+	G=$R/etc/phrog/greetd-config.toml
+	S=$(sed -n 's/^Exec=//p' $R/usr/share/wayland-sessions/phosh.desktop 2>/dev/null | head -1)
+	if [ -f "$G" ] && [ -n "$S" ] && ! grep -q '^\[initial_session\]' "$G"; then
+		printf '\n[initial_session]\ncommand = "%s"\nuser = "%s"\n' "$S" "$U" >> "$G"
+		say "autologin: $U -> $S"
+	fi
+	mkdir -p $R/etc/dconf/profile $R/etc/dconf/db/local.d
+	printf 'user-db:user\nsystem-db:local\n' > $R/etc/dconf/profile/user
+	printf '[org/gnome/desktop/screensaver]\nlock-enabled=false\n\n[org/gnome/desktop/lockdown]\ndisable-lock-screen=true\n' \
+		> $R/etc/dconf/db/local.d/00-n9-nolock
+	c dconf update 2>/dev/null && say "screen lock disabled"
+fi
+
 # services (OpenRC); missing ones are skipped
 [ "$GREETD_AUTOSTART" = 1 ] || c rc-update del greetd default >/dev/null 2>&1 || true
 for s in sshd seatd networkmanager $([ "$GREETD_AUTOSTART" = 1 ] && echo greetd) n9-modem bluetooth chronyd; do
