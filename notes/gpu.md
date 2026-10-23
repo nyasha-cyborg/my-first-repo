@@ -117,3 +117,8 @@
   EMC DVFS (tegra30-devfreq actmon: 1684 transitions in one session, 202 in a few minutes) with the mainline
   Tegra132 EMC switch + our DT timing tables. Test image `n9pmos-boot-noemcdvfs.img` = same kernel +
   `initcall_blacklist=tegra_devfreq_driver_init` (EMC stays at the bootloader rate); `gpu-boot-test.sh` x8.
+- EMC tables vs stock DT (`/tmp/n9build/emccmp/cmp.py`, android-0.dts, both ram codes, all 13 rates 12.75-924
+  MHz): the 143 mainline burst registers equal the vendor's 165-entry `emc-registers` once aligned (mainline
+  carries XM2DQSPADCTRL2, ZCAL_INTERVAL, MRS_WAIT_CNT as named properties; vendor entries 146-164 are MC regs).
+  Named cfg/cal values equal too. **The timing data is not the difference**; if H3 holds, look at the mainline
+  tegra124-emc switch sequence (vs vendor tegra12_emc, REA) or keep EMC fixed.

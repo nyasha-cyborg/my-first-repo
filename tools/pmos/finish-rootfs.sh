@@ -84,7 +84,9 @@ if [ "${N9_AUTOLOGIN:-1}" = 1 ]; then
 	G=$R/etc/phrog/greetd-config.toml
 	S=$(sed -n 's/^Exec=//p' $R/usr/share/wayland-sessions/phosh.desktop 2>/dev/null | head -1)
 	if [ -f "$G" ] && [ -n "$S" ] && ! grep -q '^\[initial_session\]' "$G"; then
-		printf '\n[initial_session]\ncommand = "%s"\nuser = "%s"\n' "$S" "$U" >> "$G"
+		# GDMSESSION: phosh locks itself at startup unless it was started by a display manager, which it
+		# detects from this variable (libphosh); greetd's initial_session does not set it
+		printf '\n[initial_session]\ncommand = "env GDMSESSION=phosh %s"\nuser = "%s"\n' "$S" "$U" >> "$G"
 		say "autologin: $U -> $S"
 	fi
 	mkdir -p $R/etc/dconf/profile $R/etc/dconf/db/local.d
