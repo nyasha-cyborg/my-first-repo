@@ -142,6 +142,44 @@ REA of the vendor stack (`libnvmmlite_video.so`, `vid_ucode_fn.elf`):
   where weights could be handed to the MBE. Corroboration: libvdpau-tegra (same VDE author) refuses
   explicit WP outright ("Explicit weighted prediction unimplemented").
 
+## 2026-10-25 00:30 — B frames: IRAM bit 25 is "DPB entry in use", not "!B" (big step)
+
+Controlled clips (all 640x360, testsrc2, Main CAVLC, weightp/weightb off) isolated the B problem:
+
+| clip | params | Y exact |
+|------|--------|---------|
+| b1ref | bframes=1, ref=1 | 100 % |
+| bdirspatial | bframes=2, no pyramid, direct=spatial | 100 % |
+| bdirtemporal | bframes=2, no pyramid, direct=temporal | 98.60 % (first<100: 1) |
+| bpyrnone | bframes=3, b-pyramid=none | 100 % |
+| bpyrnormal | bframes=3, b-pyramid=normal | 93.53 % (first<100: 5) |
+| m_b | x264 B-pyramid | 91.81 % (first<100: 4) |
+
+Subagent error-map analysis of m_b's first bad frame: errors concentrate on bi-predicted (75 % of X
+MBs bad) and L1-only (41 %) macroblocks, max|d| up to 82; direct-skip MBs are 97.4 % exact, and bad
+output sits on the *correct* frame (not a stale reference). So list1/B-reference handling, not direct
+prediction or residual. Drift accumulates through references.
+
+REA of stock `fn_04828` IRAM ref-table entries: bits 26-31 = DPB index, bit 25 = `record[0] & 1` =
+**DPB entry in use**, bit 24 = `record[6] == 0` = !long_term, low 18 = frame_num (or 0x40000 +
+LongTermPicNum). Mainline wrote bit 25 = `!(FLAG_B_FRAME)`, so **every B picture used as a reference
+was marked unusable**. Fix: set bit 25 for every T124 ref (`vde->soc->t124_layout`). Results:
+`m_b` 91.81 → **97.80 %** (first bad 4 → 24), `bpyrnormal` 93.53 → **99.29 %** (5 → 58),
+`bpyrnone` stays 100 %. The bit is one of the two B-only fields (the other, bit 24, was already 1).
+
+Remaining error starts late and tracks `ref_pic_list_modification` (m_b: 9 slices with mod_l0;
+bpyrnormal: 25; no l1 mods). The driver cannot see modified lists: GStreamer's `v4l2slh264dec`
+does supply `V4L2_CID_STATELESS_H264_SLICE_PARAMS` (control now registered; mask2 bit 5 logs it) but
+the struct is all-zero in frame-based mode, so `ref_pic_list0/1` and per-slice counts are unavailable.
+Next option is a kernel-side slice-header parser for ref list modification, or userspace that
+populates the control properly.
+
+Dead ends this cycle (all zero effect): MBE list1 `0xC4000000` group commands (t124_mask2 bit 0,
+implemented and verified to run); MBE A reg 2/3 colocated aux (t124 bit 22) alone or with the fix;
+MBE per-MB buffer (bit 10); unwrapped ref `frame_num` (mask2 bit 3 — hardware masks correctly).
+t124_mask2 now: bit0 list1 cmds (dead), bit1 frame log, bit2 force in-use (default on T124), bit3 raw
+frame_num (dead), bit5 slice-params log.
+
 ## Next
 
 0. ~~Weighted prediction~~ — hardware does not apply it (2026-10-24). Accept as a limitation; only

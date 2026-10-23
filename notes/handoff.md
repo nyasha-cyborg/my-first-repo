@@ -58,7 +58,11 @@ work on. Kept current by the previous agent at each test cycle (last update: 202
      The SXE parses the weight table (removing the WP flag breaks the stream) but never applies it;
      REA shows no weight values anywhere in the host↔microcode interface. Accept as a limitation
      (only fades/crossfades affected). Do not retry register guesses.
-  2. **B-frames drift.** Exact up to frame 3, then 81-92 %.
+  2. **B-frames drift, much improved 2026-10-25.** T124 IRAM ref entry bit 25 is "DPB entry in use";
+     mainline wrote `!(FLAG_B_FRAME)`, marking B references unusable. With bit 25 = 1 for all T124 refs:
+     `m_b` 91.81 → 97.80 %, `bpyrnormal` 93.53 → 99.29 %. Remaining late drift tracks
+     `ref_pic_list_modification`, which the driver cannot get from GStreamer (SLICE_PARAMS arrives
+     all-zero); see notes/vde.md.
 - Ruled out (dead ends):
   - POC in the reference-list low bits (bit 21: worse; the hardware wants frame_num).
   - SXE 0x5c alone (needs the bit-20 list copy).
@@ -76,32 +80,33 @@ work on. Kept current by the previous agent at each test cycle (last update: 202
 - The kernel code for bits 20-27 is committed in `~/code/linux-flounder` (local) and exported as
   `patches/candidates/vde/0005-*.patch`.
 
-## NEXT TASK — B-frame drift (start here)
+## NEXT TASK — finish B frames: reference list modification (start here)
 
-Tests A (per-slice SXE 0x60/0x64/0xdc/0x50) and B (MBE bits 22/23) were run on 2026-10-24 and are
-dead ends; WP is settled as a hardware limitation. Details in notes/vde.md (22:40).
+State: bit 25 fix landed (m_b 97.80 %, bpyrnormal 99.29 %, bpyrnone / direct-spatial / I / P all 100 %).
+Remaining errors start late (display frame 24 in m_b, 58 in bpyrnormal) and correlate with
+`ref_pic_list_modification` on list0 (9 slices in m_b, 25 in bpyrnormal; no list1 mods).
 
-Baseline `m_b` (Main CAVLC, B-pyramid): Y **91.81 %** (min 81.34), first imperfect frame **4**,
-30/30 frames, no faults. Frame 0-3 exact, then 97 % → 81 % by frame 29. I/P frames are exact, so the
-problem is B-frame motion compensation: direct mode / co-located picture selection or ref-list order.
+Problem: the driver builds lists from POC only. The control `V4L2_CID_STATELESS_H264_SLICE_PARAMS` is
+now registered in `v4l2.c` and `ctx->h264.slice_params` is prepared, but GStreamer's v4l2slh264dec
+sends it all-zero in frame-based mode (mask2 bit 5 logs it), so `ref_pic_list0/1` cannot be used.
 
-Leads to try, in order:
-1. **MBE ref-list commands.** Stock `fn_05434` writes `0xC0000000 | 4 ref indices (6 bits each) |
-   list<<26 | group<<24` for lists 0/1, then `0xCC000000|ref0` ("first ref") and the `0x30000000`
-   pattern. Compare exactly with mainline's `tegra_vde_setup_mbe_frame_idx()`/frame-id tables for a
-   B frame; the T124 MBE may want the list-1/co-located entries in a different table slot.
-2. **Co-located buffer layout.** Stock `fn_060c8` zeroes/copies a per-MB co-located buffer of
-   0x40 bytes/MB per frame index (MBE 0xA reg 8/9 = buffer, mainline points it at
-   `dpb_frames[0].aux_addr`). Check whether B frames need the aux of the *colocated_ref_idx* frame
-   (per slice), not dpb_frames[0].
-3. **SXE 0x40 bits 17-20** = picture structure per frame; stock bits 22/23/24-25 also derive from
-   field/entropy flags. Mainline T124 keeps only BIT(21)|BIT(26)|(0xc<<13); stock sets bits 15+16
-   (0x18000) and bit 12 conditionally. Low risk to align these with `fn_060c8`/`fn_01a94`.
-4. Only after B-frames: output ordering (one duplicated frame at the start), padded plane sizes,
-   block-linear V4L2 format + modifier, then the zero-copy player path.
+Options, in order:
+1. Find a userspace that populates SLICE_PARAMS (check the installed GStreamer version; newer
+   gstv4l2codecs may send slice params only when the driver advertises something extra, or try
+   `v4l2-compliance`/a custom feeder). If lists arrive, order `dpb_frames[]` by
+   `slice_params->ref_pic_list0` and build `ref_slot_l1` from `ref_pic_list1`.
+2. Kernel-side slice-header parser for `ref_pic_list_modification` (needs slice start offsets; the
+   bitstream is contiguous in the src buffer; SPS/PPS are in the controls). Bigger change.
+3. Confirm the theory cheaply before 1/2: the errors should disappear on a stream with modifications
+   excised. x264 cannot disable them directly; an ffmpeg bitstream filter (h264_metadata) cannot
+   rewrite list mods either. A test clip with `ref=1`/no pyramid already shows no mods and is 100 %.
 
-Test how-to (unchanged): edit h264.c, rebuild the module, scp it, `tools/vde-test.sh <mask> m_b`.
-After every cycle: update this file and notes/vde.md, export the kernel diff to
+Also open (lower value): SXE 0x40 stock sets bits 15+16 (0x18000) where our bit-13 code writes
+`0xc<<13` (bits 14/15); align and retest. Then output ordering, padded plane sizes, block-linear V4L2
+format + modifier, zero-copy player path.
+
+Test how-to: edit h264.c, rebuild the module, scp it, `tools/vde-test.sh <mask> clip` (mask2 via
+`MASK2=n`). After every cycle: update this file and notes/vde.md, export the kernel diff to
 `patches/candidates/vde/`, commit and push the nexus9 repo.
 
 ## Other open items (see notes/gpu.md)

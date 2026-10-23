@@ -7,8 +7,9 @@
 HERE=$(cd "$(dirname "$0")" && pwd)
 IP=${IP:-192.168.1.109}; SSH="ssh -o ConnectTimeout=5 root@$IP"
 MASK=$1; shift; CLIPS=${*:-m_wp m_b m_cabac}
+MASK2=${MASK2:-0}
 OUT=/tmp/vde; mkdir -p $OUT
-$SSH "rmmod tegra_vde 2>/dev/null; insmod /root/tegra-vde.ko t124_mask=$MASK || exit 1; cd /tmp; dmesg -C
+$SSH "rmmod tegra_vde 2>/dev/null; insmod /root/tegra-vde.ko t124_mask=$MASK t124_mask2=$MASK2 || exit 1; cd /tmp; dmesg -C
 for c in $CLIPS; do
   n=\${c%%:*}; f=\${c#*:}; [ \$f = \$c ] && f=100000; n=\$n\$([ \$f = 100000 ] || echo _\$f)
   e=\"identity eos-after=\$f\"; [ \$f = 100000 ] && e=identity

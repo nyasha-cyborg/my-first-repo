@@ -1,0 +1,218 @@
+From d27ca3fe7235b893a1fe2c0077f8633f098f5ffe Mon Sep 17 00:00:00 2001
+From: nyasha <nmushambi@proton.me>
+Date: Sat, 24 Oct 2026 11:27:25 +1300
+Subject: [PATCH] WIP tegra-vde T124: B-frame fixes (IRAM ref in-use bit,
+ SLICE_PARAMS wiring, experiments)
+
+Stock fn_04828 IRAM ref entry bit 25 is 'DPB entry in use', not '!B frame'.
+Mainline marked every B picture used as a reference unusable; setting it for
+all T124 refs raises m_b 91.81->97.80 % and B-pyramid 93.53->99.29 %.
+
+Also adds t124_mask2 (list1 MBE commands, raw frame_num, logs - all dead
+ends so far), RefPicList1 slot translation, and registers the H.264
+SLICE_PARAMS control (GStreamer sends it all-zero in frame-based mode).
+
+Co-Authored-By: Claude Code <noreply@anthropic.com>
+---
+ .../media/platform/nvidia/tegra-vde/h264.c    | 93 ++++++++++++++++++-
+ .../media/platform/nvidia/tegra-vde/v4l2.c    |  4 +
+ drivers/media/platform/nvidia/tegra-vde/vde.h |  1 +
+ 3 files changed, 94 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/media/platform/nvidia/tegra-vde/h264.c b/drivers/media/platform/nvidia/tegra-vde/h264.c
+index 094b44f99..e9de93eef 100644
+--- a/drivers/media/platform/nvidia/tegra-vde/h264.c
++++ b/drivers/media/platform/nvidia/tegra-vde/h264.c
+@@ -41,6 +41,9 @@ struct tegra_vde_h264_decoder_ctx {
+ 	unsigned int weighted_bipred_idc;
+ 	unsigned int num_ref_idx_l0_active_minus1;
+ 	unsigned int num_ref_idx_l1_active_minus1;
++	/* T124: frame slots of RefPicList1 entries, in list order (0-based) */
++	unsigned int num_refs_l1;
++	unsigned int ref_slot_l1[16];
+ };
+ 
+ struct h264_reflists {
+@@ -155,6 +158,11 @@ static unsigned int t124_mask;
+ module_param(t124_mask, uint, 0644);
+ MODULE_PARM_DESC(t124_mask, "bring-up: T124 register values to apply (bitmask)");
+ 
++/* second experiment mask, for changes that do not fit t124_mask anymore */
++static unsigned int t124_mask2;
++module_param(t124_mask2, uint, 0644);
++MODULE_PARM_DESC(t124_mask2, "bring-up: T124 experiments, mask 2 (bit0 = MBE list1 commands, bit1 = frame log)");
++
+ static void tegra_vde_setup_frameid(struct tegra_vde *vde,
+ 				    struct tegra_video_frame *frame,
+ 				    unsigned int frameid,
+@@ -245,7 +253,9 @@ static void tegra_vde_setup_iram_tables(struct tegra_vde *vde,
+ 			aux_addr = frame->aux_addr;
+ 
+ 			value  = (i + 1) << 26;
+-			value |= !(frame->flags & FLAG_B_FRAME) << 25;
++			/* T124 stock fn_04828: bit 25 = DPB entry in use (not "!B") */
++			value |= (vde->soc->t124_layout || (t124_mask2 & BIT(2)) ? 1 :
++				  !(frame->flags & FLAG_B_FRAME)) << 25;
+ 			value |= 1 << 24;
+ 			value |= tegra_vde_ref_id(frame);
+ 		} else {
+@@ -275,7 +285,8 @@ static void tegra_vde_setup_iram_tables(struct tegra_vde *vde,
+ 		aux_addr = frame->aux_addr;
+ 
+ 		value  = (k + 1) << 26;
+-		value |= !(frame->flags & FLAG_B_FRAME) << 25;
++		value |= (vde->soc->t124_layout || (t124_mask2 & BIT(2)) ? 1 :
++			  !(frame->flags & FLAG_B_FRAME)) << 25;
+ 		value |= 1 << 24;
+ 		value |= tegra_vde_ref_id(frame);
+ 
+@@ -288,7 +299,8 @@ static void tegra_vde_setup_iram_tables(struct tegra_vde *vde,
+ 		aux_addr = frame->aux_addr;
+ 
+ 		value  = (k + 1) << 26;
+-		value |= !(frame->flags & FLAG_B_FRAME) << 25;
++		value |= (vde->soc->t124_layout || (t124_mask2 & BIT(2)) ? 1 :
++			  !(frame->flags & FLAG_B_FRAME)) << 25;
+ 		value |= 1 << 24;
+ 		value |= tegra_vde_ref_id(frame);
+ 
+@@ -633,6 +645,35 @@ static int tegra_vde_setup_hw_context(struct tegra_vde *vde,
+ 		return err;
+ 	}
+ 
++	/*
++	 * Stock fn_05434 emits RefPicList1 to the MBE with its own 0xC0000000
++	 * commands (list bit 26); mainline only programs list0. Without this,
++	 * L1-only and bi-predicted macroblocks of B frames decode wrong.
++	 */
++	if (vde->soc->t124_layout && (t124_mask2 & BIT(0)) &&
++	    (dpb_frames[0].flags & FLAG_B_FRAME) && ctx->num_refs_l1) {
++		unsigned int idx;
++
++		for (idx = 0; idx < ctx->num_refs_l1; idx += 4) {
++			u32 v = 0xC4000000 | ((idx / 4) << 24);
++			unsigned int k;
++
++			for (k = 0; k < 4; k++) {
++				unsigned int slot = 0x3f;
++
++				if (idx + k < ctx->num_refs_l1)
++					slot = ctx->ref_slot_l1[idx + k] & 0x3f;
++				v |= slot << (6 * k);
++			}
++			tegra_vde_writel(vde, v, vde->mbe, 0x80);
++			err = tegra_vde_wait_mbe(vde);
++			if (err) {
++				dev_err(dev, "MBE list1 setup failed %d\n", err);
++				return err;
++			}
++		}
++	}
++
+ 	tegra_vde_mbe_set_0xa_reg(vde, 0, 0x000009FC);
+ 	if (vde->soc->t124_layout && (t124_mask & BIT(22)) &&
+ 	    (dpb_frames[0].flags & FLAG_B_FRAME) && ctx->dpb_frames_nb > 1) {
+@@ -966,7 +1007,16 @@ static int tegra_vde_h264_setup_frame(struct tegra_ctx *ctx,
+ 		if (h->decode_params->nal_ref_idc)
+ 			flags |= FLAG_REFERENCE;
+ 	} else {
+-		frame_num = b->refs[ref_id].frame_num;
++		/*
++		 * b->refs[].frame_num is wrapped for sorting (negative for
++		 * pictures with a frame_num ahead of the current one, i.e.
++		 * future references of B pictures). The hardware wants the
++		 * plain frame_num from the slice header.
++		 */
++		if (t124_mask2 & BIT(3))
++			frame_num = h->decode_params->dpb[ref_id].frame_num;
++		else
++			frame_num = b->refs[ref_id].frame_num;
+ 		vde->frames[id].poc = min(b->refs[ref_id].top_field_order_cnt,
+ 					  b->refs[ref_id].bottom_field_order_cnt);
+ 	}
+@@ -1054,6 +1104,32 @@ static int tegra_vde_h264_setup_frames(struct tegra_ctx *ctx,
+ 			h264->dpb_ref_frames_with_earlier_poc_nb++;
+ 	}
+ 
++	/*
++	 * T124: the MBE needs RefPicList1 explicitly. dpb_frames[] (slots 1..N)
++	 * is in b0 order, so translate each b1 entry to its b0 slot.
++	 */
++	if ((h->decode_params->flags & V4L2_H264_DECODE_PARAM_FLAG_BFRAME) &&
++	    (t124_mask2 & BIT(0))) {
++		unsigned int j;
++
++		for (i = 0; i < b.num_valid && i < ARRAY_SIZE(h264->ref_slot_l1); i++) {
++			for (j = 0; j < b.num_valid; j++) {
++				if (reflists.b0[j].index == reflists.b1[i].index)
++					break;
++			}
++			h264->ref_slot_l1[i] = j + 1;
++		}
++		h264->num_refs_l1 = i;
++	}
++
++	if (t124_mask2 & BIT(1))
++		dev_info(ctx->vde->dev,
++			 "n9dbg: dp_flags=0x%x nal_ref_idc=%u b_frame=%d frames_nb=%u earlier=%u l1=%u\n",
++			 h->decode_params->flags, h->decode_params->nal_ref_idc,
++			 tb->b_frame, h264->dpb_frames_nb,
++			 h264->dpb_ref_frames_with_earlier_poc_nb,
++			 h264->num_refs_l1);
++
+ 	return 0;
+ }
+ 
+@@ -1107,6 +1183,15 @@ static int tegra_vde_h264_setup_context(struct tegra_ctx *ctx,
+ 	tegra_vde_prepare_control_data(ctx, V4L2_CID_STATELESS_H264_DECODE_PARAMS);
+ 	tegra_vde_prepare_control_data(ctx, V4L2_CID_STATELESS_H264_SPS);
+ 	tegra_vde_prepare_control_data(ctx, V4L2_CID_STATELESS_H264_PPS);
++	tegra_vde_prepare_control_data(ctx, V4L2_CID_STATELESS_H264_SLICE_PARAMS);
++
++	if (t124_mask2 & BIT(5))
++		dev_info(dev, "n9dbg: slice_params=%s l0=%u l1=%u list0[0]=%u list1[0]=%u\n",
++			 h->slice_params ? "yes" : "no",
++			 h->slice_params ? h->slice_params->num_ref_idx_l0_active_minus1 : 0,
++			 h->slice_params ? h->slice_params->num_ref_idx_l1_active_minus1 : 0,
++			 h->slice_params ? h->slice_params->ref_pic_list0[0].index : 0xff,
++			 h->slice_params ? h->slice_params->ref_pic_list1[0].index : 0xff);
+ 
+ 	/* CABAC unsupported by hardware, requires software preprocessing */
+ 	if ((h->pps->flags & V4L2_H264_PPS_FLAG_ENTROPY_CODING_MODE) &&
+diff --git a/drivers/media/platform/nvidia/tegra-vde/v4l2.c b/drivers/media/platform/nvidia/tegra-vde/v4l2.c
+index d94978ae2..f1a2a1dc8 100644
+--- a/drivers/media/platform/nvidia/tegra-vde/v4l2.c
++++ b/drivers/media/platform/nvidia/tegra-vde/v4l2.c
+@@ -21,6 +21,7 @@ static const struct v4l2_ctrl_config ctrl_cfgs[] = {
+ 	{	.id = V4L2_CID_STATELESS_H264_DECODE_PARAMS,	},
+ 	{	.id = V4L2_CID_STATELESS_H264_SPS,		},
+ 	{	.id = V4L2_CID_STATELESS_H264_PPS,		},
++	{	.id = V4L2_CID_STATELESS_H264_SLICE_PARAMS,	},
+ 	{
+ 		.id = V4L2_CID_STATELESS_H264_DECODE_MODE,
+ 		.min = V4L2_STATELESS_H264_DECODE_MODE_FRAME_BASED,
+@@ -63,6 +64,9 @@ static void tegra_set_control_data(struct tegra_ctx *ctx, void *data, u32 id)
+ 	case V4L2_CID_STATELESS_H264_PPS:
+ 		ctx->h264.pps = data;
+ 		break;
++	case V4L2_CID_STATELESS_H264_SLICE_PARAMS:
++		ctx->h264.slice_params = data;
++		break;
+ 	}
+ }
+ 
+diff --git a/drivers/media/platform/nvidia/tegra-vde/vde.h b/drivers/media/platform/nvidia/tegra-vde/vde.h
+index edff277a6..ff5d947ed 100644
+--- a/drivers/media/platform/nvidia/tegra-vde/vde.h
++++ b/drivers/media/platform/nvidia/tegra-vde/vde.h
+@@ -147,6 +147,7 @@ struct tegra_ctx_h264 {
+ 	const struct v4l2_ctrl_h264_decode_params *decode_params;
+ 	const struct v4l2_ctrl_h264_sps *sps;
+ 	const struct v4l2_ctrl_h264_pps *pps;
++	const struct v4l2_ctrl_h264_slice_params *slice_params;
+ };
+ 
+ struct tegra_ctx {
+-- 
+2.56.0
+
