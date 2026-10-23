@@ -142,3 +142,6 @@ Next: backlight-only off/on (bl_power) vs DPMS; then drop the simple-framebuffer
   hardware switched at blank is panel reset (H5) + dcdc_en (EE5): one of those trips the PMIC (I2C NAK + IRQ storm).
   Interim fix candidate: `panel_jdi_lpm089a128a.keep_power=1` on the pmOS cmdline. Root cause next: let the rails
   really switch off like Android (drop simple-framebuffer *-supply), then retest keep_power=0.
+- 18:35 kernel gae4187faf21b (GK20A slide fallback, series 0038): autologin session at boot, keep_power=Y, GPU Mesa +
+  WLR_DRM_NO_MODIFIERS=1 (linear buffers: user "a bit more stable" vs block-linear), no PLL slide warnings yet.
+  CPU: schedutil works, 204 MHz..2.499 GHz on mainline; capped at 2.295 GHz (stock max) via local.d n9-cpucap.

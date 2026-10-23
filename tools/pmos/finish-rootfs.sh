@@ -69,6 +69,11 @@ c rc-update del modemmanager default >/dev/null 2>&1 || true
 c rc-update del iio-sensor-proxy default >/dev/null 2>&1 || true
 mkdir -p $R/etc/modprobe.d
 printf '# n9: the modem boot ROM (05c6:9008) is driven by sahara over usbfs\nblacklist qcserial\n' > $R/etc/modprobe.d/n9-modem.conf
+# CPU: the mainline Tegra132 table reaches 2.499 GHz; cap at the stock Nexus 9 maximum (2.3 GHz)
+printf '#!/bin/sh\n# n9: cap the Denver cores at the stock 2.3 GHz\nfor f in /sys/devices/system/cpu/cpu*/cpufreq/scaling_max_freq; do echo 2295000 > $f; done\n' \
+	> $R/etc/local.d/n9-cpucap.start
+chmod 755 $R/etc/local.d/n9-cpucap.start
+
 # Phosh greeter autostart (GREETD_AUTOSTART=0 to start it by hand; the watchdog covers a hang)
 GREETD_AUTOSTART=${GREETD_AUTOSTART:-1}
 
