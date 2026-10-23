@@ -90,3 +90,30 @@
   tablet is absent from USB entirely (no adb/fastboot/gadget) -> power cycle needed (or battery empty).
   Early hangs now 4 of the last 8 pmOS boots; their kmsg logs were lost to rotation. Next: stream `dmesg -w`
   from the first SSH second (the 20:03 attempt found no tablet), and keep kmsg.log.2+ (rotation keeps only 1).
+
+## 2026-10-23 21:45-22:10 — H1 (devfreq race) refuted; REA GR reset; early hang = kernel oops (bad pointer)
+
+- 21:45 boot with the 612 MHz pin from udev: GR failed anyway (`PRIVRING` at 0x137000 + 0x503018, FECS timeout),
+  devfreq showed 1 transition (the pin). **H1 refuted.** `NvGrResetWar=1` (50 ms GR reset) on reload: still fails.
+- Bad vs good boot: privring enum (0x120074/78 = 1 FBP, 1 GPC), PMC enable, vdd-gpu 910 mV, clocks: same.
+  Palmas SMPS registers live on 4-0058 (driver page = base>>8 - 1): SMPS45 CTRL 0x11, VOLTAGE 0x2f (0.91 V),
+  FORCE 0xc2 on a good boot. The `4-0059: Failed to read IRQ status: -121` bursts are the interrupt page and happen
+  on good boots too (bad: at 1.06 s + `avdd-dsi-csi: failed to disable: -EREMOTEIO`; good: at 13.5 s).
+- REA (stock kernel, window ELF `/tmp/n9build/rea/nvgpu.elf` 0xffffffc00046c000-0x492000, 563 symbols):
+  - `gk20a_reset_priv_ring` = mainline `gk20a_privring_init` (0x137250 &= ~0x3f, PMC 0x20 reset, 0x12004c = 4,
+    0x122204 = 2). Not the difference.
+  - `gk20a_init_gr_prepare`: clear 0x400500 bit 0, `gk20a_reset(0x18001000)` (PGRAPH + bits 27/28, 20 us each
+    side), 0x400500 = 0x10001. Mainline's gk104 MC reset map has **no GR entry**: GR is never reset at init.
+  - `gk20a_init_gr_reset_enable_hw`: 0x400100/0x40013c = ~0; FE_PWR_MODE 0x404170 = 0x12 (wait bit 4), FECS
+    ctxsw reset 0x409614 = 0x70, 20 us, 0x770, 20 us; 0x404170 = 0x10; then SCC RAM, sw_nonctx, scrub, ucode.
+    Mainline does the 0x404170/0x409614 dance only in grctx generation, after ctxctl init.
+  - Candidate kernel change (uncommitted in linux-flounder: `gk20a_gr_reset_hw()` in gr/gk20a.c, chipset 0xea
+    only); module built as /tmp/nouveau-grreset-s.ko; `tools/pmos/gr-hunt.sh` loads it on a failing boot. Untested.
+- **Early hang caught** (kmsg.log.1 of the 22:00 boot): at 20.7 s `Unable to handle kernel paging request at
+  ff80002000006fdf` (between user and kernel ranges, looks bit-flipped), `__set_fixmap <- aarch64_insn_write <-
+  jump_label_update <- nf_register_net_hook` (nft). The task died holding the text-patching lock with irqs off ->
+  everything that patches code later deadlocks -> no SSH/serial a minute later, watchdog (or not) after.
+- H3 (testing): random memory corruption explains GR failures, oopses and the bright flashes at once. Suspect:
+  EMC DVFS (tegra30-devfreq actmon: 1684 transitions in one session, 202 in a few minutes) with the mainline
+  Tegra132 EMC switch + our DT timing tables. Test image `n9pmos-boot-noemcdvfs.img` = same kernel +
+  `initcall_blacklist=tegra_devfreq_driver_init` (EMC stays at the bootloader rate); `gpu-boot-test.sh` x8.
