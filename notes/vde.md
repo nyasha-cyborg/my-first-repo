@@ -91,24 +91,31 @@ was marked unusable**. Fix: set bit 25 for every T124 ref (`vde->soc->t124_layou
 `m_b` 91.81 → **97.80 %** (first bad 4 → 24), `bpyrnormal` 93.53 → **99.29 %** (5 → 58),
 `bpyrnone` stays 100 %. The bit is one of the two B-only fields (the other, bit 24, was already 1).
 
-Remaining drift, cause **not identified**. Facts gathered:
-- m_b: display frames 0-23 exact, 24-29 wrong; the first bad POC is 48, which is where the *P*
-  slices' `ref_pic_list_modification` (mod_l0=1, ops [0,1,0,3]) starts to matter... but mods are
-  already present from POC 12 while POC 12-44 frames are exact. A B-pyramid clip at `ref=1` also
-  drifts (98.94 %, first bad display 58), and a keyint=250 clip drifts worse (89.78 %, first bad 31),
-  so neither modification presence nor the frame_num wrap (15 -> 0 at decode index 23) explains it.
-- The driver cannot see modified lists anyway: GStreamer's `v4l2slh264dec` supplies
-  `V4L2_CID_STATELESS_H264_SLICE_PARAMS` (control registered; mask2 bit 5 logs it) but leaves
-  ref_pic_list0/1 zeroed in frame-based mode (`gst_h264_decoder_set_process_ref_pic_lists(dec,
-  is_slice_based)`), so this cannot be fixed from userspace with the current plugin.
-- Next ideas: compare per-MB error types on the new first-bad frames (likely list0 modification on
-  P frames + B-pyramid references); kernel-side slice-header parser for modification; or accept.
+Subagent per-MB/MV analysis of the first bad frames found the remaining mechanism: at the first P
+slice after frame_num wraps (15 -> 0), `ref_idx 0` resolved to B21 instead of P23 — a swap of the top
+two list0 entries. P_Skip MBs matched a bilinear prediction from the wrong picture (SAD 0.00), and the
+B frames after it inherited P26's corrupted pixels. Cause: the driver ordered list0 from the default
+(PicNum) sort; the stream's `ref_pic_list_modification` (x264 ops [0,1,0,3]) reorders it to put P23
+first. The wrap is only when default and modified order diverge, which is why pre-wrap P frames were
+exact. IRAM ref IDs as POC (bit 21) made everything much worse (m_b 76.34 %), proving the hardware
+uses the driver's list order, not the ID field.
 
-Dead ends this cycle (all zero effect): MBE list1 `0xC4000000` group commands (t124_mask2 bit 0,
-implemented and verified to run); MBE A reg 2/3 colocated aux (t124 bit 22) alone or with the fix;
-MBE per-MB buffer (bit 10); unwrapped ref `frame_num` (mask2 bit 3 — hardware masks correctly).
-t124_mask2 now: bit0 list1 cmds (dead), bit1 frame log, bit2 force in-use (default on T124), bit3 raw
-frame_num (dead), bit5 slice-params log.
+**Fix (2026-10-25): apply ref_pic_list_modification in the kernel.** A minimal slice-header parser
+(Annex-B scan, exp-Golomb, fields up to the modification lists) runs on the first slice of each frame
+and reorders list0/list1 per H.264 8.2.4.3 (short-term refs; long-term/multi-slice are best effort).
+Default on T124, mask2 bit 7 can force/disable it; mask2 bit 1 logs parse results. Results:
+`m_b` 97.80 → **100.00 %**, `bpyrnormal` 99.29 → **99.47 %** (first bad 58 → 84), everything else
+unchanged. `bdirtemporal` is still 98.60 % (separate temporal-direct issue).
+
+Remaining: bpyrnormal has a late 2-frame event at display 84 (same style as the pre-fix transients;
+needs per-MB analysis — check whether it is another list edge case such as a B-list or POC-wrap
+interaction). GStreamer still cannot supply SLICE_PARAMS lists in frame-based mode; the in-kernel
+parser is the workaround (userspace path exists for multi-slice/long-term later).
+
+Dead ends: MBE list1 `0xC4000000` group commands (mask2 bit 0, verified to run, no effect); MBE A reg
+2/3 colocated aux (t124 bit 22); MBE per-MB buffer (bit 10); unwrapped ref `frame_num` (mask2 bit 3);
+POC in IRAM IDs (bit 21). t124_mask2: bit0 list1 cmds (dead), bit1 logs, bit2 force in-use (default on
+T124), bit3 raw frame_num (dead), bit5 slice-params log, bit6 fmt log, bit7 force modification parse.
 
 ## Playback path plan (2026-10-25, read-only audit)
 

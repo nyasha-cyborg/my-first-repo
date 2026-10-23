@@ -1,0 +1,270 @@
+From c66181a12721d3559891ea666033edfb79256f4e Mon Sep 17 00:00:00 2001
+From: nyasha <nmushambi@proton.me>
+Date: Sat, 24 Oct 2026 11:58:32 +1300
+Subject: [PATCH] WIP tegra-vde: apply H.264 ref_pic_list_modification (minimal
+ slice parser)
+
+Userspace (GStreamer frame-based) cannot supply the modified lists and the
+hardware uses the driver's order, so parse the first slice header in-kernel
+and reorder RefPicList0/1 per H.264 8.2.4.3. Default on T124; mask2 bit 7
+keeps it forceable. m_b (Main CAVLC B-pyramid) becomes bit-exact 100 %;
+all other previously exact clips unchanged.
+
+Co-Authored-By: Claude Code <noreply@anthropic.com>
+---
+ .../media/platform/nvidia/tegra-vde/h264.c    | 232 ++++++++++++++++++
+ 1 file changed, 232 insertions(+)
+
+diff --git a/drivers/media/platform/nvidia/tegra-vde/h264.c b/drivers/media/platform/nvidia/tegra-vde/h264.c
+index 85d3d0770..002fa871a 100644
+--- a/drivers/media/platform/nvidia/tegra-vde/h264.c
++++ b/drivers/media/platform/nvidia/tegra-vde/h264.c
+@@ -1037,6 +1037,212 @@ static int tegra_vde_h264_setup_frame(struct tegra_ctx *ctx,
+ 	return 0;
+ }
+ 
++
++/*
++ * Minimal H.264 slice-header parser: extract ref_pic_list_modification only.
++ * V4L2 userspace in frame-based mode does not hand us the modified lists, and
++ * the hardware uses the list order we give it, so we have to apply the
++ * modification commands ourselves (H.264 8.2.4.3).
++ */
++struct n9_h264_mod {
++	u8 op;		/* 0 = sub, 1 = add, 2 = long-term */
++	u32 value;	/* abs_diff_pic_num_minus1 / long_term_pic_num */
++};
++
++struct n9_h264_mods {
++	struct n9_h264_mod l0[32];
++	unsigned int l0_nb;
++	struct n9_h264_mod l1[32];
++	unsigned int l1_nb;
++};
++
++struct n9_br {
++	const u8 *p;
++	size_t len;
++	size_t bit;
++	bool err;
++};
++
++static u32 n9_br_u(struct n9_br *br, unsigned int n)
++{
++	u32 v = 0;
++	unsigned int i;
++
++	for (i = 0; i < n; i++) {
++		size_t b = br->bit++;
++		if (b >= br->len * 8) {
++			br->err = true;
++			return 0;
++		}
++		v = (v << 1) | ((br->p[b / 8] >> (7 - (b % 8))) & 1);
++	}
++	return v;
++}
++
++static u32 n9_br_ue(struct n9_br *br)
++{
++	unsigned int zeros = 0;
++	u32 v;
++
++	while (n9_br_u(br, 1) == 0) {
++		if (br->err || ++zeros > 31)
++			return 0;
++	}
++	if (!zeros)
++		return 0;
++	v = n9_br_u(br, zeros);
++
++	return (1u << zeros) - 1 + v;
++}
++
++static s32 n9_br_se(struct n9_br *br)
++{
++	u32 v = n9_br_ue(br);
++
++	return (v & 1) ? (s32)((v + 1) / 2) : -(s32)(v / 2);
++}
++
++static int n9_parse_mods(struct n9_br *br, struct n9_h264_mod *mods,
++			 unsigned int *nb)
++{
++	u32 flag = n9_br_u(br, 1);
++
++	*nb = 0;
++	if (br->err || !flag)
++		return 0;
++
++	for (;;) {
++		u32 idc = n9_br_ue(br);
++
++		if (br->err || *nb >= 32)
++			return -EINVAL;
++		if (idc == 3)
++			return 0;
++		if (idc > 2)
++			return -EINVAL;
++		mods[*nb].op = idc;
++		mods[*nb].value = n9_br_ue(br);
++		(*nb)++;
++	}
++}
++
++static int n9_h264_parse_slice(const u8 *data, size_t len,
++			       const struct tegra_ctx_h264 *h,
++			       struct n9_h264_mods *mods)
++{
++	const struct v4l2_ctrl_h264_sps *sps = h->sps;
++	const struct v4l2_ctrl_h264_pps *pps = h->pps;
++	struct n9_br br;
++	size_t i = 0, hdr = 0;
++	u32 nal_type, slice_type;
++	unsigned int log2_fn, log2_poc;
++
++	/* find the first VCL NAL (Annex B start code + nal header) */
++	while (i + 3 < len) {
++		if (data[i] == 0 && data[i + 1] == 0 && data[i + 2] == 1) {
++			nal_type = data[i + 3] & 0x1f;
++			i += 4;
++			if (nal_type == 1 || nal_type == 5) {
++				hdr = i;
++				br.p = data + hdr;
++				br.len = len - hdr;
++				br.bit = 0;
++				br.err = false;
++				break;
++			}
++			continue;
++		}
++		i++;
++	}
++	if (!hdr)
++		return -ENOENT;
++
++	log2_fn = sps->log2_max_frame_num_minus4 + 4;
++	log2_poc = sps->log2_max_pic_order_cnt_lsb_minus4 + 4;
++
++	n9_br_ue(&br);			/* first_mb_in_slice */
++	slice_type = n9_br_ue(&br) % 5;
++	n9_br_ue(&br);			/* pic_parameter_set_id */
++	n9_br_u(&br, log2_fn);		/* frame_num */
++	if (!(sps->flags & V4L2_H264_SPS_FLAG_FRAME_MBS_ONLY) &&
++	    n9_br_u(&br, 1)) {		/* field_pic_flag */
++		return -EOPNOTSUPP;
++	}
++	if (nal_type == 5)
++		n9_br_ue(&br);		/* idr_pic_id */
++	if (sps->pic_order_cnt_type == 0) {
++		n9_br_u(&br, log2_poc);	/* pic_order_cnt_lsb */
++		if ((pps->flags &
++		     V4L2_H264_PPS_FLAG_BOTTOM_FIELD_PIC_ORDER_IN_FRAME_PRESENT))
++			n9_br_se(&br);	/* delta_pic_order_cnt_bottom */
++	}
++	if (pps->flags & V4L2_H264_PPS_FLAG_REDUNDANT_PIC_CNT_PRESENT)
++		n9_br_ue(&br);
++	if (slice_type == 1)
++		n9_br_u(&br, 1);	/* direct_spatial_mv_pred_flag */
++	if (slice_type != 2) {
++		if (n9_br_u(&br, 1)) {	/* num_ref_idx_active_override */
++			n9_br_ue(&br);
++			if (slice_type == 1)
++				n9_br_ue(&br);
++		}
++	}
++	if (br.err)
++		return -EINVAL;
++
++	if (slice_type != 2 &&
++	    n9_parse_mods(&br, mods->l0, &mods->l0_nb))
++		return -EINVAL;
++	if (slice_type == 1 &&
++	    n9_parse_mods(&br, mods->l1, &mods->l1_nb))
++		return -EINVAL;
++
++	return 0;
++}
++
++/* reorder @list (n entries) according to 8.2.4.3; long-term refs not handled */
++static void n9_apply_mods(struct v4l2_h264_reference *list, unsigned int n,
++			  const struct v4l2_h264_reflist_builder *b,
++			  const struct n9_h264_mod *mods, unsigned int nb,
++			  u32 curr_fn, u32 max_fn)
++{
++	struct v4l2_h264_reference out[V4L2_H264_NUM_DPB_ENTRIES];
++	bool used[V4L2_H264_NUM_DPB_ENTRIES] = {};
++	s32 pred = curr_fn;
++	unsigned int i, out_nb = 0;
++
++	for (i = 0; i < nb && out_nb < n; i++) {
++		u32 picnum, k;
++
++		if (mods[i].op == 2)
++			return;		/* long-term: leave the list alone */
++		if (mods[i].op == 0)
++			pred -= mods[i].value + 1;
++		else
++			pred += mods[i].value + 1;
++		picnum = (u32)pred & (max_fn - 1);
++
++		for (k = 0; k < n; k++) {
++			unsigned int idx = list[k].index;
++			u32 fn = (u32)b->refs[idx].frame_num & (max_fn - 1);
++
++			if (!used[idx] && fn == picnum) {
++				out[out_nb++] = list[k];
++				used[idx] = true;
++				break;
++			}
++		}
++	}
++	if (!out_nb)
++		return;
++
++	for (i = 0; i < n; i++)
++		if (!used[list[i].index])
++			out[out_nb++] = list[i];
++
++	memcpy(list, out, n * sizeof(*list));
++}
++
+ static int tegra_vde_h264_setup_frames(struct tegra_ctx *ctx,
+ 				       struct tegra_vde_h264_decoder_ctx *h264)
+ {
+@@ -1091,6 +1297,32 @@ static int tegra_vde_h264_setup_frames(struct tegra_ctx *ctx,
+ 		dpb_id = reflists.p;
+ 	}
+ 
++	if (ctx->vde->soc->t124_layout || (t124_mask2 & BIT(7))) {
++		struct n9_h264_mods mods = {};
++		void *vaddr = vb2_plane_vaddr(&src->vb2_buf, 0);
++		u32 max_fn = 1u << (h->sps->log2_max_frame_num_minus4 + 4);
++
++		int perr = vaddr ?
++			n9_h264_parse_slice(vaddr, vb2_get_plane_payload(&src->vb2_buf, 0),
++					    h, &mods) : -ENOMEM;
++
++		if (t124_mask2 & BIT(1))
++			dev_info(ctx->vde->dev, "n9dbg mods: vaddr=%d err=%d l0=%u l1=%u\n",
++				 vaddr != NULL, perr, mods.l0_nb, mods.l1_nb);
++
++		if (!perr) {
++			if (h->decode_params->flags & V4L2_H264_DECODE_PARAM_FLAG_BFRAME) {
++				n9_apply_mods(reflists.b0, b.num_valid, &b, mods.l0,
++					      mods.l0_nb, h->decode_params->frame_num, max_fn);
++				n9_apply_mods(reflists.b1, b.num_valid, &b, mods.l1,
++					      mods.l1_nb, h->decode_params->frame_num, max_fn);
++			} else {
++				n9_apply_mods(reflists.p, b.num_valid, &b, mods.l0,
++					      mods.l0_nb, h->decode_params->frame_num, max_fn);
++			}
++		}
++	}
++
+ 	for (i = 0; i < b.num_valid; i++) {
+ 		int dpb_idx = dpb_id[i].index;
+ 
+-- 
+2.56.0
+
