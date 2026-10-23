@@ -1,0 +1,9 @@
+#!/bin/sh
+# n9 debug: regulator events into the kernel log (kept on disk by n9-kmsg), to catch the rail change that
+# precedes the Palmas PMIC going silent on I2C ("dummy 4-0059: Failed to read IRQ status: -121")
+T=/sys/kernel/tracing; [ -d $T/events ] || mount -t tracefs nodev $T
+for e in regulator_enable regulator_disable regulator_set_voltage regulator_enable_complete regulator_disable_complete; do
+	[ -f $T/events/regulator/$e/enable ] && echo 1 > $T/events/regulator/$e/enable
+done
+echo 1 > $T/tracing_on
+(while read -r l; do echo "<6>n9-reg: $l" > /dev/kmsg; done < $T/trace_pipe) </dev/null >/dev/null 2>&1 &

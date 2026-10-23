@@ -99,3 +99,18 @@ Until then everything is tested with `fastboot boot`.
   (2) radio/rfkill at session start (BCM4354 WiFi/BT combo); (3) GPU writes to wrong memory (corruption).
 - Next (one variable per boot): baseline = software rendering + bluetooth/rfkill services off + n9-health; if
   stable, add GPU; then bluetooth; check SMMU attach (`ls /sys/kernel/iommu_groups`, dmesg) and autologin logs.
+
+## 2026-10-23 17:40 — NEW LEAD: the Palmas PMIC goes silent on I2C (hang at 700 s, also a burst at boot)
+
+kmsg.log of the 15:00 session (it lived ~11 min): session start at 69.6 s fine, then at 700.4 s a burst of
+`dummy 4-0059: Failed to read IRQ status: -121` (Palmas interrupt block, i2c-4 0x59, -EREMOTEIO = no ACK) and the
+end of the log. 79 such lines in total; the first burst is at boot 11.79 s, in the middle of the simple-framebuffer
+handover: `simple-framebuffer ... fb0 registered` -> PMIC I2C errors -> `avdd-dsi-csi: failed to disable: -EREMOTEIO`
+-> `WARNING regulator_put` (released while enabled). No kernel lines at all between 69 s and 700 s.
+Hypothesis: a display-path rail change (screen blank / DPMS after ~10 min idle; simplefb handover at boot) makes the
+PMIC stop answering on I2C; its IRQ handler then storms, starving userspace (ping alive, services dead = "mode B").
+The user saw the screen go "black lit / not stable" right before. Earlier session hangs (~2-8 min) may be the
+greeter/session idle blank.
+Test setup (boot 17:45): baseline (software rendering, bluetooth/rfkill/n9-modem off) + n9-health + regulator
+tracepoints streamed into the kernel log (`/etc/local.d/n9-regtrace.start`, tools/pmos/n9-regtrace.start).
+Plan: idle-delay 30 s -> force a blank -> look for regulator events + PMIC -121 at that moment.
