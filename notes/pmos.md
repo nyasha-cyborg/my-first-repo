@@ -59,3 +59,21 @@ Until then everything is tested with `fastboot boot`.
   the PIN screen, typed 147147 with the touch keyboard and logged in** (slow, software rendering). Phosh session
   c16 on seat0/tty7: phoc, gnome-session --session=phosh, phosh. Touch works. greetd autostart re-enabled.
 - The 12:25 hang is unexplained (no log); kmsg.log now keeps evidence if it recurs.
+
+## 2026-10-23 13:00-13:40 — hangs, logging, modem service in pmOS
+
+- 12:57 hang #2, ~8 min after login: watchdog reset (whole machine). Last kernel line `[487.6] rfkill: input handler
+  disabled` (Phosh session start), then silence, no oops. WiFi died first in both session hangs.
+- 13:09 hang #3: boot without greetd; **watchdog did not fire**, OpenRC never reached `local` (kmsg.log not rotated),
+  no ttyGS0 login, no WiFi -> looked like OpenRC blocked in an early stage while the busybox watchdog daemon kept
+  feeding. Power cycle by the user. No rfkill state was ever saved (/var/lib/rfkill absent) -> not an rfkill restore.
+- Diagnostics added (in the image + repo): `n9-kmsg` OpenRC service in sysinit (kernel log from the start, 5 s
+  sync, previous boot = kmsg.log.1), `rc_logger="YES"` (/var/log/rc.log); disabled ModemManager (fights n9-modem)
+  and iio-sensor-proxy (no sensors). Boot #4 (13:26) came up cleanly in ~1 min.
+- n9-modem in pmOS: (1) mdm-boot.sh hard-coded /bin helpers -> look next to the script; (2) udev autoloads
+  `qcserial` for the boot ROM 05c6:9008 -> `sahara: claim interface failed 16` -> blacklisted
+  (/etc/modprobe.d/n9-modem.conf); (3) a retry saw the stale 9008 (host never sees the modem reset) -> re-enumerate
+  before Sahara. Then: 15 images, STATUS=1, 9048, APN/raw IP/online all error 0, but START_NETWORK error 14 x30:
+  **the SIM was out of the tray** (UIM card state 2, camped 530-01 limited). User reinserted it 13:40.
+- qmi-probe.py works over SSH on pmOS: `N9SSH=root@192.168.1.109 QMIRAW=/usr/lib/n9-modem/qmiraw`.
+- Open: cause of the session hang (rfkill/BT-WiFi combo suspicion, not proven), the 13:09 early-boot block.
