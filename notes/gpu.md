@@ -140,3 +140,28 @@
   the tablet itself was fine (serial). Test scripts fall back to the serial console.
 - Lock screen at boot under autologin: phosh locks at startup unless `GDMSESSION` is set (libphosh
   "started by display manager" check); greetd initial_session now runs `env GDMSESSION=phosh phosh-session`.
+
+## 2026-10-24 00:00-01:10 — video: CPU decode limit; nouveau cache-clean bottleneck fixed; flicker; backlight curve
+
+- yt-dlp 2026.10.21 works (JS challenges via deno). YouTube H.264 (avc1) tops out at 720p for the test video;
+  4K is VP9/AV1 only. mpv 0.41 software decode, both Denver cores at 2.295 GHz, `--vo=null --untimed`:
+  **720p H.264 1.1x realtime, 480p 2.1x** -> 720p is a slideshow on CPU (258 drops in 13 s).
+- 480p still dropped ~430/600 frames: mpv's `vo` thread ~75 % in the kernel. /proc/<tid>/stack sampling:
+  `dcache_clean_poc <- __dma_sync_single_for_device <- nouveau_bo_sync_for_device <- nouveau_bo_validate`
+  (53/200): on Tegra (no AGP) GART BOs are ttm_cached and the whole BO is cleaned on every pushbuf.
+  **Fix (series 0040):** write-combined GART BOs on non-PCI devices; one clean per set of pages, none after;
+  no sync_for_cpu. 480p: **430 -> 74-82 drops / 25 s**; vo kernel time ~75 % -> ~40 %. Next cost:
+  `nouveau_gem_object_close` (Mesa allocating/freeing BOs per frame). Series 0042: `nouveau.tegra_wc=0` A/B.
+- Flicker: "flickering blocks" while video plays. With tegra_wc=0 the user still saw slight flicker (and 491
+  drops), so WC is not the cause; likely a sync race (compositor sampling mpv's buffer before the GPU is done,
+  or Mesa buffer reuse) that the slower path hid. The kernel already wmb()s before the GPFIFO kick
+  (nvif/chan506f.c). Open.
+- Backlight "not steady" on the home screen: user level was 9/255 (~3.5 % duty). CABC is off (0x55 = 0),
+  0x53 = 0x24, same as stock. REA `dsi_j_qxga_8_9_bl_notify`: stock maps 0 -> 0, 1..10 -> 7, 11..133 ->
+  7..90, 134..255 -> 90..255. Series 0043 uses the same curve. Low-level flicker = panel PWM at low duty.
+- PMIC: cold boot (user power-on) stalled 75 s: Palmas IRQ 73 stormed with `4-0059 ... -121` until "nobody
+  cared" disabled it at 87 s; DFLL/cpufreq and the regulators waited behind it; that boot also had a GR
+  failure. Warm boots: one 11 ms NAK burst ~0.3 s after `cpufreq_policy_online` (DFLL takes over vdd-cpu over
+  the shared PWR_I2C). REA `tegra_i2c_probe/xfer`: stock enables `cl_dvfs_ref` + `cl_dvfs_soc` around every
+  transfer when `nvidia,require-cldvfs-clock` is set (stock DT has it). Series 0041 does the same in mainline
+  i2c-tegra + flounder DT: bursts remain (84, 45 on two boots) -> not sufficient; DFLL handover still open.

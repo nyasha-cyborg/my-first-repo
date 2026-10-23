@@ -1,0 +1,73 @@
+From 21eada575830217e72d124d6f68b3bbd3661711f Mon Sep 17 00:00:00 2001
+From: nyasha <nmushambi@proton.me>
+Date: Sat, 24 Oct 2026 01:01:55 +1300
+Subject: [PATCH 2/2] drm/panel: jdi-lpm089a128a: use the stock brightness
+ curve
+
+The stock kernel maps the backlight level before sending DCS 0x51
+(dsi_j_qxga_8_9_bl_notify): 0 off, 1..10 -> 7 (panel floor), 11..133 ->
+7..90, 134..255 -> 90..255. Use the same curve so the slider matches
+Android and the low half gets finer steps.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/gpu/drm/panel/panel-jdi-lpm089a128a.c | 22 +++++++++++++++++--
+ 1 file changed, 20 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/gpu/drm/panel/panel-jdi-lpm089a128a.c b/drivers/gpu/drm/panel/panel-jdi-lpm089a128a.c
+index 0ba3c617f..6551ff02c 100644
+--- a/drivers/gpu/drm/panel/panel-jdi-lpm089a128a.c
++++ b/drivers/gpu/drm/panel/panel-jdi-lpm089a128a.c
+@@ -360,6 +360,19 @@ static const struct drm_panel_funcs jdi_panel_funcs = {
+  * command has to reach both links, so the panel is the backlight's private data
+  * rather than a single mipi_dsi_device.
+  */
++static u8 jdi_bl_map(int level)
++{
++	if (level <= 0)
++		return 0;
++	if (level <= 10)
++		return 7;
++	if (level <= 133)
++		return 7 + (level - 10) * 83 / 123;
++	if (level > 255)
++		level = 255;
++	return 90 + (level - 133) * 165 / 122;
++}
++
+ static int jdi_panel_bl_update_status(struct backlight_device *bl)
+ {
+ 	struct jdi_panel *jdi = bl_get_data(bl);
+@@ -379,7 +392,7 @@ static int jdi_panel_bl_update_status(struct backlight_device *bl)
+ 	 * whose initialisers must be compile-time constants.
+ 	 */
+ 	payload[0] = MIPI_DCS_SET_DISPLAY_BRIGHTNESS;
+-	payload[1] = backlight_get_brightness(bl);
++	payload[1] = jdi_bl_map(backlight_get_brightness(bl));
+ 
+ 	jdi->brightness = payload[1];
+ 
+@@ -394,6 +407,11 @@ static int jdi_panel_bl_update_status(struct backlight_device *bl)
+ 	return dsi_ctx.accum_err;
+ }
+ 
++/*
++ * Brightness curve of the stock kernel (dsi_j_qxga_8_9_bl_notify, decompiled):
++ * 0 stays off, 1..10 clamp to the panel's floor of 7, 11..133 map to 7..90 and
++ * 134..255 to 90..255, so the low half of the slider gets finer steps.
++ */
+ static const struct backlight_ops jdi_panel_bl_ops = {
+ 	.update_status = jdi_panel_bl_update_status,
+ };
+@@ -411,7 +429,7 @@ static int jdi_panel_add(struct jdi_panel *jdi)
+ 
+ 	jdi->mode = &default_mode;
+ 	/* same default as props.brightness, so the first prepare lights it */
+-	jdi->brightness = 224;
++	jdi->brightness = jdi_bl_map(224);
+ 
+ 	/* The device tree supplies these two as regulators, not as GPIOs. */
+ 	jdi->iovdd = devm_regulator_get(dev, "iovdd");
+-- 
+2.56.0
+

@@ -1,0 +1,80 @@
+From 29f158d91e2338a3888dc0280555bfb21417642f Mon Sep 17 00:00:00 2001
+From: nyasha <nmushambi@proton.me>
+Date: Sat, 24 Oct 2026 00:42:20 +1300
+Subject: [PATCH] i2c: tegra: clock the CL-DVFS block during transfers on a
+ shared PWR_I2C bus
+
+On Tegra124/132 the DFLL (CL-DVFS) I2C master drives the PMIC over the
+same pins as the PWR_I2C controller. The vendor driver enables the DFLL
+"cl_dvfs_ref" and "cl_dvfs_soc" clocks around every transfer when the bus
+node has nvidia,require-cldvfs-clock (stock Nexus 9 kernel, decompiled
+tegra_i2c_probe/tegra_i2c_xfer). Without it the Nexus 9 PMIC NAKs bursts
+of reads ("Failed to read IRQ status: -121"); on one cold boot the
+interrupt then stormed for 75 s until the core disabled it.
+
+Take both clocks as extra bulk clocks when the property is present, so
+the existing runtime-PM path enables them for each transfer, and describe
+them in the flounder DT.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ arch/arm64/boot/dts/nvidia/tegra132-flounder.dts |  9 +++++++++
+ drivers/i2c/busses/i2c-tegra.c                   | 15 ++++++++++++++-
+ 2 files changed, 23 insertions(+), 1 deletion(-)
+
+diff --git a/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts b/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
+index 89d222065..b6f9bd64c 100644
+--- a/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
++++ b/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
+@@ -891,6 +891,15 @@ ov9760@36 {
+ 	i2c@7000d000 {
+ 		status = "okay";
+ 		clock-frequency = <400000>;
++		/*
++		 * PWR_I2C is shared with the DFLL (CL-DVFS) I2C master; like the
++		 * vendor DT, keep the DFLL clocked during transfers (i2c-tegra).
++		 */
++		nvidia,require-cldvfs-clock;
++		clocks = <&tegra_car TEGRA124_CLK_I2C5>,
++			 <&tegra_car TEGRA124_CLK_DFLL_REF>,
++			 <&tegra_car TEGRA124_CLK_DFLL_SOC>;
++		clock-names = "div-clk", "cl_dvfs_ref", "cl_dvfs_soc";
+ 
+ 		palmas: tps65913@58 {
+ 			compatible = "ti,tps65913", "ti,palmas";
+diff --git a/drivers/i2c/busses/i2c-tegra.c b/drivers/i2c/busses/i2c-tegra.c
+index e533460bc..33ecb209a 100644
+--- a/drivers/i2c/busses/i2c-tegra.c
++++ b/drivers/i2c/busses/i2c-tegra.c
+@@ -276,7 +276,7 @@ struct tegra_i2c_dev {
+ 	phys_addr_t base_phys;
+ 	void __iomem *base;
+ 
+-	struct clk_bulk_data clocks[2];
++	struct clk_bulk_data clocks[4];
+ 	unsigned int nclocks;
+ 
+ 	struct clk *div_clk;
+@@ -1727,6 +1727,19 @@ static int tegra_i2c_init_clocks(struct tegra_i2c_dev *i2c_dev)
+ 	if (IS_VI(i2c_dev))
+ 		i2c_dev->clocks[i2c_dev->nclocks++].id = "slow";
+ 
++	/*
++	 * The CL-DVFS (DFLL) block drives the PMIC over the same pins as this
++	 * controller (Tegra124/132 PWR_I2C). Its I2C master must be clocked
++	 * whenever this controller transfers, or transfers on the shared bus
++	 * get corrupted (PMIC NAKs). The vendor driver enables both DFLL clocks
++	 * around every transfer when this property is present.
++	 */
++	if (of_property_read_bool(i2c_dev->dev->of_node,
++				  "nvidia,require-cldvfs-clock")) {
++		i2c_dev->clocks[i2c_dev->nclocks++].id = "cl_dvfs_ref";
++		i2c_dev->clocks[i2c_dev->nclocks++].id = "cl_dvfs_soc";
++	}
++
+ 	err = devm_clk_bulk_get(i2c_dev->dev, i2c_dev->nclocks,
+ 				i2c_dev->clocks);
+ 	if (err)
+-- 
+2.56.0
+

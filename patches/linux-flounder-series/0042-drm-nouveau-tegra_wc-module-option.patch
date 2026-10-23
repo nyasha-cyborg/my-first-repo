@@ -1,0 +1,58 @@
+From b10d61bda621dbb91d364816691db2ce52c15837 Mon Sep 17 00:00:00 2001
+From: nyasha <nmushambi@proton.me>
+Date: Sat, 24 Oct 2026 01:01:55 +1300
+Subject: [PATCH 1/2] drm/nouveau: tegra_wc module option to switch the Tegra
+ write-combine path off
+
+For A/B tests (nouveau.tegra_wc=0 restores cached BOs + per-validate clean).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/gpu/drm/nouveau/nouveau_drm.c   | 4 ++++
+ drivers/gpu/drm/nouveau/nouveau_drv.h   | 1 +
+ drivers/gpu/drm/nouveau/nouveau_sgdma.c | 2 +-
+ 3 files changed, 6 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/nouveau/nouveau_drm.c b/drivers/gpu/drm/nouveau/nouveau_drm.c
+index dc469e571..1feec6c71 100644
+--- a/drivers/gpu/drm/nouveau/nouveau_drm.c
++++ b/drivers/gpu/drm/nouveau/nouveau_drm.c
+@@ -94,6 +94,10 @@ MODULE_PARM_DESC(debug, "debug string to pass to driver core");
+ static char *nouveau_debug;
+ module_param_named(debug, nouveau_debug, charp, 0400);
+ 
++MODULE_PARM_DESC(tegra_wc, "Tegra: write-combined GART BOs instead of cached + per-validate cache clean (default 1)");
++int nouveau_tegra_wc = 1;
++module_param_named(tegra_wc, nouveau_tegra_wc, int, 0400);
++
+ MODULE_PARM_DESC(noaccel, "disable kernel/abi16 acceleration");
+ static int nouveau_noaccel = 0;
+ module_param_named(noaccel, nouveau_noaccel, int, 0400);
+diff --git a/drivers/gpu/drm/nouveau/nouveau_drv.h b/drivers/gpu/drm/nouveau/nouveau_drv.h
+index 0e409414f..459170d9e 100644
+--- a/drivers/gpu/drm/nouveau/nouveau_drv.h
++++ b/drivers/gpu/drm/nouveau/nouveau_drv.h
+@@ -364,6 +364,7 @@ void nouveau_drm_device_remove(struct nouveau_drm *);
+ #define NV_INFO_ONCE(drm,f,a...) NV_PRINTK_ONCE(info, &(drm)->client, f, ##a)
+ 
+ extern int nouveau_modeset;
++extern int nouveau_tegra_wc;
+ 
+ /*XXX: Don't use these in new code.
+  *
+diff --git a/drivers/gpu/drm/nouveau/nouveau_sgdma.c b/drivers/gpu/drm/nouveau/nouveau_sgdma.c
+index 1afb857fc..78f928a3b 100644
+--- a/drivers/gpu/drm/nouveau/nouveau_sgdma.c
++++ b/drivers/gpu/drm/nouveau/nouveau_sgdma.c
+@@ -75,7 +75,7 @@ nouveau_sgdma_create_ttm(struct ttm_buffer_object *bo, uint32_t page_flags)
+ 
+ 	if (nvbo->force_coherent)
+ 		caching = ttm_uncached;
+-	else if (drm->agp.bridge || !dev_is_pci(drm->dev->dev))
++	else if (drm->agp.bridge || (nouveau_tegra_wc && !dev_is_pci(drm->dev->dev)))
+ 		/*
+ 		 * Tegra: the GPU does not snoop the CPU caches, so cached BOs
+ 		 * needed a full cache clean on every validate (most of the CPU
+-- 
+2.56.0
+

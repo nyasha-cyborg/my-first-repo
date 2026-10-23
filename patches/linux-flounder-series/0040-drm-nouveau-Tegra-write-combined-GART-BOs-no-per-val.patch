@@ -1,0 +1,101 @@
+From 294b72969ed2969a843bf7f1f3f945867e69f32d Mon Sep 17 00:00:00 2001
+From: nyasha <nmushambi@proton.me>
+Date: Fri, 23 Oct 2026 23:53:24 +1300
+Subject: [PATCH] drm/nouveau: Tegra: write-combined GART BOs, no per-validate
+ cache clean
+
+On Tegra the GPU does not snoop the CPU caches. GART BOs were created
+ttm_cached, so nouveau_bo_validate() cleaned the whole BO from the CPU
+caches (dma_sync_single_for_device) on every pushbuf. With mpv playing
+480p video that was the largest single cost (53/200 kernel stack samples
+of the output thread in dcache_clean_poc); the thread spent ~75% of its
+time in the kernel and dropped about 2/3 of the frames.
+
+Use write-combined CPU mappings for GART BOs on non-PCI (Tegra) devices.
+Pages still get one clean after allocation (dirty lines from zeroing via
+the linear map); after that nothing to sync in either direction.
+480p playback: 430 -> 74 dropped frames in 25 s.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/gpu/drm/nouveau/nouveau_bo.c    | 15 +++++++++++++++
+ drivers/gpu/drm/nouveau/nouveau_bo.h    |  2 ++
+ drivers/gpu/drm/nouveau/nouveau_sgdma.c |  9 ++++++++-
+ 3 files changed, 25 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/nouveau/nouveau_bo.c b/drivers/gpu/drm/nouveau/nouveau_bo.c
+index f26562eaf..7c76bfa4a 100644
+--- a/drivers/gpu/drm/nouveau/nouveau_bo.c
++++ b/drivers/gpu/drm/nouveau/nouveau_bo.c
+@@ -706,6 +706,17 @@ nouveau_bo_sync_for_device(struct nouveau_bo *nvbo)
+ 	if (nvbo->force_coherent)
+ 		return;
+ 
++	/*
++	 * Write-combined (Tegra): the CPU never writes these pages through the
++	 * cache, so only dirty lines left by the page allocator (zeroing via
++	 * the linear map) need cleaning, once per set of pages.
++	 */
++	if (ttm_dma->caching == ttm_write_combined) {
++		if (nvbo->wc_clean_addr == ttm_dma->dma_address[0])
++			return;
++		nvbo->wc_clean_addr = ttm_dma->dma_address[0];
++	}
++
+ 	i = 0;
+ 	while (i < ttm_dma->num_pages) {
+ 		struct page *p = ttm_dma->pages[i];
+@@ -742,6 +753,10 @@ nouveau_bo_sync_for_cpu(struct nouveau_bo *nvbo)
+ 	if (nvbo->force_coherent)
+ 		return;
+ 
++	/* write-combined CPU mappings bypass the cache: nothing to invalidate */
++	if (ttm_dma->caching == ttm_write_combined)
++		return;
++
+ 	i = 0;
+ 	while (i < ttm_dma->num_pages) {
+ 		struct page *p = ttm_dma->pages[i];
+diff --git a/drivers/gpu/drm/nouveau/nouveau_bo.h b/drivers/gpu/drm/nouveau/nouveau_bo.h
+index 6c26beeb4..aa9e51cc6 100644
+--- a/drivers/gpu/drm/nouveau/nouveau_bo.h
++++ b/drivers/gpu/drm/nouveau/nouveau_bo.h
+@@ -17,6 +17,8 @@ struct nouveau_bo {
+ 	u32 valid_domains;
+ 	struct ttm_place placements[3];
+ 	bool force_coherent;
++	/* Tegra write-combined GART BO: CPU caches already cleaned for these pages */
++	dma_addr_t wc_clean_addr;
+ 	struct ttm_bo_kmap_obj kmap;
+ 	struct list_head head;
+ 	struct list_head io_reserve_lru;
+diff --git a/drivers/gpu/drm/nouveau/nouveau_sgdma.c b/drivers/gpu/drm/nouveau/nouveau_sgdma.c
+index bd8700285..1afb857fc 100644
+--- a/drivers/gpu/drm/nouveau/nouveau_sgdma.c
++++ b/drivers/gpu/drm/nouveau/nouveau_sgdma.c
+@@ -1,6 +1,7 @@
+ // SPDX-License-Identifier: MIT
+ #include <linux/pagemap.h>
+ #include <linux/slab.h>
++#include <linux/pci.h>
+ #include <drm/ttm/ttm_tt.h>
+ 
+ #include "nouveau_drv.h"
+@@ -74,7 +75,13 @@ nouveau_sgdma_create_ttm(struct ttm_buffer_object *bo, uint32_t page_flags)
+ 
+ 	if (nvbo->force_coherent)
+ 		caching = ttm_uncached;
+-	else if (drm->agp.bridge)
++	else if (drm->agp.bridge || !dev_is_pci(drm->dev->dev))
++		/*
++		 * Tegra: the GPU does not snoop the CPU caches, so cached BOs
++		 * needed a full cache clean on every validate (most of the CPU
++		 * time of a video player went there). Write-combined CPU
++		 * mappings need no maintenance after the first clean.
++		 */
+ 		caching = ttm_write_combined;
+ 	else
+ 		caching = ttm_cached;
+-- 
+2.56.0
+
