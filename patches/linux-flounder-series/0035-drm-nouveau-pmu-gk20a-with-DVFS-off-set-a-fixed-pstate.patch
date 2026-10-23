@@ -1,0 +1,46 @@
+From f189db0402348bbe7cbbf585c2e59bf317fb25f8 Mon Sep 17 00:00:00 2001
+From: nyasha <nmushambi@proton.me>
+Date: Fri, 23 Oct 2026 14:24:53 +1300
+Subject: [PATCH] drm/nouveau/pmu/gk20a: with DVFS off, set a fixed pstate
+ (NvGk20aPstate)
+
+GK20A's clk has allow_reclock = false, so NvClkMode and the debugfs pstate
+file cannot pick a state; only the DVFS path (nvkm_clk_astate) moves the
+clock. With NvGk20aDvfs=0 the GPU stayed at its 72 MHz boot state. Set the
+automatic state once from NvGk20aPstate (index, default 7 = 540 MHz).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/gpu/drm/nouveau/nvkm/subdev/pmu/gk20a.c | 15 ++++++++++++---
+ 1 file changed, 12 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/gpu/drm/nouveau/nvkm/subdev/pmu/gk20a.c b/drivers/gpu/drm/nouveau/nvkm/subdev/pmu/gk20a.c
+index dda8b4bfa..a16edd3b2 100644
+--- a/drivers/gpu/drm/nouveau/nvkm/subdev/pmu/gk20a.c
++++ b/drivers/gpu/drm/nouveau/nvkm/subdev/pmu/gk20a.c
+@@ -189,10 +189,19 @@ gk20a_pmu_init(struct nvkm_pmu *pmu)
+ 	 * GPC PLL slide timed out (-ETIMEDOUT in gk20a_pllg_slide) and the SoC
+ 	 * hung; the vendor kernel slides the same way but far less often.
+ 	 */
+-	if (nvkm_boolopt(device->cfgopt, "NvGk20aDvfs", true))
++	if (nvkm_boolopt(device->cfgopt, "NvGk20aDvfs", true)) {
+ 		nvkm_timer_alarm(device->timer, 2000000000, &gpmu->alarm);
+-	else
+-		nvkm_debug(subdev, "DVFS disabled (NvGk20aDvfs=0)\n");
++	} else if (device->clk) {
++		/*
++		 * GK20A has allow_reclock = false, so NvClkMode/debugfs user
++		 * states are refused; set the automatic state once instead
++		 * (pstate index, default 7 = 540 MHz).
++		 */
++		int idx = nvkm_longopt(device->cfgopt, "NvGk20aPstate", 7);
++
++		nvkm_info(subdev, "DVFS disabled, fixed pstate index %d\n", idx);
++		nvkm_clk_astate(device->clk, idx, 0, false);
++	}
+ 	return 0;
+ }
+ 
+-- 
+2.56.0
+
