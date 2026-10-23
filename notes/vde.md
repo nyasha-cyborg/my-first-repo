@@ -89,6 +89,23 @@ Patches: `patches/candidates/vde/` (3 WIP commits in linux-flounder, last 5a4d2f
   data (the microcode writes 20 MBE ref-list entries from a host table, +0x1c); weights may need the
   V4L2 slice-based API (V4L2_CID_STATELESS_H264_PRED_WEIGHTS) instead of frame-based decoding.
 
+## 2026-10-24 11:00 — T124 local-memory layout; codec init; WP still not applied
+
+- REA: BSE-V command queue = local-memory DMA engine, word addressed. `fn_00830` zero = 2 words on T124
+  (0x84000000|len<<12|addr&0xfff, addr&0x3fff); `fn_00868` copy 0x80000000|len, dst<<16|src>>2.
+  T124 layout: slice-group bitmap ends at 0x1000, 0x1020 (BSE-V 0x98/0x9c, 0x60032e00), SXE scratch
+  0x1820 (0x400 words), MCE 0x1c20, ref lists 0x3620 (0x100 words; SXE 0x74 = 0x3720), scaling lists
+  0x38b4. Mainline T20: 0x150 / 0x54c (0xf0) / MCE 0x63c / lists 0xe34.
+  -> mask bit 20 = T124 layout: same pixels, the 4 per-run decode errors disappear. Keep it (1361920).
+- `fn_04828` (H.264 slice/ref lists): 4 tables (P list by PicNum, B L0, B L1, DPB order) of
+  [idx<<26 | flags | POC(18 bits) or 0x40000+LongTermPicNum, co-located addr]. POC instead of frame_num
+  (bit 21) makes decoding worse -> dead end on this path.
+- H.264 = codec id 5 in `fn_03a50` (SXE 0x08=0x35, MBE 0x84=0x400, VDMA 0x00=0x4000, VDMA 0x1c=1):
+  bits 25-27 give byte-identical output. Dead end.
+- WP evidence: YouTube fade -> every HW frame from 3 on equals frame 2 (weights and offsets ignored).
+  m_wp errors are small (+-1..3), so x264's weights there are near identity.
+- Tools: tools/vde-test.sh MASK clip[:frames] + tools/vde-score.py (per-plane scores).
+
 ## Next
 
 0. Weighted prediction application (find the slice-level microcode / MCE registers), then B-frame drift
