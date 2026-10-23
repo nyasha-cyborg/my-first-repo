@@ -1,7 +1,7 @@
 # Handoff — Nexus 9 (flounder, Tegra K1 T132) postmarketOS port
 
 Written for an AI agent or person taking over. Read this first, then the topic note for the area you
-work on. Kept current by the previous agent at each test cycle (last update: 2026-10-24 ~11:00).
+work on. Kept current by the previous agent at each test cycle (last update: 2026-10-24 ~22:45).
 
 ## Goal and current focus
 
@@ -53,8 +53,11 @@ work on. Kept current by the previous agent at each test cycle (last update: 202
   local-memory layout) is also good: same output, no decode errors → use **1361920**.
 - Bit-exact: Baseline, Main CAVLC, POC type 0, CABAC.
 - Broken:
-  1. **Explicit weighted prediction is not applied.** On the YouTube fade every hardware frame equals
-     frame 2. `m_wp` is 91 %, with small ±1-3 errors.
+  1. **Explicit weighted prediction is not applied — hardware limitation (settled 2026-10-24).**
+     Controlled pair: same fade, CAVLC, no B-frames, `weightp=0` → 100 %, `weightp=2` → 48.8 %.
+     The SXE parses the weight table (removing the WP flag breaks the stream) but never applies it;
+     REA shows no weight values anywhere in the host↔microcode interface. Accept as a limitation
+     (only fades/crossfades affected). Do not retry register guesses.
   2. **B-frames drift.** Exact up to frame 3, then 81-92 %.
 - Ruled out (dead ends):
   - POC in the reference-list low bits (bit 21: worse; the hardware wants frame_num).
@@ -73,64 +76,33 @@ work on. Kept current by the previous agent at each test cycle (last update: 202
 - The kernel code for bits 20-27 is committed in `~/code/linux-flounder` (local) and exported as
   `patches/candidates/vde/0005-*.patch`.
 
-## NEXT TASK — step by step (start here)
+## NEXT TASK — B-frame drift (start here)
 
-### Test A: per-slice SXE registers from `fn_04828` (weighted-prediction lead)
+Tests A (per-slice SXE 0x60/0x64/0xdc/0x50) and B (MBE bits 22/23) were run on 2026-10-24 and are
+dead ends; WP is settled as a hardware limitation. Details in notes/vde.md (22:40).
 
-The stock slice code writes four SXE registers that mainline never writes. They are the strongest
-remaining lead for "weights parsed but not applied". Decompiled values (frame pictures, no MBAFF):
+Baseline `m_b` (Main CAVLC, B-pyramid): Y **91.81 %** (min 81.34), first imperfect frame **4**,
+30/30 frames, no faults. Frame 0-3 exact, then 97 % → 81 % by frame 29. I/P frames are exact, so the
+problem is B-frame motion compensation: direct mode / co-located picture selection or ref-list order.
 
-| reg | stock value |
-|-----|-------------|
-| SXE 0x60 | `(slicecnt & 0x3f) << 16 | num_ref_idx_l0_active_minus1 << 22 | num_ref_idx_l1_active_minus1 << 27` (`slicecnt` = microcode field param_2[0x39], unknown; try 0) |
-| SXE 0x64 | `0x10000` (bit 19 = field pic, bit 20 = param_2[9], bit 21 = param_2[2]; all 0 for progressive) |
-| SXE 0xdc | `0x4407500` (constant) |
-| SXE 0x50 | `0` |
+Leads to try, in order:
+1. **MBE ref-list commands.** Stock `fn_05434` writes `0xC0000000 | 4 ref indices (6 bits each) |
+   list<<26 | group<<24` for lists 0/1, then `0xCC000000|ref0` ("first ref") and the `0x30000000`
+   pattern. Compare exactly with mainline's `tegra_vde_setup_mbe_frame_idx()`/frame-id tables for a
+   B frame; the T124 MBE may want the list-1/co-located entries in a different table slot.
+2. **Co-located buffer layout.** Stock `fn_060c8` zeroes/copies a per-MB co-located buffer of
+   0x40 bytes/MB per frame index (MBE 0xA reg 8/9 = buffer, mainline points it at
+   `dpb_frames[0].aux_addr`). Check whether B frames need the aux of the *colocated_ref_idx* frame
+   (per slice), not dpb_frames[0].
+3. **SXE 0x40 bits 17-20** = picture structure per frame; stock bits 22/23/24-25 also derive from
+   field/entropy flags. Mainline T124 keeps only BIT(21)|BIT(26)|(0xc<<13); stock sets bits 15+16
+   (0x18000) and bit 12 conditionally. Low risk to align these with `fn_060c8`/`fn_01a94`.
+4. Only after B-frames: output ordering (one duplicated frame at the start), padded plane sizes,
+   block-linear V4L2 format + modifier, then the zero-copy player path.
 
-1. In `drivers/media/platform/nvidia/tegra-vde/h264.c`, `tegra_vde_setup_hw_context()`, right after
-   the `tegra_vde_writel(vde, value, vde->sxe, 0x4C);` line, add:
-   ```c
-   if (vde->soc->t124_layout && (t124_mask & BIT(28))) {
-   	/* stock fn_04828: per-slice SXE setup */
-   	tegra_vde_writel(vde, ctx->num_ref_idx_l0_active_minus1 << 22 |
-   			 ctx->num_ref_idx_l1_active_minus1 << 27, vde->sxe, 0x60);
-   	tegra_vde_writel(vde, 0x00010000, vde->sxe, 0x64);
-   	tegra_vde_writel(vde, 0x04407500, vde->sxe, 0xDC);
-   	tegra_vde_writel(vde, 0x00000000, vde->sxe, 0x50);
-   }
-   ```
-   Also try each register alone (split into bits 28/29/30 if the combined test changes anything).
-2. Rebuild the module, strip it and copy it to the tablet (commands above).
-3. Run (base mask 1361920 + bit 28 = 1361920 + 268435456 = **269797376**):
-   ```
-   tools/vde-test.sh 1361920   m_wp m_b v720:12
-   tools/vde-test.sh 269797376 m_wp m_b v720:12
-   ```
-4. Success criterion: `v720_12` luma score rises from 23 % (frames 3-12 at 0 %). Watch `faults=` /
-   `errs=` too: a hang or MBE timeout means the value is wrong. If the tablet stops answering, wait up to
-   5 min (watchdog), then `tools/pmos/pmboot.sh <vdetest img>`.
-
-### Test B: B-frame bits 22 / 23 (not yet run)
-
-```
-tools/vde-test.sh $((1361920 + (1<<22)))            m_b
-tools/vde-test.sh $((1361920 + (1<<23)))            m_b
-tools/vde-test.sh $((1361920 + (1<<22) + (1<<23))) m_b
-```
-Baseline `m_b`: Y 91.81 % (min 81.34), first imperfect frame 4. Bit 22 = MBE reg 2/3 = co-located
-buffer of RefPicList1[0]; bit 23 = MBE final command `0xfc000011` (stock value for non-High streams).
-
-### If Test A gives nothing (in order)
-
-1. REA: find where the parsed weights land. Local memory: MCE base 0x1c20 (`MCE 0x10 = 0x1c201c20`).
-   Search the microcode for reads of BSE-V/MCE registers after slice decode, or writes to 0x60032400-
-   0x600324ff in `fn_04828` / `fn_01ff0` / `fn_01754`.
-2. Check whether `libnvmm` (host side, in `/tmp/n9build/vendor-video/lib*`) parses pred_weight_table and
-   sends weights to the AVP: REA it for "weight"/"luma_log2" strings or a loop over 32 refs x (w, o).
-   If the host supplies weights, tegra-vde must use the V4L2 `PRED_WEIGHTS` control and copy the
-   weights into local memory with a BSE-V copy command (see `tegra_vde_t124_bsev_lists()`).
-3. After every cycle: update this file and notes/vde.md (hypothesis, result, dead ends), export the
-   kernel diff to `patches/candidates/vde/`, commit and push the nexus9 repo.
+Test how-to (unchanged): edit h264.c, rebuild the module, scp it, `tools/vde-test.sh <mask> m_b`.
+After every cycle: update this file and notes/vde.md, export the kernel diff to
+`patches/candidates/vde/`, commit and push the nexus9 repo.
 
 ## Other open items (see notes/gpu.md)
 

@@ -106,9 +106,46 @@ Patches: `patches/candidates/vde/` (3 WIP commits in linux-flounder, last 5a4d2f
   m_wp errors are small (+-1..3), so x264's weights there are near identity.
 - Tools: tools/vde-test.sh MASK clip[:frames] + tools/vde-score.py (per-plane scores).
 
+## 2026-10-24 22:40 — explicit WP: parsed, not applied (controlled proof); per-slice SXE and bit 22/23 dead ends
+
+Test A from the handoff (per-slice SXE 0x60/0x64/0xdc/0x50) — **dead end**. Kernel now has bits 28-31
+for the four registers. Each alone: byte-identical `m_b` (Y 91.81, first<100: 4). All four together:
+SMMU faults, `m_b` 5.83 %, `m_wp` no output. Nothing on `m_wp`/`v720:12` either.
+Test B — bit 22 (MBE reg 2/3 co-located): no effect (`m_b` 91.81). Bit 23 (MBE final 0xfc000011):
+**worse** (87.89 %, 5 faults); bit22+23 88.27 %. Dead ends.
+
+**Controlled WP proof** (new clips `wp2.mp4` / `wp0.mp4` on the tablet; same testsrc2 fade-in, x264
+Main, CAVLC, bframes=0, keyint 30, qp 20; only `weightp=2` vs `0` differs):
+
+| clip | frames | Y exact |
+|------|--------|---------|
+| wp0 (no WP) | 60 | **100.00 %** |
+| wp2 (WP) | 60 | 48.82 % (first<100: 1) |
+
+So WP is the sole variable. Dropping the SXE WP flag bit (mask 1329152) breaks WP streams outright
+(`m_wp` no output, `v720` decodes 1 frame), i.e. **the hardware does parse the weight table** — but the
+weights are not applied.
+
+REA of the vendor stack (`libnvmmlite_video.so`, `vid_ucode_fn.elf`):
+- Host parser `FUN_000478dc`: weights go into the slice struct at +0x9c (luma_log2_denom), +0xa0
+  (chroma denom), packed per-ref bytes from +0xa4 (luma, Cb, Cr; stride 3, 16 refs; list1 +0xd5).
+- Microcode host interface (`fn_059a4`, `fn_060c8`, `fn_04828`): every host field read is accounted for
+  (width/height, slice flags at +0x1e..0x2f, ref lists at +0xb4/+0xd4, ref-marking ops at +0x9c, scaling
+  lists at +0x19c). **No weight table is read anywhere, and no `fn_00868` copy writes one to local
+  memory.** The 20 MBE 0xA-reg values come from `0xa1`/`0xa5`/`0xa9` commands only.
+- Authoritative T124 SXE 0x48 (from `fn_01a94`, the slice setup; matches what we set): bits 0-4
+  chroma_qp_offset, 5-9 num_ref_idx_l0, 10-14 l1, 15 flag, **17 weighted_pred, 18-19 weighted_bipred_idc**,
+  20 entropy, 21 flag, 22-26 second_chroma_qp_offset. SXE 0x40 stock: bits 0-4 log2_max_frame_num,
+  5-6 poc_type, 7-11 log2_max_poc, 15+16 constant (our bit 13 uses `0xc<<13` = bits 14/15 — likely
+  should be 0x18000; untested).
+- Conclusion: the VDE does not apply explicit weights; there is no place in the stock microcode/params
+  where weights could be handed to the MBE. Corroboration: libvdpau-tegra (same VDE author) refuses
+  explicit WP outright ("Explicit weighted prediction unimplemented").
+
 ## Next
 
-0. Weighted prediction application (find the slice-level microcode / MCE registers), then B-frame drift
+0. ~~Weighted prediction~~ — hardware does not apply it (2026-10-24). Accept as a limitation; only
+   fades/crossfades (x264 weightp, YouTube) are affected. Then **B-frame drift**
    (direct/co-located), output ordering, V4L2 format + modifier for the block-linear output, padded plane
    sizes, then a GStreamer/mpv playback path.
 0b. B-frames (direct/co-located: MBE reg 8/9 buffer layout 0x40 B/MB per frame index, SXE 0x40 bits 22-23),

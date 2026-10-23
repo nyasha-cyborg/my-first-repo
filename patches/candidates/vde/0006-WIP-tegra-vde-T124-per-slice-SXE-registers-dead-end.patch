@@ -1,0 +1,50 @@
+From 272d5325312d9ab6fd19a73c77ee9c5b6e3d1f71 Mon Sep 17 00:00:00 2001
+From: nyasha <nmushambi@proton.me>
+Date: Sat, 24 Oct 2026 10:57:09 +1300
+Subject: [PATCH] =?UTF-8?q?WIP=20tegra-vde=20T124:=20per-slice=20SXE=200x6?=
+ =?UTF-8?q?0/0x64/0xdc/0x50=20(t124=5Fmask=20bits=2028-31)=20=E2=80=94=20d?=
+ =?UTF-8?q?ead=20end?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Stock fn_04828 writes these per slice. Individually they are byte-identical
+no-ops; together they fault. Kept behind bits 28-31 for reproducibility.
+
+Co-Authored-By: Claude Code <noreply@anthropic.com>
+---
+ drivers/media/platform/nvidia/tegra-vde/h264.c | 18 ++++++++++++++++++
+ 1 file changed, 18 insertions(+)
+
+diff --git a/drivers/media/platform/nvidia/tegra-vde/h264.c b/drivers/media/platform/nvidia/tegra-vde/h264.c
+index e1716dd9f..094b44f99 100644
+--- a/drivers/media/platform/nvidia/tegra-vde/h264.c
++++ b/drivers/media/platform/nvidia/tegra-vde/h264.c
+@@ -568,6 +568,24 @@ static int tegra_vde_setup_hw_context(struct tegra_vde *vde,
+ 
+ 	tegra_vde_writel(vde, value, vde->sxe, 0x4C);
+ 
++	if (vde->soc->t124_layout) {
++		/*
++		 * Stock AVP microcode fn_04828: per-slice SXE registers that
++		 * mainline never writes. Bits 28-31 split them for testing
++		 * (28 = 0x60 ref counts, 29 = 0x64, 30 = 0xdc, 31 = 0x50).
++		 */
++		if (t124_mask & BIT(28))
++			tegra_vde_writel(vde, ctx->num_ref_idx_l0_active_minus1 << 22 |
++					 ctx->num_ref_idx_l1_active_minus1 << 27,
++					 vde->sxe, 0x60);
++		if (t124_mask & BIT(29))
++			tegra_vde_writel(vde, 0x00010000, vde->sxe, 0x64);
++		if (t124_mask & BIT(30))
++			tegra_vde_writel(vde, 0x04407500, vde->sxe, 0xDC);
++		if (t124_mask & BIT(31))
++			tegra_vde_writel(vde, 0x00000000, vde->sxe, 0x50);
++	}
++
+ 	value = 0x03800000;
+ 	value |= bitstream_data_size & GENMASK(19, 15);
+ 
+-- 
+2.56.0
+
