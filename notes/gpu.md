@@ -122,3 +122,21 @@
   carries XM2DQSPADCTRL2, ZCAL_INTERVAL, MRS_WAIT_CNT as named properties; vendor entries 146-164 are MC regs).
   Named cfg/cal values equal too. **The timing data is not the difference**; if H3 holds, look at the mainline
   tegra124-emc switch sequence (vs vendor tegra12_emc, REA) or keep EMC fixed.
+
+## 2026-10-23 22:55 — H3 confirmed: EMC DVFS corrupts memory; DRAM fixed at 924 MHz = 8/8 clean boots
+
+- `gpu-boot-test.sh` with `initcall_blacklist=tegra_devfreq_driver_init` (EMC stays at the bootloader's 924 MHz,
+  actmon absent), 8 boots 22:20-22:53, each checked ~190 s after boot (the old hangs hit at 1-2 min):
+  **8/8 gr=ok, oops=0, phoc up**, gpu 612 MHz, smps45 identical every boot (11 02 c2 2f). Before, about half the
+  boots had a GR init failure or an oops/early hang. PMIC `-121` bursts (33-92) on every boot, harmless here.
+- Now the default: build.sh puts the blacklist on the pmOS cmdline. Cost: DRAM never drops below 924 MHz
+  (more idle power); gain: GPU/display bandwidth no longer drops to 102-204 MHz (was likely part of "slow").
+- Stock EMC tables = ours (above), so the bug is in the mainline Tegra132 EMC switch path (tegra124-emc
+  driver used for T132, or the T132 CAR emc clock). Proper fix later: REA vendor tegra12_emc_set_rate/
+  emc_set_clock vs mainline tegra124-emc, then re-enable scaling.
+- The REA GR-reset change (`patches/candidates/gk20a-gr-vendor-reset.patch`, stashed in linux-flounder) was
+  never needed for this; GR failures were memory corruption. Kept as an untested candidate only.
+- WiFi aside: once (22:15) the router stopped forwarding PC<->tablet traffic while both reached the gateway;
+  the tablet itself was fine (serial). Test scripts fall back to the serial console.
+- Lock screen at boot under autologin: phosh locks at startup unless `GDMSESSION` is set (libphosh
+  "started by display manager" check); greetd initial_session now runs `env GDMSESSION=phosh phosh-session`.
