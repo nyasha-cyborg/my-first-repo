@@ -42,3 +42,23 @@
   phoc: `Creating GLES2 renderer, OpenGL ES 3.2 Mesa 26.1.6, GL vendor: NVIDIA`; greetd + phrog start on the GPU.
 - Not built: desktop GL `libGL.so` (glx disabled; apps needing desktop GL fall back to the system libGL), llvmpipe.
 - Next: Phosh session on the GPU (user login), Firefox/WebRender + mpv video tests.
+
+## 2026-10-23 14:20 — "glitchy" + hang: GK20A DVFS PLL slide timeout (REA: vendor slide identical)
+
+- User: Phosh on the GPU is glitchy. Then the tablet died (watchdog reset). Last kernel lines (live kmsg stream):
+  `WARNING ... pc : gk20a_pllg_slide+0x184 [nouveau]` x0 = -110, `<- gk20a_clk_prog <- nvkm_pstate_work`:
+  the GPC PLL dynamic ramp to a new NDIV did not report DYNRAMP_DONE within 500 us.
+- Why it reclocks: `gk20a_pmu_init` arms a 100 ms load-driven DVFS alarm (`nvkm_clk_astate`); on GK20A the clk
+  `func->init` path returns before the generic `pstate = -1` reset, so the loop really programs states (there is no
+  stock knob to stop it).
+- REA (stock Android kernel, `tools/kallsyms-fix.py` rebuilt the hidden kallsyms: 71795/71795; window ELF via
+  image2elf): vendor `clk_slide_gpc_pll` = same sequence as mainline (STEPA 0x2b / STEPB 0x0b — vendor writes them
+  on every slide, mainline once at init — slowdown bit 22, NDIV, DYNRAMP bit 31, poll 0x1328a0 bit 24 for 500 x
+  1 us, -110 on timeout). Vendor `gpu_cvb_dvfs_table` (Tegra132) = mainline `gk20a_cvb_coef` for 72..852 MHz
+  (vendor adds 900..1008), header max 1200 mV, speedo scale 100, voltage scale 1000. Vendor DT `smps457` (vdd-gpu):
+  0.7-1.4 V, init 1.0 V, boot-on, no ramp delay — same as ours. So neither the slide code nor the voltages differ;
+  the difference is how often mainline reclocks (every 100 ms, PLL slide + Palmas I2C voltage change).
+- Fix: kernel option `NvGk20aDvfs=0` (linux-flounder 36a7c2ac9, series 0034) + `NvClkMode=8` (pstate id = index+1;
+  8 = 540 MHz) on the pmOS cmdline: one slide at init, none afterwards.
+- Open: whether STEPA/STEPB must be rewritten before every slide after GPU rail-gating (vendor does it), which
+  would allow DVFS again; higher pinned clocks.
