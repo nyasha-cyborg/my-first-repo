@@ -1,0 +1,41 @@
+From 36a7c2ac922a2d954ef2af04c8383e705d0c4d2a Mon Sep 17 00:00:00 2001
+From: nyasha <nmushambi@proton.me>
+Date: Fri, 23 Oct 2026 14:12:27 +1300
+Subject: [PATCH] drm/nouveau/pmu/gk20a: allow disabling DVFS with
+ NvGk20aDvfs=0
+
+On the Nexus 9 (Tegra132) the 100 ms load-driven DVFS loop reprograms the
+GPC PLL constantly; a dynamic-ramp slide timed out (gk20a_pllg_slide
+-ETIMEDOUT from nvkm_pstate_work) and the SoC hung shortly after. Let users
+turn the loop off and pin a state with NvClkMode instead.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/gpu/drm/nouveau/nvkm/subdev/pmu/gk20a.c | 11 ++++++++++-
+ 1 file changed, 10 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/nouveau/nvkm/subdev/pmu/gk20a.c b/drivers/gpu/drm/nouveau/nvkm/subdev/pmu/gk20a.c
+index b5e52b35f..dda8b4bfa 100644
+--- a/drivers/gpu/drm/nouveau/nvkm/subdev/pmu/gk20a.c
++++ b/drivers/gpu/drm/nouveau/nvkm/subdev/pmu/gk20a.c
+@@ -183,7 +183,16 @@ gk20a_pmu_init(struct nvkm_pmu *pmu)
+ 	nvkm_falcon_wr32(falcon, 0x50c + (BUSY_SLOT * 0x10), 0x00000002);
+ 	nvkm_falcon_wr32(falcon, 0x50c + (CLK_SLOT * 0x10), 0x00000003);
+ 
+-	nvkm_timer_alarm(device->timer, 2000000000, &gpmu->alarm);
++	/*
++	 * NvGk20aDvfs=0 disables the load-driven reclocking (pin a state with
++	 * NvClkMode instead). On the Nexus 9 (Tegra132) the 100 ms DVFS loop's
++	 * GPC PLL slide timed out (-ETIMEDOUT in gk20a_pllg_slide) and the SoC
++	 * hung; the vendor kernel slides the same way but far less often.
++	 */
++	if (nvkm_boolopt(device->cfgopt, "NvGk20aDvfs", true))
++		nvkm_timer_alarm(device->timer, 2000000000, &gpmu->alarm);
++	else
++		nvkm_debug(subdev, "DVFS disabled (NvGk20aDvfs=0)\n");
+ 	return 0;
+ }
+ 
+-- 
+2.56.0
+
