@@ -1,0 +1,33 @@
+From 178dd2c295d4c54cf114eadc2641ad7e121c3d80 Mon Sep 17 00:00:00 2001
+From: nyasha <nmushambi@proton.me>
+Date: Fri, 23 Oct 2026 18:45:20 +1300
+Subject: [PATCH] arm64: tegra132: add the GPU throttle level to the heavy
+ throttle
+
+soctherm_throt_cfg_parse() requires nvidia,gpu-throt-level and rejects the
+whole throttle config without it ('throttle-cfg: heavy: no throt prop or
+invalid prop'), so on Tegra132 boards nothing ever throttled and the only
+thermal protection left was the hardware thermtrip power cut. On the Nexus 9
+that cut power under sustained CPU+GPU load (boot reason cold_boot).
+Tegra124 already sets both levels.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ arch/arm64/boot/dts/nvidia/tegra132.dtsi | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/arch/arm64/boot/dts/nvidia/tegra132.dtsi b/arch/arm64/boot/dts/nvidia/tegra132.dtsi
+index cd6aacb9f..2c1a7a915 100644
+--- a/arch/arm64/boot/dts/nvidia/tegra132.dtsi
++++ b/arch/arm64/boot/dts/nvidia/tegra132.dtsi
+@@ -959,6 +959,7 @@ throttle-cfgs {
+ 			throttle_heavy: heavy {
+ 				nvidia,priority = <100>;
+ 				nvidia,cpu-throt-level = <TEGRA_SOCTHERM_THROT_LEVEL_HIGH>;
++				nvidia,gpu-throt-level = <TEGRA_SOCTHERM_THROT_LEVEL_HIGH>;
+ 
+ 				#cooling-cells = <2>;
+ 			};
+-- 
+2.56.0
+

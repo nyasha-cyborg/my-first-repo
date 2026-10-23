@@ -145,3 +145,15 @@ Next: backlight-only off/on (bl_power) vs DPMS; then drop the simple-framebuffer
 - 18:35 kernel gae4187faf21b (GK20A slide fallback, series 0038): autologin session at boot, keep_power=Y, GPU Mesa +
   WLR_DRM_NO_MODIFIERS=1 (linear buffers: user "a bit more stable" vs block-linear), no PLL slide warnings yet.
   CPU: schedutil works, 204 MHz..2.499 GHz on mainline; capped at 2.295 GHz (stock max) via local.d n9-cpucap.
+
+## 2026-10-23 18:40 — "completely off" = no thermal throttling (thermtrip power cut), not the battery
+
+Usable but slow + bright flashes, then the tablet went fully off. Android afterwards: battery 97 %, boot reason
+cold_boot (power lost, not a watchdog). Last kmsg.log entry 211 s, minutes before the user stopped — an instant cut.
+Boot log: `tegra_soctherm: throttle-cfg: heavy: no throt prop or invalid prop` + `thermtrip: will shut down when
+cpu reaches 95000 mC`. soctherm_throt_cfg_parse() needs nvidia,gpu-throt-level; tegra132.dtsi's heavy throttle
+lacked it -> the whole throttle rejected -> the flounder trips (passive 83, hot 93, critical 95 C) had no working
+cooling device -> Denver at up to 2.5 GHz + GPU heated straight into the 95 C hardware power cut.
+REA vendor flounder_soctherm_data: tegra-heavy (hw throttle) at 90 C, tegra-shutdown at 99 C.
+Fix: series 0039 adds nvidia,gpu-throt-level (kernel 4fd...); CPU capped at 2.295 GHz (stock); n9-health now logs
+thermal zone temperatures and the CPU clock every 30 s.

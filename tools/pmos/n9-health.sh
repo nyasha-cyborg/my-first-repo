@@ -24,7 +24,9 @@ while true; do
 	if [ $((n % 3)) = 0 ]; then
 		m=$(awk '/^(MemAvailable|SwapFree|CmaFree):/{printf "%s %dM ", $1, $2/1024}' /proc/meminfo)
 		top=$(ps -o rss,comm 2>/dev/null | sort -rn | head -3 | awk '{printf "%s:%dM ", $2, $1/1024}')
-		log "mem $m| load $(cut -d' ' -f1-3 /proc/loadavg) | top $top"
+		t=$(for z in /sys/class/thermal/thermal_zone*; do [ -r $z/temp ] && printf '%s:%d ' "$(cat $z/type | cut -d- -f1)" $(( $(cat $z/temp) / 1000 )); done)
+		f=$(( $(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq 2>/dev/null || echo 0) / 1000 ))
+		log "mem $m| load $(cut -d' ' -f1-3 /proc/loadavg) | temp $t| cpu ${f}MHz | top $top"
 	fi
 	sleep 10
 done
