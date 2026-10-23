@@ -133,3 +133,7 @@ death in the previous session was the same burst. Reproducible trigger = display
 - No ftrace regulator events in this kernel (tracefs absent) -> n9-regtrace does nothing; regulator_summary
   snapshots instead.
 Next: backlight-only off/on (bl_power) vs DPMS; then drop the simple-framebuffer supplies in the DT.
+- 18:10 remote DPMS control works through Phosh's D-Bus (`org.gnome.Mutter.DisplayConfig` PowerSaveMode 3/0 on the
+  user's session bus; `wlopm` is refused by phoc). 3 cycles: every DPMS **off** = +20..41 PMIC errors, every **on** = 0.
+  Backlight-only off/on (bl_power 4/0) = 0 errors. Waking via the power button = 0 errors. Trigger = display
+  power-down path. Next: `panel_jdi_lpm089a128a.keep_power=1` (series 0037) keeps panel rails + DC-DC on at blank.

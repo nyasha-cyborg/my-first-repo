@@ -1,0 +1,93 @@
+From da5b5a71ad8957f64884cfad845bfbda666c22a1 Mon Sep 17 00:00:00 2001
+From: nyasha <nmushambi@proton.me>
+Date: Fri, 23 Oct 2026 18:05:45 +1300
+Subject: [PATCH] drm/panel: jdi-lpm089a128a: keep_power debug switch
+
+Keep the panel rails and DC-DC on across unprepare (display-off and sleep
+commands only) when panel_jdi_lpm089a128a.keep_power=1, tracking the power
+state so regulator counts stay balanced. Debug aid for the Nexus 9, where
+every DPMS off makes the Palmas PMIC stop answering on I2C.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/gpu/drm/panel/panel-jdi-lpm089a128a.c | 21 +++++++++++++++++++
+ 1 file changed, 21 insertions(+)
+
+diff --git a/drivers/gpu/drm/panel/panel-jdi-lpm089a128a.c b/drivers/gpu/drm/panel/panel-jdi-lpm089a128a.c
+index ca35c09f4..0ba3c617f 100644
+--- a/drivers/gpu/drm/panel/panel-jdi-lpm089a128a.c
++++ b/drivers/gpu/drm/panel/panel-jdi-lpm089a128a.c
+@@ -51,6 +51,16 @@ static const u8 jdi_ce_table[] = {
+ /* Delay between panel power-up and the first command, per the downstream order. */
+ #define JDI_POWER_UP_DELAY_MS	15
+ 
++/*
++ * Debug: keep the panel's rails and DC-DC on across unprepare (display-off and
++ * sleep commands only). On the Nexus 9 every DPMS off makes the Palmas PMIC
++ * stop answering on I2C for ~10 ms ("Failed to read IRQ status: -121"); this
++ * tells whether the panel power-down triggers it.
++ */
++static bool keep_power;
++module_param(keep_power, bool, 0644);
++MODULE_PARM_DESC(keep_power, "keep panel rails and DC-DC on while blanked (debug)");
++
+ struct jdi_panel {
+ 	struct drm_panel base;
+ 	struct mipi_dsi_device *link1;
+@@ -72,6 +82,7 @@ struct jdi_panel {
+ 	 * its DCS writes must not reach an unpowered panel.
+ 	 */
+ 	bool prepared;
++	bool powered;	/* iovdd/avdd enabled and dcdc_en high */
+ 
+ 	const struct drm_display_mode *mode;
+ 
+@@ -143,6 +154,9 @@ static int jdi_panel_unprepare(struct drm_panel *panel)
+ 	 */
+ 	err = dsi_ctx.accum_err;
+ 
++	if (keep_power)
++		return err;
++
+ 	/* Downstream power-down order, with its delays. */
+ 	gpiod_set_value(jdi->reset_gpio, 0);
+ 	msleep(1);
+@@ -151,6 +165,7 @@ static int jdi_panel_unprepare(struct drm_panel *panel)
+ 	regulator_disable(jdi->avdd);
+ 	regulator_disable(jdi->iovdd);
+ 	msleep(10);
++	jdi->powered = false;
+ 
+ 	return err;
+ }
+@@ -170,6 +185,9 @@ static int jdi_panel_prepare(struct drm_panel *panel)
+ 	jdi->link2->mode_flags |= MIPI_DSI_MODE_LPM;
+ 
+ 	/* Power-up order and delays as the downstream driver has them. */
++	if (jdi->powered)
++		goto powered;
++
+ 	err = regulator_enable(jdi->iovdd);
+ 	if (err < 0) {
+ 		dev_err(panel->dev, "failed to enable iovdd: %d\n", err);
+@@ -188,7 +206,9 @@ static int jdi_panel_prepare(struct drm_panel *panel)
+ 	gpiod_set_value(jdi->dcdc_en_gpio, 1);
+ 	usleep_range(JDI_POWER_UP_DELAY_MS * 1000,
+ 		     JDI_POWER_UP_DELAY_MS * 1000 + 500);
++	jdi->powered = true;
+ 
++powered:
+ 	/*
+ 	 * Reset is active high as the device tree declares it, but the panel
+ 	 * must actually be pulsed: driving it high without first asserting it
+@@ -263,6 +283,7 @@ static int jdi_panel_prepare(struct drm_panel *panel)
+ 	regulator_disable(jdi->avdd);
+ iovdd_off:
+ 	regulator_disable(jdi->iovdd);
++	jdi->powered = false;
+ 
+ 	return err;
+ }
+-- 
+2.56.0
+
