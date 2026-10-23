@@ -1,0 +1,32 @@
+From 440253caf084413d42d143f314a0240edd6b2920 Mon Sep 17 00:00:00 2001
+From: nyasha <nmushambi@proton.me>
+Date: Fri, 23 Oct 2026 14:28:18 +1300
+Subject: [PATCH] arm64: tegra132: put the GK20A behind the SMMU
+
+Tegra124 declares iommus = <&mc TEGRA_SWGROUP_GPU> for the GPU; Tegra132 has
+the same memory controller and SMMU but its GPU node lacked it, so nouveau
+fell back to physically contiguous allocations from a small CMA pool. On the
+Nexus 9 a full Phosh session showed graphics corruption and then hung.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ arch/arm64/boot/dts/nvidia/tegra132.dtsi | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/nvidia/tegra132.dtsi b/arch/arm64/boot/dts/nvidia/tegra132.dtsi
+index 56c53adac..cd6aacb9f 100644
+--- a/arch/arm64/boot/dts/nvidia/tegra132.dtsi
++++ b/arch/arm64/boot/dts/nvidia/tegra132.dtsi
+@@ -240,6 +240,9 @@ gpu@57000000 {
+ 		clock-names = "gpu", "pwr";
+ 		resets = <&tegra_car 184>;
+ 		reset-names = "gpu";
++
++		iommus = <&mc TEGRA_SWGROUP_GPU>;
++
+ 		status = "disabled";
+ 	};
+ 
+-- 
+2.56.0
+
