@@ -14,9 +14,14 @@ DEV = next((a for a in sys.argv[1:] if a.startswith("/dev/")), "/dev/cdc-wdm0")
 txn = [0]
 
 
+SSH = os.environ.get("N9SSH")          # e.g. N9SSH=root@192.168.1.109 (pmOS); default: serial console via n9sh
+QMIRAW = os.environ.get("QMIRAW", "/tmp/qmiraw")
+
+
 def run(frame, want):
-    out = subprocess.run([os.path.join(HERE, "n9sh.sh"), "/tmp/qmiraw %s %s %d; echo flush" % (DEV, frame.hex(), want), "25"],
-                         capture_output=True, text=True).stdout
+    cmd = "%s %s %s %d; echo flush" % (QMIRAW, DEV, frame.hex(), want)
+    argv = ["ssh", "-o", "BatchMode=yes", SSH, cmd] if SSH else [os.path.join(HERE, "n9sh.sh"), cmd, "25"]
+    out = subprocess.run(argv, capture_output=True, text=True).stdout
     return [bytes.fromhex(l.strip()) for l in out.splitlines() if l.strip() and all(c in "0123456789abcdef" for c in l.strip())]
 
 
