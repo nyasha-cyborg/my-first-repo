@@ -1,0 +1,58 @@
+From ae4187faf21bcb843c39cd4595122e2885608cee Mon Sep 17 00:00:00 2001
+From: nyasha <nmushambi@proton.me>
+Date: Fri, 23 Oct 2026 18:24:39 +1300
+Subject: [PATCH] drm/nouveau/clk/gk20a: reprogram without a slide when the GPC
+ PLL ramp times out
+
+A timed-out dynamic-ramp slide left the GPC PLL part-way through a ramp
+(gk20a_pllg_slide -ETIMEDOUT, then rendering glitches on the Nexus 9).
+The vendor clk_program_gpc_pll falls back to a full reprogram of the
+target coefficients without a slide; do the same.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ .../gpu/drm/nouveau/nvkm/subdev/clk/gk20a.c   | 21 ++++++++++++++++++-
+ 1 file changed, 20 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/nouveau/nvkm/subdev/clk/gk20a.c b/drivers/gpu/drm/nouveau/nvkm/subdev/clk/gk20a.c
+index 65f5d0f1f..e08604f61 100644
+--- a/drivers/gpu/drm/nouveau/nvkm/subdev/clk/gk20a.c
++++ b/drivers/gpu/drm/nouveau/nvkm/subdev/clk/gk20a.c
+@@ -333,7 +333,7 @@ gk20a_pllg_program_mnp(struct gk20a_clk *clk, const struct gk20a_pll *pll)
+ }
+ 
+ static int
+-gk20a_pllg_program_mnp_slide(struct gk20a_clk *clk, const struct gk20a_pll *pll)
++gk20a_pllg_try_program_mnp_slide(struct gk20a_clk *clk, const struct gk20a_pll *pll)
+ {
+ 	struct gk20a_pll cur_pll;
+ 	int ret;
+@@ -363,6 +363,25 @@ gk20a_pllg_program_mnp_slide(struct gk20a_clk *clk, const struct gk20a_pll *pll)
+ 	return gk20a_pllg_slide(clk, pll->n);
+ }
+ 
++/*
++ * If a dynamic-ramp slide times out, the PLL is left part-way through a ramp.
++ * The vendor driver (clk_program_gpc_pll) then reprograms the PLL directly to
++ * the target coefficients without a slide; do the same. Seen on the Nexus 9
++ * (Tegra132) as gk20a_pllg_slide -ETIMEDOUT followed by rendering glitches.
++ */
++static int
++gk20a_pllg_program_mnp_slide(struct gk20a_clk *clk, const struct gk20a_pll *pll)
++{
++	int ret = gk20a_pllg_try_program_mnp_slide(clk, pll);
++
++	if (ret == -ETIMEDOUT) {
++		nvkm_warn(&clk->base.subdev,
++			  "GPC PLL slide timed out, reprogramming without a slide\n");
++		ret = gk20a_pllg_program_mnp(clk, pll);
++	}
++	return ret;
++}
++
+ static struct nvkm_pstate
+ gk20a_pstates[] = {
+ 	{
+-- 
+2.56.0
+
