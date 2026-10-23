@@ -1,0 +1,209 @@
+From: n9 port <noreply@localhost>
+Subject: [PATCH] gallium/tegra: fix the wrapper for current gallium (Nexus 9 GPU)
+
+Two crashes made the tegra (renderonly + nouveau) driver unusable:
+
+1. Since pipe_framebuffer_state embeds its surfaces and pipe_context lost
+   create_surface, the wrapper passes its own tegra_resource objects to the
+   GPU driver: set_framebuffer_state forwards fb unchanged and
+   clear_render_target/clear_depth_stencil cast caller-owned pipe_surfaces
+   to tegra_surface. nouveau then reads a tegra_resource as an
+   nv04_resource and segfaults on the first clear:
+     nvc0_validate_fb () nvc0_state_validate.c:177 <- nvc0_clear <- st_Clear
+   Hand the GPU driver copies whose textures are unwrapped.
+
+2. The wrapper installs every forwarding hook unconditionally, so state
+   trackers think e.g. set_device_reset_callback exists; nouveau does not
+   implement it and every robust EGL context (wlroots/phoc) called NULL:
+     0x0 <- st_install_device_reset_callback <- st_api_create_context
+   Drop each forwarding hook the GPU driver does not implement.
+
+Tested on a Nexus 9 (Tegra K1 / GK20A, Mesa 26.1.6): kmscube ~30 fps at
+1536x2048 on the GPU (software ~5 fps), phoc's GLES2 renderer runs
+("GL vendor: NVIDIA"). Mesa main has the same code.
+---
+diff --git a/src/gallium/drivers/tegra/tegra_context.c b/src/gallium/drivers/tegra/tegra_context.c
+index fb800f3..ea9306e 100644
+--- a/src/gallium/drivers/tegra/tegra_context.c
++++ b/src/gallium/drivers/tegra/tegra_context.c
+@@ -23,6 +23,7 @@
+ 
+ #include <inttypes.h>
+ #include <stdlib.h>
++#include <string.h>
+ 
+ #include "util/u_debug.h"
+ #include "util/u_draw.h"
+@@ -496,8 +497,20 @@ tegra_set_framebuffer_state(struct pipe_context *pcontext,
+                             const struct pipe_framebuffer_state *fb)
+ {
+    struct tegra_context *context = to_tegra_context(pcontext);
++   struct pipe_framebuffer_state state;
++   unsigned i;
++
++   /* the GPU driver must only ever see its own resources: unwrap the
++    * embedded colour and depth/stencil surfaces' textures */
++   memcpy(&state, fb, sizeof(state));
++
++   for (i = 0; i < fb->nr_cbufs; i++)
++      state.cbufs[i].texture = tegra_resource_unwrap(fb->cbufs[i].texture);
++
++   state.zsbuf.texture = tegra_resource_unwrap(fb->zsbuf.texture);
++   state.resolve = tegra_resource_unwrap(fb->resolve);
+ 
+-   context->gpu->set_framebuffer_state(context->gpu, fb);
++   context->gpu->set_framebuffer_state(context->gpu, &state);
+ }
+ 
+ static void
+@@ -735,9 +748,13 @@ tegra_clear_render_target(struct pipe_context *pcontext,
+                           bool render_condition)
+ {
+    struct tegra_context *context = to_tegra_context(pcontext);
+-   struct tegra_surface *dst = to_tegra_surface(pdst);
++   /* surfaces are caller-owned since pipe_context lost create_surface:
++    * hand the GPU driver a copy that references its own resource */
++   struct pipe_surface dst = *pdst;
+ 
+-   context->gpu->clear_render_target(context->gpu, dst->gpu, color, dstx,
++   dst.texture = tegra_resource_unwrap(pdst->texture);
++
++   context->gpu->clear_render_target(context->gpu, &dst, color, dstx,
+                                      dsty, width, height, render_condition);
+ }
+ 
+@@ -754,9 +771,13 @@ tegra_clear_depth_stencil(struct pipe_context *pcontext,
+                           bool render_condition)
+ {
+    struct tegra_context *context = to_tegra_context(pcontext);
+-   struct tegra_surface *dst = to_tegra_surface(pdst);
++   /* surfaces are caller-owned since pipe_context lost create_surface:
++    * hand the GPU driver a copy that references its own resource */
++   struct pipe_surface dst = *pdst;
++
++   dst.texture = tegra_resource_unwrap(pdst->texture);
+ 
+-   context->gpu->clear_depth_stencil(context->gpu, dst->gpu, flags, depth,
++   context->gpu->clear_depth_stencil(context->gpu, &dst, flags, depth,
+                                      stencil, dstx, dsty, width, height,
+                                      render_condition);
+ }
+@@ -1356,6 +1377,118 @@ tegra_screen_context_create(struct pipe_screen *pscreen, void *priv,
+    context->base.delete_image_handle = tegra_delete_image_handle;
+    context->base.make_image_handle_resident = tegra_make_image_handle_resident;
+ 
++   /* every hook above only forwards to the GPU driver: drop those it does
++    * not implement, so state trackers see them as unsupported instead of
++    * calling through a NULL pointer (nouveau has no device reset callback,
++    * which crashed every robust EGL context, e.g. wlroots/phoc) */
++#define TEGRA_DROP_UNIMPLEMENTED(hook) \
++   if (!context->gpu->hook) \
++      context->base.hook = NULL
++   TEGRA_DROP_UNIMPLEMENTED(draw_vbo);
++   TEGRA_DROP_UNIMPLEMENTED(render_condition);
++   TEGRA_DROP_UNIMPLEMENTED(create_query);
++   TEGRA_DROP_UNIMPLEMENTED(create_batch_query);
++   TEGRA_DROP_UNIMPLEMENTED(destroy_query);
++   TEGRA_DROP_UNIMPLEMENTED(begin_query);
++   TEGRA_DROP_UNIMPLEMENTED(end_query);
++   TEGRA_DROP_UNIMPLEMENTED(get_query_result);
++   TEGRA_DROP_UNIMPLEMENTED(get_query_result_resource);
++   TEGRA_DROP_UNIMPLEMENTED(set_active_query_state);
++   TEGRA_DROP_UNIMPLEMENTED(create_blend_state);
++   TEGRA_DROP_UNIMPLEMENTED(bind_blend_state);
++   TEGRA_DROP_UNIMPLEMENTED(delete_blend_state);
++   TEGRA_DROP_UNIMPLEMENTED(create_sampler_state);
++   TEGRA_DROP_UNIMPLEMENTED(bind_sampler_states);
++   TEGRA_DROP_UNIMPLEMENTED(delete_sampler_state);
++   TEGRA_DROP_UNIMPLEMENTED(create_rasterizer_state);
++   TEGRA_DROP_UNIMPLEMENTED(bind_rasterizer_state);
++   TEGRA_DROP_UNIMPLEMENTED(delete_rasterizer_state);
++   TEGRA_DROP_UNIMPLEMENTED(create_depth_stencil_alpha_state);
++   TEGRA_DROP_UNIMPLEMENTED(bind_depth_stencil_alpha_state);
++   TEGRA_DROP_UNIMPLEMENTED(delete_depth_stencil_alpha_state);
++   TEGRA_DROP_UNIMPLEMENTED(create_fs_state);
++   TEGRA_DROP_UNIMPLEMENTED(bind_fs_state);
++   TEGRA_DROP_UNIMPLEMENTED(delete_fs_state);
++   TEGRA_DROP_UNIMPLEMENTED(create_vs_state);
++   TEGRA_DROP_UNIMPLEMENTED(bind_vs_state);
++   TEGRA_DROP_UNIMPLEMENTED(delete_vs_state);
++   TEGRA_DROP_UNIMPLEMENTED(create_gs_state);
++   TEGRA_DROP_UNIMPLEMENTED(bind_gs_state);
++   TEGRA_DROP_UNIMPLEMENTED(delete_gs_state);
++   TEGRA_DROP_UNIMPLEMENTED(create_tcs_state);
++   TEGRA_DROP_UNIMPLEMENTED(bind_tcs_state);
++   TEGRA_DROP_UNIMPLEMENTED(delete_tcs_state);
++   TEGRA_DROP_UNIMPLEMENTED(create_tes_state);
++   TEGRA_DROP_UNIMPLEMENTED(bind_tes_state);
++   TEGRA_DROP_UNIMPLEMENTED(delete_tes_state);
++   TEGRA_DROP_UNIMPLEMENTED(create_vertex_elements_state);
++   TEGRA_DROP_UNIMPLEMENTED(bind_vertex_elements_state);
++   TEGRA_DROP_UNIMPLEMENTED(delete_vertex_elements_state);
++   TEGRA_DROP_UNIMPLEMENTED(set_blend_color);
++   TEGRA_DROP_UNIMPLEMENTED(set_stencil_ref);
++   TEGRA_DROP_UNIMPLEMENTED(set_sample_mask);
++   TEGRA_DROP_UNIMPLEMENTED(set_min_samples);
++   TEGRA_DROP_UNIMPLEMENTED(set_clip_state);
++   TEGRA_DROP_UNIMPLEMENTED(set_constant_buffer);
++   TEGRA_DROP_UNIMPLEMENTED(set_framebuffer_state);
++   TEGRA_DROP_UNIMPLEMENTED(set_polygon_stipple);
++   TEGRA_DROP_UNIMPLEMENTED(set_scissor_states);
++   TEGRA_DROP_UNIMPLEMENTED(set_window_rectangles);
++   TEGRA_DROP_UNIMPLEMENTED(set_viewport_states);
++   TEGRA_DROP_UNIMPLEMENTED(set_sampler_views);
++   TEGRA_DROP_UNIMPLEMENTED(set_tess_state);
++   TEGRA_DROP_UNIMPLEMENTED(set_debug_callback);
++   TEGRA_DROP_UNIMPLEMENTED(set_shader_buffers);
++   TEGRA_DROP_UNIMPLEMENTED(set_shader_images);
++   TEGRA_DROP_UNIMPLEMENTED(set_vertex_buffers);
++   TEGRA_DROP_UNIMPLEMENTED(create_stream_output_target);
++   TEGRA_DROP_UNIMPLEMENTED(stream_output_target_destroy);
++   TEGRA_DROP_UNIMPLEMENTED(set_stream_output_targets);
++   TEGRA_DROP_UNIMPLEMENTED(resource_copy_region);
++   TEGRA_DROP_UNIMPLEMENTED(blit);
++   TEGRA_DROP_UNIMPLEMENTED(clear);
++   TEGRA_DROP_UNIMPLEMENTED(clear_render_target);
++   TEGRA_DROP_UNIMPLEMENTED(clear_depth_stencil);
++   TEGRA_DROP_UNIMPLEMENTED(clear_texture);
++   TEGRA_DROP_UNIMPLEMENTED(clear_buffer);
++   TEGRA_DROP_UNIMPLEMENTED(flush);
++   TEGRA_DROP_UNIMPLEMENTED(create_fence_fd);
++   TEGRA_DROP_UNIMPLEMENTED(fence_server_sync);
++   TEGRA_DROP_UNIMPLEMENTED(create_sampler_view);
++   TEGRA_DROP_UNIMPLEMENTED(sampler_view_destroy);
++   TEGRA_DROP_UNIMPLEMENTED(buffer_map);
++   TEGRA_DROP_UNIMPLEMENTED(texture_map);
++   TEGRA_DROP_UNIMPLEMENTED(transfer_flush_region);
++   TEGRA_DROP_UNIMPLEMENTED(buffer_unmap);
++   TEGRA_DROP_UNIMPLEMENTED(texture_unmap);
++   TEGRA_DROP_UNIMPLEMENTED(buffer_subdata);
++   TEGRA_DROP_UNIMPLEMENTED(texture_subdata);
++   TEGRA_DROP_UNIMPLEMENTED(texture_barrier);
++   TEGRA_DROP_UNIMPLEMENTED(memory_barrier);
++   TEGRA_DROP_UNIMPLEMENTED(create_video_codec);
++   TEGRA_DROP_UNIMPLEMENTED(create_video_buffer);
++   TEGRA_DROP_UNIMPLEMENTED(create_compute_state);
++   TEGRA_DROP_UNIMPLEMENTED(bind_compute_state);
++   TEGRA_DROP_UNIMPLEMENTED(delete_compute_state);
++   TEGRA_DROP_UNIMPLEMENTED(set_global_binding);
++   TEGRA_DROP_UNIMPLEMENTED(launch_grid);
++   TEGRA_DROP_UNIMPLEMENTED(get_sample_position);
++   TEGRA_DROP_UNIMPLEMENTED(get_timestamp);
++   TEGRA_DROP_UNIMPLEMENTED(flush_resource);
++   TEGRA_DROP_UNIMPLEMENTED(invalidate_resource);
++   TEGRA_DROP_UNIMPLEMENTED(get_device_reset_status);
++   TEGRA_DROP_UNIMPLEMENTED(set_device_reset_callback);
++   TEGRA_DROP_UNIMPLEMENTED(dump_debug_state);
++   TEGRA_DROP_UNIMPLEMENTED(emit_string_marker);
++   TEGRA_DROP_UNIMPLEMENTED(generate_mipmap);
++   TEGRA_DROP_UNIMPLEMENTED(create_texture_handle);
++   TEGRA_DROP_UNIMPLEMENTED(delete_texture_handle);
++   TEGRA_DROP_UNIMPLEMENTED(make_texture_handle_resident);
++   TEGRA_DROP_UNIMPLEMENTED(create_image_handle);
++   TEGRA_DROP_UNIMPLEMENTED(delete_image_handle);
++   TEGRA_DROP_UNIMPLEMENTED(make_image_handle_resident);
++#undef TEGRA_DROP_UNIMPLEMENTED
++
+    return &context->base;
+ 
+ destroy:
