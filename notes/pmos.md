@@ -77,3 +77,25 @@ Until then everything is tested with `fastboot boot`.
   **the SIM was out of the tray** (UIM card state 2, camped 530-01 limited). User reinserted it 13:40.
 - qmi-probe.py works over SSH on pmOS: `N9SSH=root@192.168.1.109 QMIRAW=/usr/lib/n9-modem/qmiraw`.
 - Open: cause of the session hang (rfkill/BT-WiFi combo suspicion, not proven), the 13:09 early-boot block.
+
+## 2026-10-23 14:00-15:20 — GPU on, still unstable after login; diagnostics hardened (user asleep, tablet stuck)
+
+- GPU path works (patched Mesa, notes/gpu.md): login screen + Phosh home on the GK20A. User: "glitchy" — graphics
+  corruption right after entering the PIN (greeter -> session hand-off), then the tablet dies within minutes.
+- Session hang signature (3x now, software AND GPU rendering): kernel log ends `rfkill: input handler disabled`
+  (gnome-settings-daemon at session start), no oops. Attempts this round: GK20A DVFS off + fixed pstate
+  (series 0034/0035; NvClkMode is refused because allow_reclock=false), GPU behind the SMMU (0036), cma=256M.
+  Corruption remained after the SMMU change (whether the SMMU attach really happened is NOT verified yet).
+- Early-boot stalls (13:09, 14:38): turned out to include my own bug — the new boot ramdisk's e2fsck lacked
+  libeconf (rc 127) and /init dropped to the rescue shell (no watchdog feeding -> reset). Found via the new synced
+  /data/pmos/boot-init.log (readable from Android: `adb root; adb shell cat /data/pmos/boot-init.log`). Fixed:
+  libraries resolved recursively, 126/127 never blocks boot.
+- Autologin (greetd [initial_session], command from phosh.desktop = `phosh-session`): the user still got the PIN pad
+  -> probably the initial session exited at once and greetd fell back to the greeter. Check greetd/phrog logs.
+- 15:05 stuck in "mode B": ping OK, sshd refused, serial dead, screen unstable; busybox watchdog kept feeding -> no
+  reset for >10 min -> needs a power cycle (user asleep). New: n9-health (feeds only while sshd's banner answers and
+  fork/exec works; 30 s health log of memory/load/top processes into the kernel log) — not yet tested.
+- Hypotheses still open: (1) memory exhaustion (services dying first, ping alive) — the health log will show it;
+  (2) radio/rfkill at session start (BCM4354 WiFi/BT combo); (3) GPU writes to wrong memory (corruption).
+- Next (one variable per boot): baseline = software rendering + bluetooth/rfkill services off + n9-health; if
+  stable, add GPU; then bluetooth; check SMMU attach (`ls /sys/kernel/iommu_groups`, dmesg) and autologin logs.
