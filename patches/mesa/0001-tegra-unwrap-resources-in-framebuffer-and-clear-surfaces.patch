@@ -1,0 +1,82 @@
+From: n9 port <noreply@localhost>
+Subject: [PATCH] gallium/tegra: unwrap resources in framebuffer state and clear surfaces
+
+Since pipe_framebuffer_state embeds its surfaces and pipe_context lost
+create_surface, the tegra wrapper passes its own tegra_resource objects
+straight to the GPU driver: set_framebuffer_state forwards fb unchanged,
+and clear_render_target/clear_depth_stencil cast caller-owned
+pipe_surfaces to tegra_surface. nouveau then reads a tegra_resource as an
+nv04_resource and segfaults on the first clear:
+
+  nvc0_validate_fb () nvc0_state_validate.c:177  <- nvc0_clear <- st_Clear
+
+Hand the GPU driver copies whose textures are unwrapped. Tested on a
+Nexus 9 (Tegra K1 / GK20A, Mesa 26.1.6): kmscube renders on the GPU
+(~30 fps at 1536x2048) instead of crashing. Mesa main has the same code.
+---
+diff --git a/src/gallium/drivers/tegra/tegra_context.c b/src/gallium/drivers/tegra/tegra_context.c
+index fb800f3..5904e2a 100644
+--- a/src/gallium/drivers/tegra/tegra_context.c
++++ b/src/gallium/drivers/tegra/tegra_context.c
+@@ -23,6 +23,7 @@
+ 
+ #include <inttypes.h>
+ #include <stdlib.h>
++#include <string.h>
+ 
+ #include "util/u_debug.h"
+ #include "util/u_draw.h"
+@@ -496,8 +497,20 @@ tegra_set_framebuffer_state(struct pipe_context *pcontext,
+                             const struct pipe_framebuffer_state *fb)
+ {
+    struct tegra_context *context = to_tegra_context(pcontext);
++   struct pipe_framebuffer_state state;
++   unsigned i;
++
++   /* the GPU driver must only ever see its own resources: unwrap the
++    * embedded colour and depth/stencil surfaces' textures */
++   memcpy(&state, fb, sizeof(state));
++
++   for (i = 0; i < fb->nr_cbufs; i++)
++      state.cbufs[i].texture = tegra_resource_unwrap(fb->cbufs[i].texture);
+ 
+-   context->gpu->set_framebuffer_state(context->gpu, fb);
++   state.zsbuf.texture = tegra_resource_unwrap(fb->zsbuf.texture);
++   state.resolve = tegra_resource_unwrap(fb->resolve);
++
++   context->gpu->set_framebuffer_state(context->gpu, &state);
+ }
+ 
+ static void
+@@ -735,9 +748,13 @@ tegra_clear_render_target(struct pipe_context *pcontext,
+                           bool render_condition)
+ {
+    struct tegra_context *context = to_tegra_context(pcontext);
+-   struct tegra_surface *dst = to_tegra_surface(pdst);
++   /* surfaces are caller-owned since pipe_context lost create_surface:
++    * hand the GPU driver a copy that references its own resource */
++   struct pipe_surface dst = *pdst;
++
++   dst.texture = tegra_resource_unwrap(pdst->texture);
+ 
+-   context->gpu->clear_render_target(context->gpu, dst->gpu, color, dstx,
++   context->gpu->clear_render_target(context->gpu, &dst, color, dstx,
+                                      dsty, width, height, render_condition);
+ }
+ 
+@@ -754,9 +771,13 @@ tegra_clear_depth_stencil(struct pipe_context *pcontext,
+                           bool render_condition)
+ {
+    struct tegra_context *context = to_tegra_context(pcontext);
+-   struct tegra_surface *dst = to_tegra_surface(pdst);
++   /* surfaces are caller-owned since pipe_context lost create_surface:
++    * hand the GPU driver a copy that references its own resource */
++   struct pipe_surface dst = *pdst;
++
++   dst.texture = tegra_resource_unwrap(pdst->texture);
+ 
+-   context->gpu->clear_depth_stencil(context->gpu, dst->gpu, flags, depth,
++   context->gpu->clear_depth_stencil(context->gpu, &dst, flags, depth,
+                                      stencil, dstx, dsty, width, height,
+                                      render_condition);
+ }

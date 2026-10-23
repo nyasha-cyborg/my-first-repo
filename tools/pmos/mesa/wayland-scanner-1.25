@@ -1,0 +1,4 @@
+#!/bin/sh
+# host wayland-scanner (1.26) presented as 1.25.0 to match the aarch64 sysroot's libwayland for Mesa's version check
+case "$1" in --version|-v) echo "wayland-scanner 1.25.0"; exit 0;; esac
+exec /usr/bin/wayland-scanner "$@"
