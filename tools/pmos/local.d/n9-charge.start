@@ -1,0 +1,24 @@
+#!/bin/sh
+# Charging under mainline (notes/charging.md):
+# - bq24190 probe resets the charger, leaving the input limit at 500 mA even on a wall adapter; the vendor
+#   stack set it per cable type. Raise it to 1.5 A and keep it there; the charger's VINDPM (4.36 V) throttles
+#   input on a source that cannot deliver that much.
+# - Powered-off charging boots this image with androidboot.mode=charger: keep the load minimal so the
+#   battery actually charges (no UI, no modem, lowest CPU clock, backlight off).
+C=/sys/class/power_supply/bq24190-charger/input_current_limit
+LOG=/var/log/n9-charge.log
+if grep -q 'androidboot.mode=charger' /proc/cmdline; then
+	echo "$(date +%T) charger-mode boot: minimal load" >>$LOG
+	rc-service greetd stop >/dev/null 2>&1
+	rc-service n9-modem stop >/dev/null 2>&1
+	for p in /sys/devices/system/cpu/cpufreq/policy*; do echo powersave >$p/scaling_governor; done
+	for b in /sys/class/backlight/*; do echo 0 >$b/brightness; done
+fi
+(
+	while :; do
+		if [ -w $C ] && [ "$(cat $C)" -lt 1500000 ]; then
+			echo 1500000 >$C && echo "$(date +%T) input limit -> $(cat $C)" >>$LOG
+		fi
+		sleep 10
+	done
+) >/dev/null 2>&1 &

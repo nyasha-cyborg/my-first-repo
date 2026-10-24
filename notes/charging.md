@@ -1,5 +1,25 @@
 # Charging under mainline
 
+## 2026-10-24 22:40 — "not charging": charger-mode boots pmOS, and mainline pins the input at 500 mA
+
+- Plugging in the powered-off tablet makes hboot boot LNX with `androidboot.mode=charger` — that is now
+  pmOS, so the full system (software-rendered Phosh, 2.5 GHz, modem) runs instead of Android's charger.
+- `bq24190` probe does a register reset (`bq24190_hw_init` → `bq24190_register_reset`), wiping the chip's
+  own adapter detection; nothing raises IINLIM again (`external_power_changed` has no supplier here), so
+  **IINLIM stays 500 mA even on a wall adapter**. The vendor stack set it per cable type
+  (`htc_battery_bq2419x_input_control`, symbol in the Lineage kernel; not decompiled yet).
+- Result: RepSOC 11.9 % (20:35) → 3.3 % (22:37) across a wall-charger session; current −777 mA peak,
+  −280 mA average on the laptop port; still −300…−380 mA with greetd/modem stopped, powersave 204 MHz,
+  backlight 0 (REG08 0x6c: USB host, fast charge, DPM active).
+- Fix (rootfs, not boot image): `tools/pmos/local.d/n9-charge.start` → `/etc/local.d/` on the tablet.
+  Every boot: keeps `input_current_limit` at 1.5 A (re-checked every 10 s, logs to
+  `/var/log/n9-charge.log`); VINDPM 4.36 V throttles a weak source. Charger-mode boots additionally stop
+  greetd + n9-modem, set powersave and backlight 0.
+- After: **+252…+341 mA into the battery (avg +281 mA) on the laptop port**, RepSOC rising.
+- Open: proper fix in the kernel (DT `input-current-limit` / charger detection from the Tegra USB PHY,
+  as the vendor does); verify a wall adapter actually delivers ~1.5 A; the earlier "DCP replug kills
+  mainline" hang (a laptop→laptop replug survived today at 22:36).
+
 ## 2026-10-24 20:30 — battery % wrong in pmOS: mainline disables the gauge's current sense (root cause found)
 
 Symptom: pmOS shows `capacity=11` while `charge_now/charge_full` = 5890/6124 mAh (96 %).
