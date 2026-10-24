@@ -85,9 +85,11 @@ work on. Kept current by the previous agent at each test cycle (last update: 202
 State: `m_b` is **bit-exact 100 %**. The last mechanism was fixed by parsing
 `ref_pic_list_modification` from the first slice header in the kernel and reordering list0/list1
 (H.264 8.2.4.3). All other test clips are 100 % except:
-- `bpyrnormal`: frames 84-89 wrong (first bad display 84, then 95.6 -> 90.1 %). The clip's second
-  frame_num wrap is around there; needs a per-MB/MV analysis like the m_b one (was decisive).
-- `bdirtemporal`: 98.60 % (temporal direct mode; separate issue, needs co-located MV work).
+- `bpyrnormal`: frames 84-89 wrong (99.47 % overall). **Closed as vendor-equivalent**: REA of
+  libnvmmlite + libnvtvmr + the microcode shows no NVIDIA layer applies ref_pic_list_modification, so
+  stock Android is equally wrong there; our m_b result is better than stock. Do not chase further.
+- `bdirtemporal`: 98.60 % (temporal direct; needs the stock 0x30000000/0xAB/0x91 slice commands and
+  the per-sequence 0x60 B/MB buffer init). Parked behind the playback path.
 - v720/WP clips: expected failures from the weighted-prediction hardware limitation.
 
 Next steps:

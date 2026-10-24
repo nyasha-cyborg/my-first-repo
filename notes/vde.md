@@ -125,12 +125,18 @@ still 99.47); POC in IRAM IDs (bit 21, much worse). t124_mask2: bit0 list1 cmds 
 bit2 force in-use (default on T124), bit3 raw frame_num (dead), bit5 slice-params log, bit6 fmt log,
 bit7 force modification parse, bit8 temporal-direct coloc re-issue (dead).
 
-Open items (2026-10-25): (1) bpyrnormal AU84 still uses the base list order in hardware although the
-driver log shows the correct modified list (`err=0 fn=1 poc=54 ops=0:1,1:0,0:1 list0=1/2/0` = fn
-15/0/14) — no explanation yet; candidate next steps are the 0x30000000/0xAB/0x91 per-slice MBE
-commands or a hardware quirk around the frame_num-0 entry. (2) Temporal direct needs more than the
-coloc A2/A3 address: stock also zeroes a 0x60 B/MB buffer once per sequence and emits per-slice
-0x30000000 (+coloc-valid bit) / 0xAB / 0x91 commands; none are implemented.
+AU84 is now understood and **closed as a vendor-equivalent limitation**. REA of the pulled
+`/vendor/lib/libnvtvmr.so` (the last NVIDIA layer): it is pure marshalling — forwards the caller's
+ordered ref descriptors and the opaque 0x1078-byte slice blob verbatim, reads only PPS/SPS scalars and
+scaling lists, and **never reads ref_pic_list_modification flags/op bytes or weight fields**. Together
+with libnvmmlite (parses but nobody reads) and the microcode (always re-sorts by POC/frame_num), no
+part of the stock stack applies modifications. Stock Android therefore decodes AU84 exactly like our
+pre-fix driver; our 99.47 % is vendor-equivalent and `m_b` 100 % is better than stock. The in-kernel
+parser (patch 0009) is the only correct path — there is no vendor reorder to replicate.
+
+Open: temporal direct (98.60 %). Needs more than the coloc A2/A3 address: stock also zeroes a 0x60
+B/MB buffer once per sequence and emits per-slice 0x30000000 (+coloc-valid bit) / 0xAB / 0x91
+commands; none are implemented. Parked until the playback path works.
 
 ## Playback path plan (2026-10-25, read-only audit)
 
