@@ -179,6 +179,55 @@ Next actions when the tablet is back:
 5. If the diag shell is needed again: start a persistent reader (`cat /dev/ttyACM0 > file`) **before** booting;
    the ~20 s window is too short to attach afterwards.
 
+## 2026-10-24 evening — pmOS reinstalled and flashed to the boot partition (resume here)
+
+Owner wiped the tablet and asked for a clean pmOS install, then for it to be permanent.
+
+Done, in order:
+1. **hboot was lying about the battery.** `fastboot flash boot` failed with `remote: 'battery low'` while hboot also
+   reported `battery-voltage: 4200mV`, `battery-status: good`, `battery-soc-ok: no`. TWRP reported the pack at
+   **97 %** at the same time. The state the bootloader reads the gauge in is unreliable; do not plan around
+   `battery-soc-ok`. This also retires the "dying pack" hypothesis from the previous section.
+2. **`/data` was destroyed by a bad format, then repaired.** I ran `make_ext4fs -s ...`, and `-s` writes a *sparse*
+   image, not a raw filesystem → `EXT4-fs (mmcblk0p31): VFS: Can't find ext4 filesystem` from both TWRP and the
+   installer kernel. Repaired in TWRP over adb:
+   `mke2fs -t ext4 -F -m 0 /dev/block/platform/sdhci-tegra.3/by-name/UDA` (mounts cleanly, 25.1 GB).
+   Never use `make_ext4fs -s` on a block device.
+3. **Partition map confirmed on-device** (`/dev/block/platform/sdhci-tegra.3/by-name/`): `LNX`=boot=mmcblk0p16
+   (32 MiB), `SOS`=recovery=mmcblk0p15 (32 MiB), `APP`=system=mmcblk0p29 (2654 MiB), `VNR`=vendor=mmcblk0p24
+   (256 MiB), `CAC`=cache=mmcblk0p30 (256 MiB), `UDA`=userdata=mmcblk0p31 (26228 MiB), `DTB`=mmcblk0p5.
+4. **Fresh pmOS rootfs built on the tablet**: booted `n9pmos-inst-stripped.img` with `fastboot boot`, brought WiFi
+   up by hand (`wpa_supplicant` was running but no lease → `udhcpc -i wlan0`), ran `/bin/install-rootfs.sh`
+   (867 packages, 1580 MiB, the usual harmless mkinitfs trigger error), then `tools/pmos/finish-rootfs.sh` and
+   `tools/pmos/push-overlay.sh` from the host. Result: `/data/pmos/rootfs.img` 12 GiB, `user`/147147, sshd
+   key-only, WiFi NM profile from the installer's `wpa_supplicant.conf`, seatd present (`/usr/bin/seatd`),
+   greetd/n9-health/n9-modem enabled.
+5. **pmOS boot image flashed permanently to LNX** (`mmcblk0p16`), done by streaming the image over WiFi into the
+   installer's `/tmp` (socat → `nc -l -p 5001`) and `dd if=/tmp/n9pmos-boot.img of=/dev/mmcblk0p16 bs=1M conv=fsync`.
+   Read-back md5 of the first 11286528 bytes equals the host image `dad73ff0d179e78f62c81bd29f4ee2aa`. **Android is
+   no longer the default boot**; its boot image is still in `~/Downloads/nexus9/boot-backup-lineage16.img`
+   (md5 `7296c3e1b14ad7f9abe7eb69ea8a82e2`, restore with `dd ... of=/dev/mmcblk0p16` or `fastboot flash boot`).
+
+Operational lessons from this session (they cost hours):
+- **`fastboot boot` uploads and all fastboot writes drop the device on this unit** (`Write to device failed`,
+  `Status read failed (No such device)`, `error -71`). The USB link is only reliable for fastboot *commands*
+  (getvar, boot of ~11 MB sometimes). Prefer: TWRP or the installer + `adb`/WiFi + `dd`.
+- The installer ramdisk has **no applets on PATH**: run `/bin/busybox --install -s /bin` first, then
+  `export PATH=/bin:/sbin`. `tools/n9sh.sh '<cmd>'` is the host→serial helper; `tools/n9sh.py` needs absolute paths
+  (`/bin/sh: grep: not found` otherwise).
+- The installer does **not** auto-run `install-rootfs.sh`; start it manually, log to `/tmp/inst.log`.
+- `reboot` from the installer works (`reboot -f`); `reboot bootloader` does not.
+
+State at hand-off (19:25): LNX = pmOS boot image, rootfs complete, tablet rebooting into pmOS. Serial gadget
+enumerates (`0525:a4a7`, `/dev/ttyACM1`) but **WiFi (192.168.1.109) and SSH were not up yet** when this was written;
+the serial console printed nothing on attach, so the next step is to attach a reader to `/dev/ttyACM{0,1}` and
+check whether OpenRC reaches NetworkManager, and whether the rootfs `android-data` mountpoint in the boot
+init is doing anything odd.
+
+If pmOS still does not bring the network up: boot `n9pmos-inst-stripped.img` again (fastboot may need several
+tries), `mount /dev/mmcblk0p31 /data`, `mount -o loop /data/pmos/rootfs.img /mnt/pmos`, and inspect
+`/mnt/pmos/etc/NetworkManager/system-connections/wifi-home.nmconnection` and the `finish-rootfs.sh` assumptions.
+
 ## Other open items (see notes/gpu.md)
 
 - Flickering blocks during video (a sync race, not caused by the WC change); backlight unsteady at low
