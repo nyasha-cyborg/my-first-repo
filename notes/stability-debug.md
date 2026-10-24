@@ -637,3 +637,49 @@ unplug/plug, and see whether LEVEL_HIGH without invert is the cleaner fix).
   setting the alarm; trigger a known PMIC event (USB VBUS plug: `palmas_usb_vbus`
   counted 1 so far) and see whether the parent count moves; compare with
   Android's `/proc/interrupts` over a plug/unplug. Deferred by the user.
+
+## 2026-10-24 — host-only re-analysis of the PMIC IRQ burst; note correction
+
+No test cycle (no tablet). Sources: DTS in `~/code/linux-flounder`, mainline
+`palmas.c`/`regmap-irq.c`/`irq-tegra.c`/`pmc.c`, `patches/flounder.dts.orig`,
+this note, `instability-plan.md`.
+
+- **Correction to 2026-10-21 22:45 (line ~546):** the vendor DT *does* have
+  `nvidia,invert-interrupt` — `patches/flounder.dts.orig:1076`. What the REA
+  established is that the vendor *runtime* never sets the bit on this board
+  (`PMC_CNTRL` bit 17 = 0, note 2026-10-21 23:55), so removing the property
+  still matches effective vendor behaviour; the earlier "vendor DT has none"
+  wording is wrong.
+- Current state: `tegra132-flounder.dts:907`
+  `interrupts = <GIC_SPI 86 IRQ_TYPE_NONE>`, PMC node at `:1194` has no
+  `invert-interrupt` (committed; `git log -S` no longer finds it).
+  Root interrupt-parent = `&lic` (`tegra132.dtsi:17`); the LIC forwards the
+  trigger type to the GIC (`irq-tegra.c:212`, `irq_chip_set_type_parent`).
+- **Why the storm is mis-delivery, not VBUS:** all events were
+  `palmas_usb_vbus`; disabling VBUS detection did not stop it; Android with the
+  same measured PMIC/PMC polarity registers is quiet; one PMC bit change
+  stopped it instantly. Rate ~1000/s equals one regmap-irq I2C round trip per
+  interrupt (status page read in the threaded handler, `regmap-irq.c:448`), i.e.
+  the parent level stays asserted and every thread completion re-fires it.
+- **Why the residual `-121` bursts survive:** with `IRQ_TYPE_NONE` no
+  `irq_set_type()` ever runs (`gic_irq_domain_translate()` only warns,
+  `irq-gic.c:1110`, and the ICTLR keeps hboot's config). A failing status read
+  (`regmap-irq.c:372/407`, `-EREMOTEIO` from the PMIC/i2c-tegra during the
+  DFLL/regulator handover or panel-rail off) leaves the line asserted; under an
+  untyped/edge setting the event is then lost (this is the most plausible
+  reason the RTC alarm never fired), under a level setting it re-fires.
+- **Proposed minimal fix (untested):** `IRQ_TYPE_LEVEL_LOW`, no
+  `invert-interrupt` (active-low is what the measured vendor registers say).
+  Do **not** try `LEVEL_HIGH` without invert (instability-plan K2): palmas
+  writes `POLARITY_CTRL.INT_POLARITY=1` for LEVEL_HIGH (`palmas.c:551-557`), so
+  that flips the PMIC to active-high and re-creates the idle-asserted line.
+  Same reasoning explains the n9dbgC (`LEVEL_HIGH` + invert) hang.
+  Patch staged at `/tmp/pmic-boot-fix.patch` (not applied).
+- Test plan: boot check `dmesg | grep -E "invalid type|Irq flag is"` (expect no
+  GIC WARN, `Irq flag is 0x00000008`); `/proc/interrupts` palmas line reports
+  `Level` not `Edge`; sample the palmas/palmas_usb_vbus/i2c-4 counters 3x at 5 s
+  (idle delta 0); palmas RTC alarm +5 s must bump child irq 8; plug/unplug must
+  bump `palmas_usb_vbus` once per transition; DPMS off/on 5x with
+  `grep -c "4-0059"` and compare against the 12-line baseline. If the -121
+  burst now sustains (level retry loop), the follow-up is an opt-in retry/backoff
+  for a failed status read, not a polarity change.
