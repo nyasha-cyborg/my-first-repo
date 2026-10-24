@@ -467,3 +467,21 @@ was "a bit more stable" in earlier notes; flickering blocks under GPU video. Exp
 screenshot the compositor (grim) vs panel; WLR_DRM_NO_MODIFIERS=1; nomodeset; software renderer;
 keep_power=0. The rail/regulator bug (simplefb owning panel supplies, failed LDO5 disable) is still a
 real, separate correctness fix.
+
+## 2026-10-25 21:05 — "screen pulsating" (backlight not steady at any level)
+
+Reported after the gauge-fix flash (LNX = n9gauge-stripped.img; DTB differs from the old image only by
+`maxim,rsns-microohm`). Elimination, owner watching the panel for each step:
+- Charger: VINDPM 4.36 V, then fully stock 500 mA/4.36 V — still pulsing. Gauge driver unloaded — still.
+- CPU pinned (performance governor, no DFLL voltage steps) — still. Brightness 255 (no PWM) — still.
+- Software brightness steady (224, 4 Hz samples); CABC off (0x55=0, 0x53=0x24); DC SmartDimmer off
+  (`DC_DISP_SD_CONTROL` 0x4000, LUTs 0); DSI registers static across samples (no injection, no errors).
+- **Pixels are constant:** DC CRC (`/sys/kernel/debug/dri/0/crtc-0/crc`) on the settled phosh session =
+  `80ecb075` on 30/30 samples over 10 s, same scanout fb. (Earlier "changing CRC" captures were confounded
+  by fbcon's cursor, the greeter fade-in after a greetd restart, and a login — ignore them.)
+- So the display data path is clean; the pulsing is analog — panel supply or the panel's LED driver.
+  Regulator tree: `avdd-lcd` (fixed, GPIO DC-DC) → `iovdd-lcd` 1.8 V, `avdd-dsi-csi` 1.2 V.
+- Next: fastboot-boot a rebuild of the bootfix-v2 DTB changes (simplefb not owning panel rails, LDO5
+  always-on, Palmas IRQ LEVEL_LOW) on top of the gauge DTB and see whether it stops. Also compare stock
+  Palmas regulator modes (PFM/eco vs forced PWM) for the panel's rails.
+- Gotcha: an SSH command that times out leaves its remote loop running (one polled debugfs for minutes).
