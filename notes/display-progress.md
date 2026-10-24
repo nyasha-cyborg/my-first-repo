@@ -428,3 +428,21 @@ fastboot boot bootable.img
 Confirm the run started by watching USB: the device disappears from both
 `fastboot devices` and `adb devices` within ~6 s while the kernel runs. If it
 sits in `fastboot devices` for 40 s, it was rejected.
+
+## 2026-10-25 — vertical lines only in the full pmOS boot; simplefb is clean
+
+Owner reports vertical lines on the panel after the recent crashes. Narrowed down:
+- Bootloader/fastboot screen: clean (hardware OK).
+- Diagnostic Linux image (`/tmp/n9diag-build/n9diag-stripped.img`, tmpfs init, no WiFi/userspace,
+  console on **simplefb**): clean console, no lines; kernel up, health lines, `/data/pmos/diag.log`
+  written. dmesg shows `simple-framebuffer ac001000.framebuffer: fb0: simplefb registered!` and
+  `avdd-dsi-csi: failed to disable: -EREMOTEIO` at `tegra_dsi_probe` — the same rail error that also
+  appears on otherwise-clean boots (notes/pmos.md), so it is a marker, not the cause by itself.
+- Therefore the lines appear only when the real DRM/DSI panel path + userspace (Phosh/nouveau) takes
+  over from simplefb. Hypotheses: DSI video-timing/clock, simplefb leaking panel rails on takeover,
+  PMIC burst during DSI probe, or GPU/compositor framebuffer corruption.
+
+Next: four agents are producing (a) a DRM/DSI code diagnosis, (b) a PMIC/rail-sequencing analysis, (c)
+a GPU-vs-DSI discrimination plan, and (d) a fastboot-bootable test-image matrix (nomodeset,
+nouveau.modeset=0, keep_power on/off, EMC devfreq blacklist on/off). Boot variants only; nothing is
+flashed. The diag image remains the safe way to observe a Linux boot with no userspace.
