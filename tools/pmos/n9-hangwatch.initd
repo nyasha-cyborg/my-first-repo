@@ -1,0 +1,32 @@
+#!/sbin/openrc-run
+# Boot-hang recorder (notes/stability-debug.md): if udev has not settled 60 s after this starts,
+# snapshot what is stuck (processes in D state with kernel stacks, udev workers, recent kernel log) to
+# /var/log/hang-<uptime>.log (the rootfs is a persistent image on eMMC), so a boot that later gets reset by the watchdog still leaves evidence.
+description="Record why boot stalls"
+
+depend() {
+	need devfs
+	before udev udev-trigger udev-settle
+}
+
+start() {
+	ebegin "Starting boot-hang recorder"
+	(
+		sleep 60
+		pgrep -f "udevadm settle" >/dev/null || exit 0
+		out=/var/log/hang-$(cut -d. -f1 /proc/uptime).log
+		{
+			echo "== $(date) uptime $(cat /proc/uptime)"; uname -a
+			echo "== D-state processes and kernel stacks"
+			for p in /proc/[0-9]*; do
+				s=$(awk '{print $3}' $p/stat 2>/dev/null)
+				[ "$s" = D ] || continue
+				echo "-- $(basename $p) $(tr '\0' ' ' < $p/cmdline)"; cat $p/stack 2>/dev/null
+			done
+			echo "== udev/modprobe processes"; ps -o pid,etime,stat,args | grep -E "udev|modprobe|systemd-udevd" | grep -v grep
+			echo "== kernel log tail"; dmesg | tail -150
+		} > "$out" 2>&1
+		sync
+	) >/dev/null 2>&1 &
+	eend 0
+}

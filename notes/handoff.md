@@ -236,6 +236,29 @@ If pmOS still does not bring the network up: boot `n9pmos-inst-stripped.img` aga
 tries), `mount /dev/mmcblk0p31 /data`, `mount -o loop /data/pmos/rootfs.img /mnt/pmos`, and inspect
 `/mnt/pmos/etc/NetworkManager/system-connections/wifi-home.nmconnection` and the `finish-rootfs.sh` assumptions.
 
+## 2026-10-25 12:15 — state at pause (resume here)
+
+- Tablet left **powered off** by the owner. LNX = known-good gauge image (md5 08afc9d5…).
+- **USB-first access** (owner preference): `tools/n9sh.sh '<cmd>'` (root shell on ttyGS0 from the
+  `n9-usbshell` sysinit service, installed) and `tools/n9push.py <file> <remote>` (md5-checked, ~1.4-2.8
+  MB/s). If n9sh reports "no reply", the shell is usually stuck in an unclosed quote from an interrupted
+  command: send `'`, `"`, `)` lines (see the raw-probe snippets in this session) before retrying.
+  `agetty.ttyGS0` is removed from default (two shells on one line split replies).
+- Restarts from the host (`echo b > /proc/sysrq-trigger`) come back in **androidboot.mode=charger**
+  because the cable is attached; `n9-charge` then stops greetd and blanks the screen. Owner must
+  power-cycle with the power button for a normal boot. TODO: let n9-charge keep the UI when the boot
+  was not a plug-in (bootreason), or set the PMC reboot reason for a normal reboot.
+- **Next item: the intermittent "Waiting for uevents to be processed" boot stall** (≈ half of today's
+  boots, both old and new kernels; tegra_wdt resets after ~3 min). `tools/pmos/n9-hangwatch.initd` is
+  written but NOT yet installed: on the next pmOS boot run
+  `python3 -I tools/n9push.py tools/pmos/n9-hangwatch.initd /etc/init.d/n9-hangwatch` then
+  `tools/n9sh.sh 'chmod 755 /etc/init.d/n9-hangwatch; rc-update add n9-hangwatch sysinit'`. It writes
+  `/var/log/hang-<uptime>.log` (D-state stacks, udev workers, dmesg) when udev has not settled at 60 s.
+- Screen flicker/pulsing: **parked** — also present under the stock kernel (TWRP); D0 divider patch does
+  not reproduce (notes/display-progress.md 2026-10-25 11:35).
+- Heat: the tablet overheated once today under repeated test boots + charging; the owner cooled it with
+  a fan. Keep test loops short.
+
 ## 2026-10-25 09:40 — LNX now holds the gauge-fix image
 
 - LNX = `~/code/scratch/n9work/gaugeimg/n9gauge-stripped.img` (md5 08afc9d5…): the previous known-good
