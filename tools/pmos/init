@@ -4,49 +4,138 @@
 #   /data/pmos/rootfs.img  ->  loop-mounted and switch_root'ed into (OpenRC /sbin/init).
 # Android's userdata stays mounted at /android-data in pmOS (it backs the loop device: never unmount it).
 # On any failure: a root shell on the USB serial gadget (/dev/ttyGS0, g_serial is built in).
+#
+# Boot-instability hardening (notes/instability-plan.md):
+#  - tegra_wdt is armed at probe (early_start=1, heartbeat from the cmdline), so this init feeds
+#    /dev/watchdog from its first moment and around every stage until switch_root hands the
+#    watchdog to OpenRC. `touch /stop-ping` on the serial shell stops the feed deliberately.
+#  - e2fsck is bounded (timeout 120): a slow check can never produce a reset loop.
+#  - every stage is appended (uptime timestamp) to /data/pmos/boot-init.log once userdata is
+#    mounted, so a failed boot leaves evidence; before that it goes to the kernel log only.
+#  - /tmp is a tmpfs in the new root, so test clips/transfers never write to the loop rootfs.
 /bin/busybox --install -s /bin
 export PATH=/bin
 mount -t proc proc /proc
 mount -t sysfs sysfs /sys
 mount -t devtmpfs devtmpfs /dev 2>/dev/null
-# progress goes to the kernel log and, once userdata is mounted, to /data/pmos/boot-init.log (synced: survives a
-# stall before OpenRC's own logging starts)
+
+# progress goes to the kernel log and, once userdata is mounted, to /data/pmos/boot-init.log
+# (synced: survives a stall before OpenRC's own logging starts)
+LOG=
 log() {
 	echo "<6>n9pmos: $*" > /dev/kmsg
-	[ -d /data/pmos ] && { echo "$(cut -d' ' -f1 /proc/uptime) $*" >> /data/pmos/boot-init.log; sync; }
+	[ -n "$LOG" ] && { echo "$(cut -d' ' -f1 /proc/uptime) $*" >> "$LOG"; sync; }
 }
+
+# --- watchdog feeder -------------------------------------------------------------------------
+# The kernel already armed tegra_wdt at probe. Keep one fd open here and ping it every 15 s
+# (heartbeat 120 s from the cmdline) from a background child. Opening through a subshell first
+# keeps a failed redirection from terminating this init; the close in the subshell only pings.
+WD_OPEN= WPID=
+feed() { [ -n "$WD_OPEN" ] && printf '.' >&3 2>/dev/null; }
+start_feeder() {
+	local i=0
+	while [ ! -c /dev/watchdog ] && [ $i -lt 100 ]; do sleep 0.1; i=$((i + 1)); done
+	if ! ( : > /dev/watchdog ) 2>/dev/null; then
+		log "WARNING: /dev/watchdog not available; early watchdog cannot be fed"
+		return
+	fi
+	exec 3>/dev/watchdog
+	WD_OPEN=1
+	feed
+	( while [ ! -e /stop-ping ]; do feed; sleep 15; done
+	  echo "<4>n9pmos: /stop-ping present, feeder stopped; the watchdog will reset the board" > /dev/kmsg
+	  exec sleep 86400 ) &
+	WPID=$!
+	log "watchdog feeder started (ping every 15 s; touch /stop-ping to force a reset)"
+}
+stop_feeder() {
+	[ -n "$WPID" ] && { kill "$WPID" 2>/dev/null; wait "$WPID" 2>/dev/null; }
+	WPID=
+	# Closing without the magic 'V' does NOT stop the timer (WDIOF_MAGICCLOSE):
+	# watchdog_release() sends a keepalive instead, so OpenRC's busybox watchdog can reopen it.
+	if [ -n "$WD_OPEN" ]; then exec 3>&-; fi
+	WD_OPEN=
+}
+
 rescue() {
-	log "FAILED: $* -- rescue shell on ttyGS0"
+	log "FAILED: $* -- rescue shell on ttyGS0 (touch /stop-ping to force a watchdog reset)"
+	[ -n "$WD_OPEN" ] || start_feeder	# keep the board alive for a human
 	while true; do
 		[ -c /dev/ttyGS0 ] && setsid sh -c 'exec sh </dev/ttyGS0 >/dev/ttyGS0 2>&1'
 		sleep 2
 	done
 }
+
+# --- boot stages -----------------------------------------------------------------------------
 log "init start"
+start_feeder
+log "stage: mounts done (proc/sys/dev)"
 UDA=/dev/mmcblk0p31
 IMG=${IMG:-pmos/rootfs.img}
-for i in $(seq 1 100); do [ -b $UDA ] && break; sleep 0.1; done
+i=0
+while [ ! -b $UDA ] && [ $i -lt 100 ]; do sleep 0.1; i=$((i + 1)); done
 [ -b $UDA ] || rescue "no $UDA"
 mkdir -p /data /root
-mount -t ext4 -o noatime $UDA /data || rescue "mount userdata"
+feed; mount -t ext4 -o noatime $UDA /data || rescue "mount userdata"; feed
+mkdir -p /data/pmos
+LOG=/data/pmos/boot-init.log
+# keep the previous boot's log; this boot starts a fresh file (timestamped stage lines)
+[ -f "$LOG" ] && { tail -c 16384 "$LOG" > "$LOG.1"; rm -f "$LOG"; }
+log "userdata mounted ($UDA); logging to $LOG"
 [ -f /data/$IMG ] || rescue "no /data/$IMG"
-[ -f /data/pmos/boot-init.log ] && tail -c 16384 /data/pmos/boot-init.log > /data/pmos/boot-init.log.1 && rm /data/pmos/boot-init.log
-log "userdata mounted"
-# repair the image after a hang/reset before mounting it (-p: only safe fixes; exit 4+ = needs a human)
-/sbin/e2fsck -p /data/$IMG > /data/pmos/fsck.log 2>&1
+log "stage: userdata mount done"
+
+# repair the image after a hang/reset before mounting it (-p: only safe fixes). Bounded:
+# a slow fsck is not allowed to trip the armed watchdog and turn a boot into a reset loop.
+log "stage: e2fsck -p /data/$IMG (timeout 120 s)"
+feed
+timeout 120 /sbin/e2fsck -p /data/$IMG > /data/pmos/fsck.log 2>&1
 rc=$?
+feed
 log "e2fsck rc=$rc"
-# 126/127: the checker itself could not run -> boot anyway; 4..8: real damage -> rescue shell
-case $rc in 126|127) log "WARNING: e2fsck did not run (rc=$rc), mounting unchecked";;
-	*) [ $rc -ge 4 ] && rescue "e2fsck rc=$rc on /data/$IMG (see /data/pmos/fsck.log)";; esac
-L=$(losetup -f) && losetup $L /data/$IMG || rescue "losetup"
+# 124: timed out (killed); 126/127: the checker itself could not run -> mount anyway.
+# 4..8: real damage -> rescue shell (the feeder keeps the board alive for a human).
+case $rc in
+	0) ;;
+	1|2) log "e2fsck corrected errors (rc=$rc)";;
+	124) log "WARNING: e2fsck timed out after 120 s; mounting unchecked";;
+	126|127) log "WARNING: e2fsck did not run (rc=$rc); mounting unchecked";;
+	*) [ $rc -ge 4 ] && rescue "e2fsck rc=$rc on /data/$IMG (see /data/pmos/fsck.log)";;
+esac
+log "stage: e2fsck done"
+
+feed
+L=$(losetup -f) && losetup "$L" /data/$IMG || rescue "losetup"
 log "loop $L"
-mount -t ext4 -o noatime $L /root || rescue "mount rootfs"
-log "rootfs mounted"
+feed
+mount -t ext4 -o noatime "$L" /root || rescue "mount rootfs"
+feed
+log "rootfs mounted on $L"
 [ -x /root/sbin/init ] || rescue "no /sbin/init in the rootfs"
+log "stage: rootfs mount done"
+
+# /tmp on tmpfs: test clips and scp transfers must not write through loop -> /data ext4
+# (that double write path correlated with the WiFi-transfer hangs). The mount survives
+# switch_root because it is already inside the new root.
+mkdir -p /root/tmp
+if mount -t tmpfs -o size=512m,mode=1777 tmpfs /root/tmp; then
+	log "tmpfs mounted on /tmp (512m)"
+else
+	log "WARNING: could not mount tmpfs on /tmp; /tmp stays on the loop rootfs"
+fi
+log "stage: /tmp prepared"
+
+# modules: none are loaded from the ramdisk; OpenRC loads WiFi/GPU/modem modules from the
+# rootfs after switch_root, so their stage is logged by n9-kmsg/rc.log, not here.
+log "stage: switching to the rootfs on $L"
+feed
 mkdir -p /root/android-data
 mount --move /data /root/android-data
-log "switching to the rootfs on $L"
+LOG=/root/android-data/pmos/boot-init.log
+feed
+stop_feeder
+log "watchdog handed over to OpenRC (busybox watchdog opens it next)"
 umount /proc /sys
 mount --move /dev /root/dev 2>/dev/null || umount /dev
 exec switch_root /root /sbin/init

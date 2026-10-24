@@ -1,0 +1,57 @@
+From af7f8ce3123dd65771cf0c2e6bd237327cb9ef77 Mon Sep 17 00:00:00 2001
+From: nyasha <nmushambi@proton.me>
+Date: Sat, 24 Oct 2026 16:16:55 +1300
+Subject: [PATCH] WIP arm64: tegra132: flounder: stop simplefb owning panel
+ rails; keep LDO5 on
+
+simple-framebuffer inherited the bootloader framebuffer and declared
+dsi-supply/lcd-supply/io-supply, so the DRM handover could own and toggle
+the panel rails under the PMIC (the reproducible -121 NAK bursts at
+display power-down). Only the framebuffer is inherited: drop the supply
+phandles here. The DSI and panel nodes keep avdd-dsi-csi/avdd/iovdd, so
+the DRM/panel driver is the only user of those rails.
+
+Mark Palmas LDO5 (avdd_dsi_csi) regulator-always-on to match the vendor
+boot-on semantics: the 1.2 V DSI/CSI PHY rail is enabled by the
+bootloader and must never be disabled at handover.
+
+Co-Authored-By: Claude Code <noreply@anthropic.com>
+---
+ arch/arm64/boot/dts/nvidia/tegra132-flounder.dts | 14 +++++++++++---
+ 1 file changed, 11 insertions(+), 3 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts b/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
+index b6f9bd64c..6b787bd2f 100644
+--- a/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
++++ b/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
+@@ -46,9 +46,13 @@ lcd: framebuffer@ac001000 {
+ 			stride = <(1536 * 4)>;
+ 			format = "a8b8g8r8";
+ 			clocks = <&tegra_car TEGRA124_CLK_DISP1>, <&tegra_car TEGRA124_CLK_DSIA>, <&tegra_car TEGRA124_CLK_DSIB>;
+-			dsi-supply = <&avdd_dsi_csi>;
+-			lcd-supply = <&avdd_lcd>;
+-			io-supply = <&iovdd_lcd>;
++			/*
++			 * No *-supply here: simplefb only inherits the bootloader's
++			 * framebuffer, it must not own or toggle the panel/DSI rails.
++			 * The panel and DSI nodes below declare those supplies, so the
++			 * DRM/panel driver is the only user and handover cannot switch
++			 * rails under the PMIC (the source of the -121 NAK bursts).
++			 */
+ 		};
+ 	};
+ 
+@@ -1092,6 +1096,10 @@ avdd_dsi_csi: ldo5 {
+ 						regulator-min-microvolt = <1200000>;
+ 						regulator-max-microvolt = <1200000>;
+ 						regulator-boot-on;
++						/* vendor boot-on semantics: the DSI/CSI 1.2 V rail
++						 * is enabled by the bootloader and stays enabled;
++						 * never disable it at DRM handover (PMIC NAK burst) */
++						regulator-always-on;
+ 					};
+ 
+ 					vdd_1v5_ldo6: ldo6 {
+-- 
+2.56.0
+

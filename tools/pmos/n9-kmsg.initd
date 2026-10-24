@@ -9,7 +9,20 @@ start() {
 	for i in 4 3 2 1; do [ -f /var/log/kmsg.log.$i ] && mv /var/log/kmsg.log.$i /var/log/kmsg.log.$((i + 1)); done
 	[ -f /var/log/kmsg.log ] && mv /var/log/kmsg.log /var/log/kmsg.log.1
 	start-stop-daemon --start --background --make-pidfile --pidfile /run/n9-kmsg.pid \
-		--exec /bin/sh -- -c 'cat /proc/kmsg >> /var/log/kmsg.log & while true; do sync; sleep 5; done'
+		--exec /bin/sh -- -c '
+			cat /proc/kmsg >> /var/log/kmsg.log &
+			# WiFi stage marker for /data/pmos/boot-init.log: the ramdisk init logs the
+			# pre-switch_root stages, this log survives a later hang on the loop rootfs.
+			( n=0
+			  while [ $n -lt 240 ]; do
+				if ip -4 addr show dev wlan0 2>/dev/null | grep -q "inet "; then
+					printf "%s stage: wifi up (wlan0 has an IPv4 address)\n" \
+						"$(cut -d" " -f1 /proc/uptime)" \
+						>> /android-data/pmos/boot-init.log 2>/dev/null && break
+				fi
+				n=$((n + 1)); sleep 5
+			  done ) &
+			while true; do sync; sleep 5; done'
 	eend $?
 }
 stop() { start-stop-daemon --stop --pidfile /run/n9-kmsg.pid; }
