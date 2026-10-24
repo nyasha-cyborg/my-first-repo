@@ -503,3 +503,18 @@ Test images (fastboot boot, nothing flashed), built from the flashed gauge DTB i
   the panel rails/handover end up in, not on anything running later.
 - Next: a login on the USB serial gadget (ttyGS0 getty) in the rootfs so a stuck boot can be inspected
   without WiFi; then retry the rails-only image and read which driver blocks udev settle.
+
+### 2026-10-25 10:30 — pulsing follows coloured content; REA of the stock panel driver
+
+- Owner: the pulsing returns "when the home screen has colour"; console text does not pulse → content-
+  dependent, per-boot, independent of brightness (255 too).
+- DC: `DC_DISP_DISP_COLOR_CONTROL` = 0 → dither off, but **BASE_COLOR_SIZE_666** (18-bit) on a 24-bit
+  DSI panel — not the pulsing (no temporal dither), but a separate banding bug to fix (expect 888).
+- REA (Lineage kernel, symbols via tools/kallsyms-decode.py, window ffffffc0000a2000-2400):
+  `dsi_j_qxga_8_9_postpoweron`/`enable` = the same rail/delay order as mainline; panel init commands
+  identical; `dsi_j_qxga_8_9_sd_settings` (0xffffffc000a43f08) starts with **enable = 0** — stock ships
+  SmartDimmer data but leaves it off. Stock also has a CMU (colour-management) table (`dsi_j_qxga_8_9_cmu`)
+  that mainline does not program — not pulsing-related, but explains colour differences.
+- Leading hypothesis: the panel controller's own maker-specific CABC/dynamic-contrast state (MCS registers,
+  set by hboot) survives our DCS 0x55=0 on some boots. Next: a debugfs hook in panel-jdi-lpm089a128a to
+  send DCS/MCS writes at runtime (try MCS CABC registers off live, owner watches), plus a ttyGS0 login.
