@@ -140,6 +140,45 @@ transform_8x8 and scaling lists work.
   those; the v2 boot fixes target exactly this.
 - Tools added: tools/vde-test-host.sh (host reference decode), tools/soak-boot.sh, tools/pmos/push-small.sh.
 
+## 2026-10-24 (late session, device now powered off) — resume here
+
+Owner stopped work; tablet is off and unstable at a hardware level. Nothing was flashed in this session.
+
+What happened (16:00–16:40):
+- `n9bootfix-v2-stripped.img` was booted with `fastboot boot` at 16:24, 16:25, 16:26, 16:27 (retry loop) and
+  16:29 (manual). Each fastboot upload succeeded (1.0 s), then the host saw the device back in fastboot within
+  ~12 s and never got SSH. The owner saw a console with watchdog "heartbeat" lines — that is v2's own ramdisk log,
+  i.e. v2 does run, but userspace never comes up (or is reset before it does).
+- `/tmp/n9diag-build/n9diag-stripped.img` was booted at 16:31 and 16:34. It **does** reach its serial shell: the
+  CDC-ACM gadget enumerated (`0525:a4a7`, `/dev/ttyACM0`) and `~ #` prompts were captured. With ~20 s of boot the
+  device left the USB bus again (no `18d1`/`0525` device afterwards). So kernel + userspace + gadget work; the
+  board resets/drops shortly after.
+- Observed repeatedly: `usb 1-1: device not accepting address N, error -71` on the host, and unplugging/replugging
+  the cable once **powered the tablet off** while it sat at the console.
+
+Evidence pointing away from software:
+- hboot: `battery-voltage: 4200mV`, `battery-status: good`, but **`battery-soc-ok: no`** — the fuel gauge cannot
+  vouch for the pack.
+- Earlier note (notes/pmos.md, 2026-10-23 18:40): the tablet once went "completely off" with Android reporting
+  battery 97 % and `bootreason=cold_boot` — a thermal power cut, not a watchdog. Treat that as still unresolved.
+- The diag ramdisk spawns a shell respawn loop on ttyGS0; the captured stream contains repeating
+  `sh: /: Permission denied` between prompts. Not yet explained — likely the respawn `setsid sh -c ...` losing
+  argv[0] under busybox. Cosmetic, but check it before trusting the diag shell.
+
+Android: no flash was ever done on LNX/mmcblk0p16 in this session, so the installed boot image is unchanged; if
+LNX still holds Lineage's boot, plain `fastboot reboot` boots Android. Verify before promising it.
+
+Next actions when the tablet is back:
+1. Let it charge off a wall charger (not a PC port), untouched, 30+ min. A dying pack explains brown-outs,
+   `-71` enumerations and the power-off on replug better than any kernel change.
+2. Put it in fastboot and read `fastboot getvar battery-voltage battery-soc-ok`. If `soc-ok` stays `no` after a
+   long charge, stop software work and treat the battery/PMIC as the fault.
+3. Boot the stock/Lineage image (`fastboot boot ~/Downloads/nexus9/bootimg-build/boot-stock-lte-N4F27P.img` or
+   `boot-backup-lineage16.img`) to confirm the board is healthy in Android before any further pmOS test.
+4. Only then retry `n9bootfix-v2-stripped.img` and `tools/soak-boot.sh`.
+5. If the diag shell is needed again: start a persistent reader (`cat /dev/ttyACM0 > file`) **before** booting;
+   the ~20 s window is too short to attach afterwards.
+
 ## Other open items (see notes/gpu.md)
 
 - Flickering blocks during video (a sync race, not caused by the WC change); backlight unsteady at low
