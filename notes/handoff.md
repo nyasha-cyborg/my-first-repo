@@ -118,6 +118,28 @@ plan (private block-linear fourcc + INTEGER64 DRM modifier control, GStreamer pa
 is in notes/vde.md "Playback path plan". Do not raise the profile control above MAIN until
 transform_8x8 and scaling lists work.
 
+## 2026-10-25 — current state (resume here)
+
+- **Decode:** 1080p H.264 is **bit-exact** (Y 100 %, 60/60) after fixing an IRAM overrun above 7168 MBs
+  (patch 0012). `m_b` 100 %. Weighted prediction is a hardware limitation; AU84/bpyrnormal closed as
+  vendor-equivalent. **4K was abandoned by the owner** (research kept in notes/video-capabilities.md;
+  4K24 was feasible, 4K30 +25 % outside the vendor block-rate certification).
+- **Driver:** abort/remove/job_abort hardening and the block-linear fourcc + DRM modifier control are
+  committed (local kernel tree) but NOT yet hardware-verified end-to-end; the hardened module decoded
+  the regression set with faults=0 errs=0 before a transfer failed.
+- **Display:** vertical lines were a transient latched state after hard crashes; bootloader, diagnostic
+  and normal pmOS boots all render cleanly. If they return: leading lead is the compositor's
+  block-linear scanout buffers (see the 2026-10-25 correction in notes/display-progress.md and
+  notes/archive/display-2026-10-25/).
+- **Boot stability (in progress):** image `/tmp/bootfix/n9bootfix-v2-stripped.img` = watchdog fed from
+  the first ramdisk stage, bounded fsck, stage logs to /data, tmpfs /tmp, panel-rail handover fixes,
+  LDO5 always-on, and **Palmas IRQ_TYPE_LEVEL_LOW** (the boot-storm root cause; LEVEL_HIGH is wrong).
+  Kernel byte-identical; only DTB+cmdline differ. Verify with tools/soak-boot.sh IMG 10.
+- **Hardware caveat:** the tablet sometimes hard-hangs during boot (USB silent) and the bootloader
+  itself can wedge (enumerates but answers no fastboot command). Only a physical power press recovers
+  those; the v2 boot fixes target exactly this.
+- Tools added: tools/vde-test-host.sh (host reference decode), tools/soak-boot.sh, tools/pmos/push-small.sh.
+
 ## Other open items (see notes/gpu.md)
 
 - Flickering blocks during video (a sync race, not caused by the WC change); backlight unsteady at low
