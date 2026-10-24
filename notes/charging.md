@@ -60,6 +60,14 @@ request relies on VINDPM alone (vendor ramped from 900 mA).
   (`tools/pmos/n9-charge.initd` → `/etc/init.d/n9-charge`, script `tools/pmos/n9-charge.sh` →
   `/usr/lib/n9/n9-charge.sh`). After: −168…−236 mA with full Phosh on the laptop port. The n9-modem
   start hang is a separate open item.
+- **2026-10-25 09:38 NZDT — gauge fix flashed to LNX** (owner OK): `fastboot flash boot
+  n9gauge-stripped.img` on a freshly power-cycled hboot (OK in 1.8 s), then `fastboot reboot`.
+  Read-back md5 of mmcblk0p16's first 11286528 bytes = `08afc9d5…` (matches). Normal boot: DT has
+  rsns 0x2710, CGAIN 0x4000. `/etc/modprobe.d/n9-gauge.conf` **removed**; driver loads via modalias,
+  CGAIN stays 0x4000, `capacity` 56, `current_now` −784 mA during boot (Phosh starting), charger at
+  4.20 V / 2.0 A. `status` reads Unknown (gauge driver has no charger link) — cosmetic, open.
+  Rollback image: `~/Downloads/nexus9/bootimg-build/n9-mainline/n9pmos-boot-stripped.img`
+  (md5 dad73ff0…) — but booting it would zero CGAIN again; re-add the blacklist first.
 - Open: proper fix in the kernel (DT `input-current-limit` / charger detection from the Tegra USB PHY,
   as the vendor does); verify a wall adapter actually delivers ~1.5 A; the earlier "DCP replug kills
   mainline" hang (a laptop→laptop replug survived today at 22:36).

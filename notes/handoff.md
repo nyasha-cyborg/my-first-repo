@@ -236,6 +236,12 @@ If pmOS still does not bring the network up: boot `n9pmos-inst-stripped.img` aga
 tries), `mount /dev/mmcblk0p31 /data`, `mount -o loop /data/pmos/rootfs.img /mnt/pmos`, and inspect
 `/mnt/pmos/etc/NetworkManager/system-connections/wifi-home.nmconnection` and the `finish-rootfs.sh` assumptions.
 
+## 2026-10-25 09:40 — LNX now holds the gauge-fix image
+
+- LNX = `~/code/scratch/n9work/gaugeimg/n9gauge-stripped.img` (md5 08afc9d5…): the previous known-good
+  pmOS image + DTB `maxim,rsns-microohm`. Gauge blacklist removed; battery % correct in pmOS.
+  Do not boot the old image (n9pmos-boot-stripped.img) without re-adding the max17042 blacklist.
+
 ## 2026-10-25 09:00 — VDE status (resume here for video)
 
 - Hardened tegra-vde + block-linear fourcc/modifier verified on hardware (faults=0; TBL4 + modifier
