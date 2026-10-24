@@ -1,0 +1,237 @@
+--- a/include/uapi/linux/videodev2.h
++++ b/include/uapi/linux/videodev2.h
+@@ -677,6 +677,15 @@
+ 
+ /* three non contiguous planes - Y, Cb, Cr */
+ #define V4L2_PIX_FMT_YUV420M v4l2_fourcc('Y', 'M', '1', '2') /* 12  YUV420 planar */
++
++/*
++ * NVIDIA Tegra VDE output in the 16Bx2 block-linear layout described by
++ * DRM_FORMAT_MOD_NVIDIA_16BX2_BLOCK(). Three non-contiguous planes: luma
++ * stride ALIGN(width, 128), luma rows ALIGN(height, 16), chroma stride is
++ * half the luma stride and chroma rows ALIGN(height / 2, 8). The exact DRM
++ * modifier is reported by V4L2_CID_TEGRA_VDE_BL_MODIFIER.
++ */
++#define V4L2_PIX_FMT_YUV420M_TEGRA_BL v4l2_fourcc('T', 'B', 'L', '4') /* 12  Tegra block-linear YUV420M */
+ #define V4L2_PIX_FMT_YVU420M v4l2_fourcc('Y', 'M', '2', '1') /* 12  YVU420 planar */
+ #define V4L2_PIX_FMT_YUV422M v4l2_fourcc('Y', 'M', '1', '6') /* 16  YUV422 planar */
+ #define V4L2_PIX_FMT_YVU422M v4l2_fourcc('Y', 'M', '6', '1') /* 16  YVU422 planar */
+--- a/include/uapi/linux/v4l2-controls.h
++++ b/include/uapi/linux/v4l2-controls.h
+@@ -234,6 +234,19 @@
+  */
+ #define V4L2_CID_USER_MALI_C55_BASE		(V4L2_CID_USER_BASE + 0x1230)
+ 
++/*
++ * The base for the NVIDIA Tegra video decoder (tegra-vde) driver controls.
++ * We reserve 16 controls for this driver.
++ */
++#define V4L2_CID_USER_TEGRA_VDE_BASE		(V4L2_CID_USER_BASE + 0x1240)
++
++/*
++ * DRM format modifier of the buffers produced for
++ * V4L2_PIX_FMT_YUV420M_TEGRA_BL, as a 64-bit integer
++ * (DRM_FORMAT_MOD_NVIDIA_16BX2_BLOCK(0)). Read-only.
++ */
++#define V4L2_CID_TEGRA_VDE_BL_MODIFIER		(V4L2_CID_USER_TEGRA_VDE_BASE + 1)
++
+ /* MPEG-class control IDs */
+ /* The MPEG controls are applicable to all codec controls
+  * and the 'MPEG' part of the define is historical */
+--- a/drivers/media/platform/nvidia/tegra-vde/vde.c
++++ b/drivers/media/platform/nvidia/tegra-vde/vde.c
+@@ -482,10 +482,14 @@
+ 
+ static const u32 tegra124_decoded_fmts[] = {
+ 	/*
+-	 * T124 writes a non-standard Tegra tiled layout. Bring-up only: offer
+-	 * YUV420M so userspace can negotiate and the tiling can be studied.
++	 * T124 writes a non-standard Tegra tiled layout. YUV420M stays first
++	 * (and therefore stays the default) as the legacy/compat description
++	 * so existing userspace keeps working unchanged; the private
++	 * TEGRA_BL fourcc describes the actual layout and pairs with the
++	 * V4L2_CID_TEGRA_VDE_BL_MODIFIER control.
+ 	 */
+ 	V4L2_PIX_FMT_YUV420M,
++	V4L2_PIX_FMT_YUV420M_TEGRA_BL,
+ };
+ 
+ static const struct tegra_coded_fmt_desc tegra124_coded_fmts[] = {
+--- a/drivers/media/platform/nvidia/tegra-vde/v4l2.c
++++ b/drivers/media/platform/nvidia/tegra-vde/v4l2.c
+@@ -15,6 +15,8 @@
+ #include <linux/err.h>
+ #include <linux/slab.h>
+ 
++#include <drm/drm_fourcc.h>
++
+ #include "vde.h"
+ 
+ static const struct v4l2_ctrl_config ctrl_cfgs[] = {
+@@ -45,6 +47,16 @@
+ 		.min = V4L2_MPEG_VIDEO_H264_LEVEL_1_0,
+ 		.max = V4L2_MPEG_VIDEO_H264_LEVEL_5_1,
+ 	},
++	{
++		.id = V4L2_CID_TEGRA_VDE_BL_MODIFIER,
++		.name = "Tegra VDE block-linear output modifier",
++		.type = V4L2_CTRL_TYPE_INTEGER64,
++		.min = DRM_FORMAT_MOD_NVIDIA_16BX2_BLOCK(0),
++		.max = DRM_FORMAT_MOD_NVIDIA_16BX2_BLOCK(0),
++		.step = 1,
++		.def = DRM_FORMAT_MOD_NVIDIA_16BX2_BLOCK(0),
++		.flags = V4L2_CTRL_FLAG_READ_ONLY,
++	},
+ };
+ 
+ static inline struct tegra_ctx *file_to_tegra_ctx(struct file *file)
+@@ -75,6 +87,9 @@
+ 	unsigned int i;
+ 
+ 	for (i = 0; i < ARRAY_SIZE(ctrl_cfgs); i++) {
++		if (!ctx->ctrls[i])
++			continue;
++
+ 		if (ctx->ctrls[i]->id == id) {
+ 			tegra_set_control_data(ctx, ctx->ctrls[i]->p_cur.p, id);
+ 			return;
+@@ -434,36 +449,43 @@
+ static void tegra_fill_pixfmt_mp(struct v4l2_pix_format_mplane *pixfmt,
+ 				 u32 pixelformat, u32 width, u32 height)
+ {
+-	const struct v4l2_format_info *info = v4l2_format_info(pixelformat);
+ 	struct v4l2_plane_pix_format *plane;
+-	unsigned int i;
++	unsigned int i, pitch;
+ 
+ 	switch (pixelformat) {
+ 	case V4L2_PIX_FMT_YUV420M:
+ 	case V4L2_PIX_FMT_YVU420M:
++	case V4L2_PIX_FMT_YUV420M_TEGRA_BL:
+ 		pixfmt->width = width;
+ 		pixfmt->height = height;
+ 		pixfmt->pixelformat = pixelformat;
+-		pixfmt->num_planes = info->mem_planes;
++		pixfmt->num_planes = 3;
+ 
+-		for (i = 0; i < pixfmt->num_planes; i++) {
+-			unsigned int hdiv = (i == 0) ? 1 : 2;
+-			unsigned int vdiv = (i == 0) ? 1 : 2;
++		/*
++		 * VDE is connected to Graphics Memory using a 128-bit port,
++		 * all memory accesses are made using 16B atoms.
++		 *
++		 * T124/T132 output is NVIDIA 16Bx2 block-linear with
++		 * 64-byte-wide GOBs, so the stride must be a whole number of
++		 * GOBs (align width to 128B; chroma is exactly half and stays
++		 * 64B) and each plane must cover whole GOB rows: 16 luma rows
++		 * per GOB, 8 chroma rows per GOB. The VDE writes the padded
++		 * rows even when the visible height is smaller, so sizeimage
++		 * must use the padded height or decoding overruns the buffer.
++		 *
++		 * V4L requires Cb/Cr strides to be exactly half of the
++		 * Y stride, hence we're aligning Y to 16B x 2.
++		 */
++		pitch = ALIGN(width, 128);
+ 
+-			/*
+-			 * VDE is connected to Graphics Memory using 128bit port,
+-			 * all memory accesses are made using 16B atoms.
+-			 *
+-			 * T124/T132 output is NVIDIA block-linear with 64-byte-wide
+-			 * GOBs, so the stride must be a whole number of GOBs (align
+-			 * width to 128B; chroma is exactly half and stays 64B).
+-			 *
+-			 * V4L requires Cb/Cr strides to be exactly half of the
+-			 * Y stride, hence we're aligning Y to 16B x 2.
+-			 */
++		plane = &pixfmt->plane_fmt[0];
++		plane->bytesperline = pitch;
++		plane->sizeimage = pitch * ALIGN(height, 16);
++
++		for (i = 1; i < pixfmt->num_planes; i++) {
+ 			plane = &pixfmt->plane_fmt[i];
+-			plane->bytesperline = ALIGN(width, 128) / hdiv;
+-			plane->sizeimage = plane->bytesperline * height / vdiv;
++			plane->bytesperline = pitch / 2;
++			plane->sizeimage = pitch / 2 * ALIGN(height / 2, 8);
+ 		}
+ 
+ 		break;
+@@ -579,6 +601,18 @@
+ 			     pix_mp->width, pix_mp->height);
+ 	pix_mp->field = V4L2_FIELD_NONE;
+ 
++	/*
++	 * The block-linear layout is only describable when the luma stride is
++	 * a whole number of 64-byte GOBs and chroma is exactly half of it.
++	 * tegra_fill_pixfmt_mp() guarantees this, keep an explicit check so a
++	 * future geometry change cannot silently break the modifier contract.
++	 */
++	if (pix_mp->pixelformat == V4L2_PIX_FMT_YUV420M_TEGRA_BL &&
++	    (pix_mp->plane_fmt[0].bytesperline % 64 ||
++	     pix_mp->plane_fmt[1].bytesperline !=
++					pix_mp->plane_fmt[0].bytesperline / 2))
++		return -EINVAL;
++
+ 	if (t124_mask2 & BIT(6))
+ 		dev_info(ctx->vde->dev,
+ 			 "n9dbg fmt: %ux%u bpl=%u/%u/%u size=%u/%u/%u\n",
+@@ -798,6 +832,16 @@
+ 		return err;
+ 
+ 	for (i = 0; i < ARRAY_SIZE(ctrl_cfgs); i++) {
++		/*
++		 * Only T124/T132 emit block-linear output, don't advertise the
++		 * modifier on the older SoCs whose output is linear.
++		 */
++		if (ctrl_cfgs[i].id == V4L2_CID_TEGRA_VDE_BL_MODIFIER &&
++		    !ctx->vde->soc->t124_layout) {
++			ctx->ctrls[i] = NULL;
++			continue;
++		}
++
+ 		ctx->ctrls[i] = v4l2_ctrl_new_custom(&ctx->hdl, &ctrl_cfgs[i],
+ 						     NULL);
+ 		if (ctx->hdl.error) {
+--- a/drivers/media/platform/nvidia/tegra-vde/h264.c
++++ b/drivers/media/platform/nvidia/tegra-vde/h264.c
+@@ -990,11 +990,36 @@
+ 	size_t lsize, csize;
+ 	int err, frame_num;
+ 
+-	lsize = h264->pic_width_in_mbs * 16 * h264->pic_height_in_mbs * 16;
+-	csize = h264->pic_width_in_mbs *  8 * h264->pic_height_in_mbs *  8;
+ 	lstride = pixfmt->plane_fmt[0].bytesperline;
+ 	cstride = pixfmt->plane_fmt[1].bytesperline;
+ 
++	/*
++	 * The hardware writes whole GOB rows using the CAPTURE stride, so the
++	 * destination planes must be sized with the padded geometry rather
++	 * than the visible/coded pixel count: ALIGN(height, 16) luma rows and
++	 * ALIGN(height / 2, 8) chroma rows at the format's strides.
++	 */
++	lsize = lstride * h264->pic_height_in_mbs * 16;
++	csize = cstride * h264->pic_height_in_mbs * 8;
++
++	if (lstride < h264->pic_width_in_mbs * 16 ||
++	    lstride % VDE_ATOM || cstride % VDE_ATOM) {
++		dev_err(dev, "Bad strides %u/%u for %ux%u MBs\n",
++			lstride, cstride,
++			h264->pic_width_in_mbs, h264->pic_height_in_mbs);
++		return -EINVAL;
++	}
++
++	if (pixfmt->pixelformat == V4L2_PIX_FMT_YUV420M_TEGRA_BL) {
++		unsigned int ypitch = ALIGN(h264->pic_width_in_mbs * 16, 128);
++
++		if (lstride != ypitch || cstride != ypitch / 2) {
++			dev_err(dev, "Bad block-linear strides %u/%u, expected %u/%u\n",
++				lstride, cstride, ypitch, ypitch / 2);
++			return -EINVAL;
++		}
++	}
++
+ 	err = tegra_vde_validate_vb_size(ctx, vb, 0, lsize);
+ 	if (err)
+ 		return err;
