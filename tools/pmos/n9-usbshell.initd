@@ -5,7 +5,9 @@
 description="Root shell on the USB serial gadget"
 
 depend() {
-	need dev
+	# not "need dev": on this rootfs udev provides "dev", which put the shell behind the very
+	# udev settle step that hangs. devfs + the g_serial node created by the kernel are enough.
+	need devfs
 	before udev udev-trigger udev-settle
 }
 

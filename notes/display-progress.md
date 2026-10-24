@@ -518,3 +518,28 @@ Test images (fastboot boot, nothing flashed), built from the flashed gauge DTB i
 - Leading hypothesis: the panel controller's own maker-specific CABC/dynamic-contrast state (MCS registers,
   set by hboot) survives our DCS 0x55=0 on some boots. Next: a debugfs hook in panel-jdi-lpm089a128a to
   send DCS/MCS writes at runtime (try MCS CABC registers off live, owner watches), plus a ttyGS0 login.
+
+### 2026-10-25 11:10 — live panel tests (kernel 6.19.0-flounder-n9cmd, debugfs jdi-panel/cmd)
+
+Installed via USB (tools/n9push.py, ~1.4 MB/s) as LNX with its own module dir
+`/lib/modules/6.19.0-flounder-n9cmd` (an earlier attempt reused the old release name and crashed in `nft`
+— never install a rebuilt Image without its matching modules). Backup of the gauge image:
+`/root/lnx-backup-gauge.img` on the tablet (md5 08afc9d5…). Owner watching; dark = black areas,
+colour = home screen wallpaper.
+| live command | dark | colour |
+|---|---|---|
+| (baseline) | pulses | "a little better" |
+| `dcs 55 00` (CABC off) | pulses | — |
+| `gen b0 04` + `gen d0 42 95` (Pixel C VGH 330 / VGL 410 dividers) | **steady** | flickers |
+| `d0 52 95` (VGH/VGL 410) | steady | flickers |
+| `d0 12 91` (VGH/VGL 210) | — | flickers |
+| `d0 42 95` + CE table with first byte 0x5c | — | flickers |
+| `gen d6 00` | — | flickers |
+- Dark-screen pulsing = TCON charge-pump noise into the backlight controller — the exact issue
+  panel-jdi-lpm102a188a.c (Pixel C, same JDI/Renesas family) fixes with MCS 0xD0 = {0x42, 0x95}. Make it
+  permanent in panel-jdi-lpm089a128a prepare() (after B0 04).
+- DCS reads in video mode return a constant `80 00 00 00` — not usable.
+- Stock timing (REA, `dsi_j_qxga_8_9_modes` = tegra_dc_mode): pclk 247.6 MHz, h 1536/300/76/80,
+  v 2048/12/4/8 — identical to mainline's default_mode.
+- Colour flicker unexplained. Next: fastboot-boot LineageOS (`boot-backup-lineage16.img`) and check the
+  same wallpaper colours; if Android flickers too, it is the panel.

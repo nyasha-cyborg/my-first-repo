@@ -1,19 +1,24 @@
 #!/usr/bin/env python3
-"""Push a file to the tablet's /tmp over the USB-serial console (raw, checksummed).
+"""Copy a file to the tablet over the USB-serial root shell (no WiFi needed).
 
 usage: n9push.py <local-file> <remote-path>
-Needs /bin/rxfile in the test image (tools/miniroot/rxfile.c).  The tablet shell must be idle.
+
+The tablet side is the raw-mode shell from tools/pmos/n9-usbshell.initd: it is told to
+`head -c N > path`, the file's bytes follow on the same line, and the reply carries the
+remote md5, which is compared with the local one. Exit 0 only when they match.
 """
+import hashlib
 import os
-import select
 import sys
 import termios
 import time
+import uuid
 
+dev = os.environ.get("N9TTY", "/dev/ttyACM0")
 src, dst = sys.argv[1], sys.argv[2]
 data = open(src, "rb").read()
-want_sum = sum(data) & 0xFFFFFFFF
-dev = os.environ.get("N9TTY", "/dev/ttyACM0")
+want = hashlib.md5(data).hexdigest()
+
 fd = os.open(dev, os.O_RDWR | os.O_NOCTTY)
 a = termios.tcgetattr(fd)
 a[0] = a[1] = a[3] = 0
@@ -22,44 +27,32 @@ a[6][termios.VMIN] = 0
 a[6][termios.VTIME] = 0
 termios.tcsetattr(fd, termios.TCSANOW, a)
 
-
-def read_until(token, secs):
-    buf = b""
-    end = time.time() + secs
-    while time.time() < end and token not in buf:
-        r, _, _ = select.select([fd], [], [], 0.5)
-        if r:
-            buf += os.read(fd, 65536)
-    return buf
-
-
-os.write(fd, ("\n/bin/rxfile %s %d\n" % (dst, len(data))).encode())
-if b"RXREADY" not in read_until(b"RXREADY", 15):
-    sys.exit("receiver did not start")
-time.sleep(1.0)                     # let the receiver settle, drop anything stale
-termios.tcflush(fd, termios.TCIFLUSH)
+tag = uuid.uuid4().hex[:8]
+cmd = ("\nhead -c %d > %s.part && mv %s.part %s; echo N9P%s\"\"%s $(md5sum < %s | cut -d' ' -f1)\n"
+       % (len(data), dst, dst, dst, tag[:4], tag[4:], dst))
+os.write(fd, cmd.encode())
+time.sleep(0.3)                      # let the shell start head before the payload arrives
 t0 = time.time()
-BLK = 16384
-for pos in range(0, len(data), BLK):
-    blk = data[pos:pos + BLK]
-    off = 0
-    while off < len(blk):
-        if select.select([], [fd], [], 5)[1]:
-            off += os.write(fd, blk[off:])
-    # wait for the tablet's ACK (0x06) before sending the next block
-    got = b""
-    end = time.time() + 20
-    while b"\x06" not in got and time.time() < end:
-        r, _, _ = select.select([fd], [], [], 0.5)
-        if r:
-            got += os.read(fd, 65536)
-    if b"\x06" not in got:
-        sys.exit("no ACK from the tablet at offset %d" % pos)
-res = read_until(b"sum=", 60)
-res += read_until(b"\n", 3)            # the hex digits follow "sum="
+view = memoryview(data)
+while view:
+    n = os.write(fd, view[:65536])
+    view = view[n:]
+buf = b""
+end = time.time() + 60 + len(data) / 200000
+marker = ("N9P" + tag).encode()
+while time.time() < end and marker not in buf:
+    try:
+        chunk = os.read(fd, 4096)
+    except BlockingIOError:
+        chunk = b""
+    if chunk:
+        buf += chunk
+    else:
+        time.sleep(0.05)
 dt = time.time() - t0
-txt = res.decode("utf8", "replace")
-print("sent %d bytes in %.1fs; tablet says: %s" % (len(data), dt, txt.strip().splitlines()[-1] if txt.strip() else "<nothing>"))
-ok = ("rx ok %x sum=%x" % (len(data), want_sum)) in txt
-print("CHECKSUM OK" if ok else "CHECKSUM MISMATCH (want sum=%x)" % want_sum)
-sys.exit(0 if ok else 1)
+line = buf[buf.find(marker):].split(b"\n")[0].decode(errors="replace") if marker in buf else ""
+got = line.split()[-1] if line else ""
+print("%s -> %s: %d bytes in %.1f s (%.0f KB/s), md5 %s %s"
+      % (src, dst, len(data), dt, len(data) / 1024 / max(dt, 0.01), got or "?",
+         "OK" if got == want else "MISMATCH (want %s)" % want))
+sys.exit(0 if got == want else 1)
