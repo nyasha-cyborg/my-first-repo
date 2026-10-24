@@ -236,6 +236,58 @@ If pmOS still does not bring the network up: boot `n9pmos-inst-stripped.img` aga
 tries), `mount /dev/mmcblk0p31 /data`, `mount -o loop /data/pmos/rootfs.img /mnt/pmos`, and inspect
 `/mnt/pmos/etc/NetworkManager/system-connections/wifi-home.nmconnection` and the `finish-rootfs.sh` assumptions.
 
+## 2026-10-24 ~21:00 final state — pmOS running, bootloader wedge understood (resume here)
+
+Owner asked for this note and then to stop work. The tablet is **up and usable in pmOS**.
+
+Live state, verified over SSH at the end of the session:
+- `ssh user@192.168.1.111` (DHCP lease moves between boot; **sweep 192.168.1.100-125**, do not assume .109).
+  `sudo` password 147147 (pmbootstrap default, change it). Kernel `6.19.0-htc-flounder-g0fa4171fc82c`.
+- `greetd` started, phoc/gnome-session running (software rendering), `networkmanager` started.
+  `seatd` shows **stopped** in `rc-status` yet the phoc session came up; seatd was started by hand earlier.
+  If phoc ever fails with `could not create renderer`: start seatd, and confirm `/etc/environment` still has
+  `LD_LIBRARY_PATH=/opt/mesa-n9/lib`, `GBM_ALWAYS_SOFTWARE=1`, `LIBGL_ALWAYS_SOFTWARE=1`, `WLR_RENDERER=pixman`.
+- **The PMIC fix is NOT active.** `/proc/interrupts` still shows `LIC 86 **Edge** palmas` and dmesg has ~44
+  `4-0059` PMIC/I2C error lines. The boot partition currently holds **`n9pmos-boot-stripped.img`** (the
+  known-good, un-fixed image), restored with `fastboot flash boot` on a freshly power-cycled bootloader.
+
+What was learned about the bootloader (this cost most of the session):
+- **hboot wedges after a while in fastboot.** Symptoms, in order: `getvar` hangs (`< waiting for any device >`
+  while `fastboot devices` still lists it), `fastboot boot` prints `Booting OKAY` but the device drops straight
+  back to fastboot, `fastboot flash` hangs with no `Sending` line, and finally the device leaves the USB bus
+  (`usb 1-1: device not accepting address N, error -71`). **A physical power cycle restores it**, and on a fresh
+  hboot the first commands — `fastboot flash boot` included — work reliably.
+- Therefore: **do the write you need immediately after power-on**, before issuing getvar/queried commands.
+- `battery-soc-ok: no` / `remote: 'battery low'` from hboot is **stale garbage** (TWRP showed 97 % at the same
+  time). Do not plan around it; when a write is refused with it, power-cycle and retry.
+- A `fastboot boot` failure is **not** evidence that the image is bad — both the fixed and the known-good image
+  failed to boot while hboot was wedged, and the known-good one booted fine after a power cycle.
+
+Images and how to rebuild:
+- `~/Downloads/nexus9/bootimg-build/n9-mainline/n9pmos-boot-stripped.img` — known-good pmOS boot image, currently
+  in LNX (`mmcblk0p16`). Its ramdisk is `tools/pmos/init` (basic: mount UDA, loop-mount rootfs, switch_root).
+- `/tmp/bootfix/n9bootfix-v2-stripped.img` (md5 `81e6dbf867feb36dc6c9f9f76a54067f`) — same kernel plus the
+  **hardened init** (watchdog feeder from the first second, bounded fsck, stage log to `/data/pmos/boot-init.log`,
+  tmpfs `/tmp`, `/data` moved to `/android-data`) and the **Palmas `IRQ_TYPE_LEVEL_LOW` DTB**. Never confirmed on
+  hardware; it was written to LNX once, then the tablet would not boot — but that was during a bootloader wedge,
+  so **the image itself is not implicated**. Test it with `fastboot boot` right after a power cycle, and only
+  flash it once it demonstrably boots.
+- Android's original boot image: `~/Downloads/nexus9/boot-backup-lineage16.img` (md5
+  `7296c3e1b14ad7f9abe7eb69ea8a82e2`), restorable with `dd of=/dev/mmcblk0p16` or `fastboot flash boot`.
+
+Rootfs layout (fresh install done this session): `/data/pmos/rootfs.img` (12 GiB ext4 image inside UDA
+`mmcblk0p31`), 867 packages, user `user`, key-only sshd, WiFi NM profile, seatd/greetd/n9-health/n9-modem
+enabled. Note that Android's own `/data` tree also exists on UDA — both coexist; do not "clean" either.
+
+Next actions, in order:
+1. Power-cycle to fastboot and immediately `fastboot boot /tmp/bootfix/n9bootfix-v2-stripped.img`.
+2. On that boot check `grep palmas /proc/interrupts` → must show `Level` (not `Edge`), and
+   `dmesg | grep -c 4-0059` → should drop to ~0. Read `/data/pmos/boot-init.log` for the stage log.
+3. If good, flash the same image to LNX (`fastboot flash boot`) on a fresh bootloader, then run
+   `tools/soak-boot.sh` for 10 boots to prove the hangs are gone.
+4. Then the real work resumes: compositor/GPU path, LTE (`n9-modem`), Bluetooth, and the VDE H.264 playback
+   path (notes/vde.md — 1080p decode is already bit-exact).
+
 ## Other open items (see notes/gpu.md)
 
 - Flickering blocks during video (a sync race, not caused by the WC change); backlight unsteady at low
