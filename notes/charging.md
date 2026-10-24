@@ -45,8 +45,29 @@ one-time restore is needed (CGAIN=0x4000, MiscCFG/LearnCFG to POR 0x0810/0x2602 
 values if found, then MiscCFG quick-start so RepSOC restarts from VFSOC). Not written yet: needs the
 owner's OK (persistent gauge state).
 
-Next: charge with the tablet off on a wall charger (mainline still dies on a DCP replug); OK the gauge
-restore; boot the DTB with the fix; check `current_now` is non-zero and `capacity` tracks RepSOC.
+### 2026-10-24 20:35 — gauge restored (owner OK), coulomb counter running again
+
+Full 96-register snapshot first: `/tmp/n9build/gauge/gauge-before.txt` (tmpfs; key values in the table
+above). Writes with the new `tools/miniroot/i2cw16le.c` (write + read-back), live under pmOS:
+`2e CGAIN 0000→4000`, `28 LearnCFG 0017→2602`, `2b MiscCFG 0003→0810`, then `2b=0c10` (quick start;
+the QS bit self-cleared to 0x0810 within 2 s). Values are the POR defaults. Possible factory values:
+FilterCFG 0x87a4, RelaxCFG 0x506b and FullSOCThr 0x5f00 in the gauge match Maxim's MAX17050 init
+guide, which (from memory, unverified) also sets LearnCFG 0x2606 / MiscCFG 0x0870 — differences are minor.
+
+After (laptop USB port, Phosh up, bq24190 says `Charging`), 30 s of 5 s samples:
+- Current 0x0A −458 mA first sample, then **−79 … −99 mA**; AvgCurrent −134 mA settling.
+- RepSOC **11.9 %**, RepCap 790 mAh, MixSOC 12.2 %, VFSOC 12.2 % — consistent.
+- So on the laptop port the tablet **discharges ~100 mA while "Charging"**.
+
+Protecting the restore until the DT fix is in the boot image: `/etc/modprobe.d/n9-gauge.conf` in the
+rootfs blacklists `max17042_battery` (`modprobe -c` shows it; not yet proven over a reboot). pmOS shows
+no battery after the next boot until the fixed DTB is flashed — then delete that file. **After any
+reboot, re-check `i2cread 0 36 2e 1 w` = 4000** before trusting the gauge. The running driver keeps
+reporting VFSOC (`capacity`) until then; it will not re-probe on its own.
+
+Next: charge with the tablet off on a wall charger (mainline still dies on a DCP replug); build a boot
+image with the fixed DTB, `fastboot boot` it on a fresh hboot, check `current_now` exists and `capacity`
+follows RepSOC, then flash and remove the blacklist.
 
 ## 2026-10-23 11:50 — verified: the battery charges under mainline
 

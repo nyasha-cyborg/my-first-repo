@@ -243,8 +243,10 @@ tries), `mount /dev/mmcblk0p31 /data`, `mount -o loop /data/pmos/rootfs.img /mnt
   register stock Android/TWRP display (REA). The real charge is ~11 % (VFOCV 3.69 V).
 - So hboot's `battery low` was **right**, and "TWRP 97 %" was the frozen RepSOC. Low charge on a
   500 mA laptop port is a plausible contributor to the hangs/brown-outs below.
-- DT fix exported (`patches/candidates/flounder-max17050-rsns.patch`), not booted. Gauge register
-  restore pending owner OK. Charge the tablet powered off on a wall charger first.
+- DT fix exported (`patches/candidates/flounder-max17050-rsns.patch`), not booted. Gauge registers
+  restored 20:35 (CGAIN 0x4000 etc.): current now reads −80…−130 mA on the laptop port, RepSOC 11.9 %.
+  `max17042_battery` is blacklisted in the rootfs until the fixed DTB is flashed (no battery shown in
+  pmOS after reboot until then). Charge the tablet powered off on a wall charger.
 
 ## 2026-10-24 ~21:00 final state — pmOS running, bootloader wedge understood (resume here)
 
