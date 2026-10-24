@@ -1,0 +1,39 @@
+From 071f5bd575f4a45fb01cb8ae3efe81c995d39a15 Mon Sep 17 00:00:00 2001
+From: nyasha <nmushambi@proton.me>
+Date: Sat, 24 Oct 2026 15:23:06 +1300
+Subject: [PATCH] WIP tegra-vde: skip the T20 IRAM bitmap memset on T124 (1080p
+ overrun hang)
+
+memset(vde->iram + 128, 0, macroblocks_nb / 2) runs past the 4 KiB vde_pool
+for any frame with > 7168 MBs (1080p = 8160) and hard-hangs the SoC before
+the decoder is kicked. T124 zeroes the slice bitmap in VDE local memory via
+tegra_vde_t124_bsev_lists(); the T20 IRAM bitmap is vestigial there.
+
+Co-Authored-By: Claude Code <noreply@anthropic.com>
+---
+ drivers/media/platform/nvidia/tegra-vde/h264.c | 9 ++++++++-
+ 1 file changed, 8 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/media/platform/nvidia/tegra-vde/h264.c b/drivers/media/platform/nvidia/tegra-vde/h264.c
+index 07292e3ee..82ef493a9 100644
+--- a/drivers/media/platform/nvidia/tegra-vde/h264.c
++++ b/drivers/media/platform/nvidia/tegra-vde/h264.c
+@@ -452,7 +452,14 @@ static int tegra_vde_setup_hw_context(struct tegra_vde *vde,
+ 				 tegra_vde_readl(vde, vde->ppe, 0x28));
+ 	}
+ 
+-	memset(vde->iram + 128, 0, macroblocks_nb / 2);
++	/*
++	 * T20/T30 only. On T124 the slice bitmap is zeroed in VDE local memory
++	 * by tegra_vde_t124_bsev_lists(); this IRAM write would run past the
++	 * 4 KiB vde_pool once macroblocks_nb > 7168 (i.e. every 1080p frame)
++	 * and hard-hang the SoC.
++	 */
++	if (!vde->soc->t124_layout)
++		memset(vde->iram + 128, 0, macroblocks_nb / 2);
+ 
+ 	tegra_setup_frameidx(vde, dpb_frames, ctx->dpb_frames_nb,
+ 			     ctx->pic_width_in_mbs, ctx->pic_height_in_mbs);
+-- 
+2.56.0
+

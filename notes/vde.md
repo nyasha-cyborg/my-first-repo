@@ -152,6 +152,29 @@ Diagnosis plan: capture the last kernel messages to persistent storage before th
 (`cat /dev/kmsg >/data/pmos/hang.log &`), then reproduce; after the next power cycle read
 /data/pmos/hang.log (visible from Android root or pmOS). Control: the same procedure with a 720p clip.
 
+## 2026-10-25 — 1080p bit-exact; the hang was an IRAM overrun
+
+**Root cause of the "random" hangs (REA + audit):** `memset(vde->iram + 128, 0, macroblocks_nb / 2)`
+runs past the 4 KiB `vde_pool` for any frame with > 7168 macroblocks. 640x360 = 920 and 720p = 3600 MBs
+are fine; 1080p = 8160 writes 496 bytes past the mapping *before the decoder is kicked*, which
+hard-hangs the SoC (no pstore, no watchdog recovery). The T20 IRAM bitmap is vestigial on T124 — the
+T124 path zeroes the slice bitmap in VDE local memory via `tegra_vde_t124_bsev_lists()`. Fix: skip the
+memset when `soc->t124_layout` (patch 0012).
+
+Verified after the fix, mask 1361920, no faults:
+- 5-frame 1920x1080: clean (`gst_rc=0`).
+- full 60-frame 1920x1080 (2 s testsrc2, Main CAVLC): **Y 100.00 % (min 100.00), 60/60 frames**;
+  U/V 99.63 % (detile seam ceiling, not decoder error). 1080p is bit-exact.
+
+Independent driver-hang audit (still to fix, not needed for 1080p): abort path can `readl` a
+power-gated block from IRQ context; `remove()` frees the IOMMU while VDE may still be DMA-mastering
+(rmmod/insmod can wedge the box); `vde->lock` leak on a PM suspend error; no `.job_abort`.
+
+Next: 4K requires the large-picture path (>2048 px): BSE-V 0x28, MBE 0x3c, MCE 0x64, PPE 0x40 = 3,
+BSE-V/MBE/MCE 0x20000000-size command variants, SXE 0x10 bit 29 for width > 2048, lift the driver's
+1920 width cap / 16386-px checks, and grow `t124_mb_bo` beyond 8192 MBs. Research agents are checking
+the exact limits and whether VP9/HEVC partial decode is plausible.
+
 ## Playback path plan (2026-10-25, read-only audit)
 
 - Capture geometry (driver-only, first step): `tegra_fill_pixfmt_mp()` in v4l2.c now uses a 64-byte-GOB
