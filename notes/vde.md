@@ -175,6 +175,45 @@ BSE-V/MBE/MCE 0x20000000-size command variants, SXE 0x10 bit 29 for width > 2048
 1920 width cap / 16386-px checks, and grow `t124_mb_bo` beyond 8192 MBs. Research agents are checking
 the exact limits and whether VP9/HEVC partial decode is plausible.
 
+## 2026-10-25 08:20-09:00 — hardened module verified; B-frame errors = implicit weighted bipred
+
+Rootfs was reinstalled 10-24, so test deps were rebuilt: `apk add gstreamer-tools gst-plugins-{base,good,bad}
+v4l-utils`; clips now come from `tools/vde-clips.sh` (host x264, recipes in the script, cached in
+`~/code/scratch/n9work/vde/src`). Module build gotcha: `make O=… M=drivers/…/tegra-vde modules` writes
+the .ko into the **source tree** (`drivers/media/platform/nvidia/tegra-vde/tegra-vde.ko`), not
+linux-flounder-out — copy from there (clean with `git clean -fX` on that dir afterwards).
+
+Mask 1361920, module = committed tree incl. hardening (e0e62c40a) + block-linear fourcc (2cebae124):
+| clip | Y | note |
+|---|---|---|
+| m_plain (Baseline), m_cabac (Main CABAC) | **100.00 %** | |
+| m_bnw / m_bnwcabac (3 B, pyramid, `weightb=0`) | **100.00 %** | B-frames bit-exact, CAVLC and CABAC |
+| m_b / m_bcabac (same, x264 default `weightb=1`) | 98.91 / 99.09 % | first bad = frame 1 |
+| m_btemp (`weightb=0`, `direct=temporal`) | 95.91 % | temporal direct (known) |
+faults=0 errs=0 throughout (hardened abort/remove path decodes cleanly).
+
+**New finding: implicit weighted bi-prediction (`weighted_bipred_idc=2`) is not applied** — and it is
+x264's default, so it matters for real files more than explicit WP. The driver already puts the idc in
+SXE 0x48 bits 18-19. Implicit weights and temporal direct both need POC distances (DistScaleFactor).
+
+REA of `nvavp_vid_ucode_alt.bin` (re-extracted from the factory vendor image; ELF via the new
+`tools/avp-ucode2elf.sh`, Ghidra): `fn_05434` is the per-slice routine. It writes to the MBE FIFO
+(0x60032080): `0xAB000000` (slice open), per-list 0xC0000000/0x48000000 entries, `0xCC…FFC0`
+terminator, `0xA3…` co-located address (B), then `0x30000000 | type(I1/P2/B3) | direct_spatial<<3 |
+s[0xab]&3 <<15 | s[0xac]&0xf <<17 | s[0xad]&0xf <<21 | coloc_valid<<25 | bottom<<26 | field<<27`, then
+`0x91…` (slice start MB x/y, B only). Also, when a sequence flag is set, it writes to 0x60031000:
+`0xC0000000…` (SPS-ish), `0xC0200000 | n_l0<<16 | n_l1<<11 | type<<8 | qp<<2 | s[0xa9]&3`, `0xC0400000 |
+mb_y<<12 | mb_x`. Then SXE 0x64/0x60/0x4c/0x50 per slice.
+
+Tested (patch 0013, kernel a7b81d58d, t124_mask2 bit 9 = 0x30000000 command with the parsed
+direct_spatial flag, bit 10 = 0xAB000000 before the list setup): **byte-identical on every clip** —
+the MBE does not act on them as placed. Next lead: the 0x60031000 `0xC0200000` command — its `s[0xa9]&3`
+field sits next to slice type and both list lengths, the likelier home of weighted_bipred_idc; and
+whether the per-slice SXE 0x60/0x64 carry it.
+
+Playback UAPI verified on hardware (v4l2-ctl): capture formats `YM12` (default) then `TBL4`; control
+`tegra_vde_block_linear_output_modifier` = 0x0300000000000010 (NVIDIA 16Bx2 block, h=0), read-only.
+
 ## Playback path plan (2026-10-25, read-only audit)
 
 - Capture geometry (driver-only, first step): `tegra_fill_pixfmt_mp()` in v4l2.c now uses a 64-byte-GOB

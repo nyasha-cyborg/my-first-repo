@@ -1,0 +1,110 @@
+From a7b81d58d716cb9bf0fa726f5fd27d892f71620b Mon Sep 17 00:00:00 2001
+From: nyasha <nmushambi@proton.me>
+Date: Sun, 25 Oct 2026 08:39:06 +1300
+Subject: [PATCH] WIP tegra-vde T124: stock per-slice MBE 0xAB/0x30000000
+ commands (mask2 bits 9/10) - no effect
+
+Stock fn_05434 opens each slice's MBE command group with 0xAB000000 and
+sends 0x30000000 | slice type | direct_spatial (3) | weighted_bipred_idc
+(15-16) | log2 denoms (17-24) | co-located valid (25). Emitting both, with
+direct_spatial from the in-kernel slice parser, leaves every clip byte-
+identical (m_b implicit WP 98.91 %, m_btemp temporal direct 95.91 %), so
+the MBE does not act on them as placed. Kept behind t124_mask2 bits 9/10
+(off by default) for the next experiment (BSE-V 0xC0200000 command).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ .../media/platform/nvidia/tegra-vde/h264.c    | 42 ++++++++++++++++++-
+ 1 file changed, 41 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/media/platform/nvidia/tegra-vde/h264.c b/drivers/media/platform/nvidia/tegra-vde/h264.c
+index c4e11f8f5..2dd8e6e17 100644
+--- a/drivers/media/platform/nvidia/tegra-vde/h264.c
++++ b/drivers/media/platform/nvidia/tegra-vde/h264.c
+@@ -44,6 +44,10 @@ struct tegra_vde_h264_decoder_ctx {
+ 	/* T124: frame slots of RefPicList1 entries, in list order (0-based) */
+ 	unsigned int num_refs_l1;
+ 	unsigned int ref_slot_l1[16];
++	/* first slice header, for the stock per-slice MBE 0x30000000 command */
++	bool slice_parsed;
++	unsigned int slice_type;	/* 0 P, 1 B, 2 I (slice_type % 5) */
++	unsigned int direct_spatial;
+ };
+ 
+ struct h264_reflists {
+@@ -644,6 +648,10 @@ static int tegra_vde_setup_hw_context(struct tegra_vde *vde,
+ 
+ 	tegra_vde_writel(vde, value, vde->mbe, 0x80);
+ 
++	/* stock fn_05434 opens every slice's MBE command group with 0xAB000000 */
++	if (vde->soc->t124_layout && (t124_mask2 & BIT(10)))
++		tegra_vde_writel(vde, 0xAB000000, vde->mbe, 0x80);
++
+ 	err = tegra_vde_setup_mbe_frame_idx(vde,
+ 					    ctx->dpb_frames_nb - 1,
+ 					    ctx->pic_order_cnt_type == 0);
+@@ -725,6 +733,32 @@ static int tegra_vde_setup_hw_context(struct tegra_vde *vde,
+ 			tegra_vde_mbe_set_0xa_reg(vde, 2, dpb_frames[l1].aux_addr);
+ 	}
+ 
++	/*
++	 * Stock fn_05434 (per slice): MBE 0x30000000 = slice type (I 1, P 2,
++	 * B 3), direct_spatial_mv_pred (bit 3), weighted_bipred_idc (15-16),
++	 * luma/chroma log2 weight denominators (17-20 / 21-24), co-located
++	 * valid (25), bottom/field (26/27). Mainline only tells the SXE about
++	 * weighted bipred, so implicit weights and temporal direct were never
++	 * reaching motion compensation.
++	 */
++	if (vde->soc->t124_layout && (t124_mask2 & BIT(9))) {
++		bool bslice = dpb_frames[0].flags & FLAG_B_FRAME;
++		unsigned int st = ctx->slice_parsed ? ctx->slice_type : (bslice ? 1 : 0);
++
++		value = 0x30000000;
++		value |= st == 1 ? 3 : st == 0 ? 2 : 1;
++		if (st == 1) {
++			value |= (ctx->direct_spatial & 1) << 3;
++			if (ctx->num_refs_l1)
++				value |= BIT(25);
++		}
++		if (st != 2)
++			value |= (ctx->weighted_bipred_idc & 3) << 15;
++		tegra_vde_writel(vde, value, vde->mbe, 0x80);
++		if (t124_mask2 & BIT(1))
++			dev_info(dev, "n9dbg mbe slice cmd %08x\n", value);
++	}
++
+ 	value = 0xFC000000;
+ 	value |= !!(dpb_frames[0].flags & FLAG_B_FRAME) << 2;
+ 
+@@ -1140,6 +1174,7 @@ struct n9_h264_mods {
+ 	u32 frame_num;
+ 	u32 poc_lsb;
+ 	u32 slice_type;
++	u32 direct_spatial;
+ };
+ 
+ struct n9_br {
+@@ -1290,7 +1325,7 @@ static int n9_h264_parse_slice(const u8 *data, size_t len,
+ 	if (pps->flags & V4L2_H264_PPS_FLAG_REDUNDANT_PIC_CNT_PRESENT)
+ 		n9_br_ue(&br);
+ 	if (slice_type == 1)
+-		n9_br_u(&br, 1);	/* direct_spatial_mv_pred_flag */
++		mods->direct_spatial = n9_br_u(&br, 1);	/* direct_spatial_mv_pred_flag */
+ 	if (slice_type != 2) {
+ 		if (n9_br_u(&br, 1)) {	/* num_ref_idx_active_override */
+ 			n9_br_ue(&br);
+@@ -1417,6 +1452,11 @@ static int tegra_vde_h264_setup_frames(struct tegra_ctx *ctx,
+ 			n9_h264_parse_slice(vaddr, vb2_get_plane_payload(&src->vb2_buf, 0),
+ 					    h, &mods) : -ENOMEM;
+ 
++		h264->slice_parsed = !perr;
++		if (!perr) {
++			h264->slice_type = mods.slice_type;
++			h264->direct_spatial = mods.direct_spatial;
++		}
+ 		if (!perr) {
+ 			if (h->decode_params->flags & V4L2_H264_DECODE_PARAM_FLAG_BFRAME) {
+ 				n9_apply_mods(reflists.b0, b.num_valid, &b, mods.l0,
+-- 
+2.56.0
+

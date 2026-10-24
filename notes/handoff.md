@@ -236,6 +236,16 @@ If pmOS still does not bring the network up: boot `n9pmos-inst-stripped.img` aga
 tries), `mount /dev/mmcblk0p31 /data`, `mount -o loop /data/pmos/rootfs.img /mnt/pmos`, and inspect
 `/mnt/pmos/etc/NetworkManager/system-connections/wifi-home.nmconnection` and the `finish-rootfs.sh` assumptions.
 
+## 2026-10-25 09:00 — VDE status (resume here for video)
+
+- Hardened tegra-vde + block-linear fourcc/modifier verified on hardware (faults=0; TBL4 + modifier
+  0x0300000000000010 visible). Baseline/CABAC/B-frames bit-exact **when the stream has no implicit
+  weighted bipred**; x264-default (`weightb=1`) B clips are 98.9-99.1 % → implicit WP not applied.
+  Temporal direct 95.9 %. Both need POC distances; stock per-slice MBE commands tried, no effect
+  (notes/vde.md 2026-10-25 08:20). Next: the BSE-V 0xC0200000 command from fn_05434.
+- New tools: `tools/vde-clips.sh` (regression clips), `tools/avp-ucode2elf.sh` (microcode → ELF).
+  The AVP REA workspace is back in `~/code/scratch/n9work/avp/`.
+
 ## 2026-10-25 — host reboot wiped /tmp (resume here for charging/gauge)
 
 - The host rebooted 2026-10-24 22:52: **/tmp/n9build and /tmp/bootfix are gone** — including
