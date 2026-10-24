@@ -118,10 +118,19 @@ slice header (not stripped) → fixed by copying the header with EPBs removed be
 available (t124_mask2 bit 1). GStreamer still cannot supply SLICE_PARAMS lists in frame-based mode;
 the in-kernel parser is the workaround (multi-slice/long-term remain best effort).
 
-Dead ends: MBE list1 `0xC4000000` group commands (mask2 bit 0, verified to run, no effect); MBE A reg
-2/3 colocated aux (t124 bit 22); MBE per-MB buffer (bit 10); unwrapped ref `frame_num` (mask2 bit 3);
-POC in IRAM IDs (bit 21). t124_mask2: bit0 list1 cmds (dead), bit1 logs, bit2 force in-use (default on
-T124), bit3 raw frame_num (dead), bit5 slice-params log, bit6 fmt log, bit7 force modification parse.
+Dead ends: MBE list1 `0xC4000000` group commands (mask2 bit 0); MBE A reg 2/3 colocated aux (t124
+bit 22, and re-issued after reg 8/9 with the real list1[0] slot under mask2 bit 8 — no effect); MBE
+per-MB buffer (bit 10); unwrapped ref `frame_num` (mask2 bit 3, retested with the parser: bpyrnormal
+still 99.47); POC in IRAM IDs (bit 21, much worse). t124_mask2: bit0 list1 cmds (dead), bit1 logs,
+bit2 force in-use (default on T124), bit3 raw frame_num (dead), bit5 slice-params log, bit6 fmt log,
+bit7 force modification parse, bit8 temporal-direct coloc re-issue (dead).
+
+Open items (2026-10-25): (1) bpyrnormal AU84 still uses the base list order in hardware although the
+driver log shows the correct modified list (`err=0 fn=1 poc=54 ops=0:1,1:0,0:1 list0=1/2/0` = fn
+15/0/14) — no explanation yet; candidate next steps are the 0x30000000/0xAB/0x91 per-slice MBE
+commands or a hardware quirk around the frame_num-0 entry. (2) Temporal direct needs more than the
+coloc A2/A3 address: stock also zeroes a 0x60 B/MB buffer once per sequence and emits per-slice
+0x30000000 (+coloc-valid bit) / 0xAB / 0x91 commands; none are implemented.
 
 ## Playback path plan (2026-10-25, read-only audit)
 

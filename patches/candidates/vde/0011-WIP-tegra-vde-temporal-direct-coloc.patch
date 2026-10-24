@@ -1,0 +1,100 @@
+From 4b586363f1e873b057d671d3d350ea58bf001b21 Mon Sep 17 00:00:00 2001
+From: nyasha <nmushambi@proton.me>
+Date: Sat, 24 Oct 2026 14:39:40 +1300
+Subject: [PATCH] =?UTF-8?q?WIP=20tegra-vde:=20temporal-direct=20coloc=20A2?=
+ =?UTF-8?q?/A3=20re-issue=20(mask2=20bit8)=20=E2=80=94=20no=20effect?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Stock re-issues the co-located MV buffer after the current-frame one; issuing
+the real RefPicList1[0] aux here changes nothing (bdirtemporal stays 98.60 %,
+all spatial/P/B clips stay 100 %). The missing piece for temporal direct is
+elsewhere (0x30000000/0xAB/0x91 slice commands or the 0x60 B/MB buffer).
+
+Co-Authored-By: Claude Code <noreply@anthropic.com>
+---
+ .../media/platform/nvidia/tegra-vde/h264.c    | 50 ++++++++++++++-----
+ 1 file changed, 38 insertions(+), 12 deletions(-)
+
+diff --git a/drivers/media/platform/nvidia/tegra-vde/h264.c b/drivers/media/platform/nvidia/tegra-vde/h264.c
+index 5c632c556..07292e3ee 100644
+--- a/drivers/media/platform/nvidia/tegra-vde/h264.c
++++ b/drivers/media/platform/nvidia/tegra-vde/h264.c
+@@ -705,6 +705,19 @@ static int tegra_vde_setup_hw_context(struct tegra_vde *vde,
+ 	tegra_vde_mbe_set_0xa_reg(vde, 6, 0x63DEAD00);
+ 	tegra_vde_mbe_set_0xa_reg(vde, 8, dpb_frames[0].aux_addr);
+ 
++	/*
++	 * Stock fn_04828/fn_05434 re-issue the co-located picture's MV buffer
++	 * (A2/A3) per slice, *after* the current-frame buffer. Temporal direct
++	 * needs it; without it the MBE reads a dummy address.
++	 */
++	if (vde->soc->t124_layout && (t124_mask2 & BIT(8)) &&
++	    (dpb_frames[0].flags & FLAG_B_FRAME) && ctx->num_refs_l1) {
++		unsigned int l1 = ctx->ref_slot_l1[0];
++
++		if (l1 && l1 < ctx->dpb_frames_nb)
++			tegra_vde_mbe_set_0xa_reg(vde, 2, dpb_frames[l1].aux_addr);
++	}
++
+ 	value = 0xFC000000;
+ 	value |= !!(dpb_frames[0].flags & FLAG_B_FRAME) << 2;
+ 
+@@ -1334,6 +1347,18 @@ static int tegra_vde_h264_setup_frames(struct tegra_ctx *ctx,
+ 			n9_h264_parse_slice(vaddr, vb2_get_plane_payload(&src->vb2_buf, 0),
+ 					    h, &mods) : -ENOMEM;
+ 
++		if (!perr) {
++			if (h->decode_params->flags & V4L2_H264_DECODE_PARAM_FLAG_BFRAME) {
++				n9_apply_mods(reflists.b0, b.num_valid, &b, mods.l0,
++					      mods.l0_nb, h->decode_params->frame_num, max_fn);
++				n9_apply_mods(reflists.b1, b.num_valid, &b, mods.l1,
++					      mods.l1_nb, h->decode_params->frame_num, max_fn);
++			} else {
++				n9_apply_mods(reflists.p, b.num_valid, &b, mods.l0,
++					      mods.l0_nb, h->decode_params->frame_num, max_fn);
++			}
++		}
++
+ 		if (t124_mask2 & BIT(1)) {
+ 			u32 l0[4] = {0}, l0fn[4] = {0};
+ 			unsigned int k;
+@@ -1347,21 +1372,22 @@ static int tegra_vde_h264_setup_frames(struct tegra_ctx *ctx,
+ 				l0fn[k] = (u32)b.refs[idx].frame_num & 0x1f;
+ 			}
+ 			dev_info(ctx->vde->dev,
+-				 "n9dbg mods: err=%d st=%u fn=%u poc=%u l0mod=%u l1mod=%u list0=%u/%u/%u/%u fn=%u/%u/%u/%u\n",
++				 "n9dbg mods: err=%d st=%u fn=%u poc=%u ops=%u:%u,%u:%u,%u:%u list0=%u/%u/%u/%u fn=%u/%u/%u/%u\n",
+ 				 perr, mods.slice_type, mods.frame_num, mods.poc_lsb,
+-				 mods.l0_nb, mods.l1_nb, l0[0], l0[1], l0[2], l0[3],
++				 mods.l0_nb > 0 ? mods.l0[0].op : 9,
++				 mods.l0_nb > 0 ? mods.l0[0].value : 0,
++				 mods.l0_nb > 1 ? mods.l0[1].op : 9,
++				 mods.l0_nb > 1 ? mods.l0[1].value : 0,
++				 mods.l0_nb > 2 ? mods.l0[2].op : 9,
++				 mods.l0_nb > 2 ? mods.l0[2].value : 0,
++				 l0[0], l0[1], l0[2], l0[3],
+ 				 l0fn[0], l0fn[1], l0fn[2], l0fn[3]);
+-		}
++			if (perr && vaddr) {
++				const u8 *b8 = vaddr;
+ 
+-		if (!perr) {
+-			if (h->decode_params->flags & V4L2_H264_DECODE_PARAM_FLAG_BFRAME) {
+-				n9_apply_mods(reflists.b0, b.num_valid, &b, mods.l0,
+-					      mods.l0_nb, h->decode_params->frame_num, max_fn);
+-				n9_apply_mods(reflists.b1, b.num_valid, &b, mods.l1,
+-					      mods.l1_nb, h->decode_params->frame_num, max_fn);
+-			} else {
+-				n9_apply_mods(reflists.p, b.num_valid, &b, mods.l0,
+-					      mods.l0_nb, h->decode_params->frame_num, max_fn);
++				dev_info(ctx->vde->dev,
++					 "n9dbg mods: first bytes %02x %02x %02x %02x %02x %02x %02x %02x\n",
++					 b8[0], b8[1], b8[2], b8[3], b8[4], b8[5], b8[6], b8[7]);
+ 			}
+ 		}
+ 	}
+-- 
+2.56.0
+
