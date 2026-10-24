@@ -1,5 +1,53 @@
 # Charging under mainline
 
+## 2026-10-24 20:30 — battery % wrong in pmOS: mainline disables the gauge's current sense (root cause found)
+
+Symptom: pmOS shows `capacity=11` while `charge_now/charge_full` = 5890/6124 mAh (96 %).
+Raw dump (`/tmp/n9build/i2cread 0 36 00 32 w`, read-only), pmOS boot, laptop USB port:
+
+| reg | value | meaning |
+|---|---|---|
+| 0x06 RepSOC | 0x6031 | 96.2 % — frozen |
+| 0x0D MixSOC / 0x0E AvSOC | 0x408d / 0x087b | 64.5 % / 8.5 % (drifting to VFSOC) |
+| 0xFF VFSOC | 0x0b2c | **11.2 %** (voltage model; what the driver reports) |
+| 0x09 VCELL / 0xFB VFOCV | 3.64 V / **3.69 V** | low state of charge |
+| 0x0A/0x0B Current/AvgCurrent | **0 / 0** | constant over 3 samples |
+| 0x2E CGAIN / 0x2F COFF | **0x0000** / 0 | current gain zero (POR 0x4000) |
+| 0x2B MiscCFG / 0x28 LearnCFG | 0x0003 / 0x0017 | |
+
+Cause: `max17042_battery.c` probe, when the DT has no `maxim,rsns-microohm`
+(`enable_current_sense` false), writes **CGAIN=0, MiscCFG=0x0003, LearnCFG=0x0007** — voltage-only
+mode — and reports `capacity` from VFSOC. These registers live in the battery-backed gauge, so the
+coulomb counter stays dead across reboots and OSes. That is what the old DT comment "breaks the
+battery meter in Android until the battery is disconnected" meant.
+
+REA (Lineage 16 kernel, `gauge.elf` window via tools/image2elf.py, Ghidra):
+- `htc_batt_max17050_get_soc` reads **reg 0x06 RepSOC** (rounded up) → Android/TWRP show the frozen
+  value. The "TWRP 97 %" in handoff.md was this frozen RepSOC, not the real charge.
+- The stock driver writes only 0x3a (V_empty), 0x12, 0x22 (`max17050_set_parameter_by_temp`, values
+  from the DT `param_adjust_map_by_id` table; the gauge currently holds the id0 low-temp set
+  af59/4d84/2484). It never writes CGAIN/MiscCFG/LearnCFG: those come from the factory/hboot model.
+
+Consequences:
+- **The battery really is low (~11 %, OCV 3.69 V).** hboot's `battery low` refusal was probably
+  correct; retire the "hboot battery reading is stale garbage" conclusion.
+- On a 500 mA laptop port the tablet's load exceeds the input (−250 mA net, 2026-10-23), so mainline
+  sessions drain the pack. Low SOC on an aged pack (Age 0x07 = 92 %) under CPU/LTE bursts → voltage
+  sag → brown-outs. **Plausible contributor to the hard hangs, `-71` enumerations and the power-off on
+  cable replug** (replug = battery alone carries the load for a moment). Not proven yet.
+- Palmas GPADC (`iio:device0`) reads all time out — consistent with the Edge-typed Palmas IRQ; no
+  second voltage measurement available until the LEVEL_LOW fix is active.
+
+Fix: `patches/candidates/flounder-max17050-rsns.patch` (kernel `3171a4096`, local): DT
+`maxim,rsns-microohm = <10000>` (10 mΩ; DesignCap 0x33c0 = 6624 mAh confirms). DTB built, not booted.
+With it the driver leaves CGAIN alone and reports RepSOC. **The gauge still holds CGAIN=0** — a
+one-time restore is needed (CGAIN=0x4000, MiscCFG/LearnCFG to POR 0x0810/0x2602 or the factory
+values if found, then MiscCFG quick-start so RepSOC restarts from VFSOC). Not written yet: needs the
+owner's OK (persistent gauge state).
+
+Next: charge with the tablet off on a wall charger (mainline still dies on a DCP replug); OK the gauge
+restore; boot the DTB with the fix; check `current_now` is non-zero and `capacity` tracks RepSOC.
+
 ## 2026-10-23 11:50 — verified: the battery charges under mainline
 
 Image `n9hsicI2` (kernel `usb-bringup`), tablet on the laptop's USB port (SDP), LTE modem + WiFi up.

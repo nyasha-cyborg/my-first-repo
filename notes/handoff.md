@@ -236,6 +236,16 @@ If pmOS still does not bring the network up: boot `n9pmos-inst-stripped.img` aga
 tries), `mount /dev/mmcblk0p31 /data`, `mount -o loop /data/pmos/rootfs.img /mnt/pmos`, and inspect
 `/mnt/pmos/etc/NetworkManager/system-connections/wifi-home.nmconnection` and the `finish-rootfs.sh` assumptions.
 
+## 2026-10-24 20:30 — CORRECTION: the battery is really low; mainline froze the gauge (see notes/charging.md)
+
+- pmOS `capacity` 11 % vs `charge_now` 96 %: mainline's max17042 probe (no `maxim,rsns-microohm` in
+  DT) zeroes CGAIN, which kills the coulomb counter in the gauge itself and freezes RepSOC — the
+  register stock Android/TWRP display (REA). The real charge is ~11 % (VFOCV 3.69 V).
+- So hboot's `battery low` was **right**, and "TWRP 97 %" was the frozen RepSOC. Low charge on a
+  500 mA laptop port is a plausible contributor to the hangs/brown-outs below.
+- DT fix exported (`patches/candidates/flounder-max17050-rsns.patch`), not booted. Gauge register
+  restore pending owner OK. Charge the tablet powered off on a wall charger first.
+
 ## 2026-10-24 ~21:00 final state — pmOS running, bootloader wedge understood (resume here)
 
 Owner asked for this note and then to stop work. The tablet is **up and usable in pmOS**.
