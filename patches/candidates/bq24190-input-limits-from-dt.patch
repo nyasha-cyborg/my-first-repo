@@ -1,0 +1,166 @@
+From 7b0972efab7194c94b6784043ba3356fd5e5f588 Mon Sep 17 00:00:00 2001
+From: nyasha <nmushambi@proton.me>
+Date: Sun, 25 Oct 2026 08:15:38 +1300
+Subject: [PATCH] power: supply: bq24190: input current and voltage limits from
+ firmware
+
+Boards that do USB charger detection in the PHY (Tegra flounder) never get
+the bq24192's IINLIM raised: the probe-time register reset leaves it at
+500 mA, which is less than the tablet draws, so it discharges on a wall
+adapter. Read input-current-limit-microamp and input-voltage-limit-microvolt
+(the bq256xx names), apply them at probe and again on every power-good
+rising edge, since the chip redoes its own detection on plug-in.
+
+flounder: 2.0 A / 4.20 V. Measured on a 3 A USB-C source with the stock
+cable: +200 mA into the battery at 4.36 V, +423 mA at 4.20 V.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ .../bindings/power/supply/bq24190.yaml        | 13 +++++
+ .../boot/dts/nvidia/tegra132-flounder.dts     |  8 +++
+ drivers/power/supply/bq24190_charger.c        | 58 +++++++++++++++++++
+ 3 files changed, 79 insertions(+)
+
+diff --git a/Documentation/devicetree/bindings/power/supply/bq24190.yaml b/Documentation/devicetree/bindings/power/supply/bq24190.yaml
+index 938554a9f..f02ed0537 100644
+--- a/Documentation/devicetree/bindings/power/supply/bq24190.yaml
++++ b/Documentation/devicetree/bindings/power/supply/bq24190.yaml
+@@ -47,6 +47,19 @@ properties:
+       when power is connected and the battery is below minimum system voltage,
+       the system will be regulated above this setting.
+ 
++  input-current-limit-microamp:
++    description: |
++      input current limit (IINLIM), applied at probe and whenever input power
++      returns. Use on boards where charger detection is not wired to the chip.
++    enum: [100000, 150000, 500000, 900000, 1200000, 1500000, 2000000, 3000000]
++
++  input-voltage-limit-microvolt:
++    description: |
++      input voltage regulation threshold (VINDPM): input current is reduced
++      when VBUS falls below this.
++    minimum: 3880000
++    maximum: 5080000
++
+   omit-battery-class:
+     type: boolean
+     description: |
+diff --git a/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts b/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
+index d21b9ac47..af10d1746 100644
+--- a/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
++++ b/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
+@@ -776,6 +776,14 @@ nct72@4c {
+ 		bq24193@6b {
+ 			compatible = "ti,bq24192";
+ 			reg = <0x6b>;
++			/*
++			 * USB charger detection is done by the Tegra PHY in the
++			 * vendor kernel, so the chip would otherwise stay at
++			 * 500 mA. 4.20 V tolerates the stock micro-USB cable's
++			 * drop (vendor: 4.44 V plus a 900-1500 mA AICL ramp).
++			 */
++			input-current-limit-microamp = <2000000>;
++			input-voltage-limit-microvolt = <4200000>;
+ 			interrupt-parent = <&gpio>;
+ 			interrupts = <TEGRA_GPIO(J, 0) IRQ_TYPE_EDGE_FALLING>;
+ 			monitored-battery = <&battery>;
+diff --git a/drivers/power/supply/bq24190_charger.c b/drivers/power/supply/bq24190_charger.c
+index 537cb6ee7..376f46e70 100644
+--- a/drivers/power/supply/bq24190_charger.c
++++ b/drivers/power/supply/bq24190_charger.c
+@@ -240,6 +240,8 @@ struct bq24190_dev_info {
+ 	u32				ichg_max;
+ 	u32				vreg;
+ 	u32				vreg_max;
++	u32				iinlim;		/* uA, 0 = leave alone */
++	u16				vindpm;		/* mV, 0 = leave alone */
+ 	struct mutex			f_reg_lock;
+ 	u8				f_reg;
+ 	u8				ss_reg;
+@@ -761,6 +763,34 @@ static int bq24190_register_vbus_regulator(struct bq24190_dev_info *bdi)
+ }
+ #endif
+ 
++/*
++ * Input limits from firmware. The chip's own D+/D- detection (or a register
++ * reset) leaves IINLIM at 100-500 mA on boards where the PHY does charger
++ * detection, so apply these at probe and again whenever input power returns.
++ */
++static int bq24190_set_input_limits(struct bq24190_dev_info *bdi)
++{
++	int ret;
++
++	if (bdi->vindpm) {
++		ret = bq24190_write_mask(bdi, BQ24190_REG_ISC,
++					 BQ24190_REG_ISC_VINDPM_MASK,
++					 BQ24190_REG_ISC_VINDPM_SHIFT,
++					 (bdi->vindpm - 3880) / 80);
++		if (ret < 0)
++			return ret;
++	}
++
++	if (bdi->iinlim)
++		return bq24190_set_field_val(bdi, BQ24190_REG_ISC,
++					     BQ24190_REG_ISC_IINLIM_MASK,
++					     BQ24190_REG_ISC_IINLIM_SHIFT,
++					     bq24190_isc_iinlim_values,
++					     ARRAY_SIZE(bq24190_isc_iinlim_values),
++					     bdi->iinlim);
++	return 0;
++}
++
+ static int bq24190_set_config(struct bq24190_dev_info *bdi)
+ {
+ 	int ret;
+@@ -828,6 +858,10 @@ static int bq24190_set_config(struct bq24190_dev_info *bdi)
+ 			return ret;
+ 	}
+ 
++	ret = bq24190_set_input_limits(bdi);
++	if (ret < 0)
++		return ret;
++
+ 	if (bdi->vreg) {
+ 		ret = bq24190_set_field_val(bdi, BQ24190_REG_CVC,
+ 					    BQ24190_REG_CVC_VREG_MASK,
+@@ -1837,6 +1871,14 @@ static void bq24190_check_status(struct bq24190_dev_info *bdi)
+ 					ret);
+ 		}
+ 
++		if (!(bdi->ss_reg & BQ24190_REG_SS_PG_STAT_MASK) &&
++				(ss_reg & BQ24190_REG_SS_PG_STAT_MASK)) {
++			ret = bq24190_set_input_limits(bdi);
++			if (ret < 0)
++				dev_err(bdi->dev, "Can't set input limits: %d\n",
++					ret);
++		}
++
+ 		if ((bdi->ss_reg & battery_mask_ss) != (ss_reg & battery_mask_ss))
+ 			alert_battery = true;
+ 		if ((bdi->ss_reg & ~battery_mask_ss) != (ss_reg & ~battery_mask_ss))
+@@ -1962,6 +2004,22 @@ static int bq24190_get_config(struct bq24190_dev_info *bdi)
+ 			dev_warn(bdi->dev, "invalid value for %s: %u\n", s, v);
+ 	}
+ 
++	if (device_property_read_u32(bdi->dev, "input-current-limit-microamp", &v) == 0) {
++		if (v >= bq24190_isc_iinlim_values[0] &&
++		    v <= bq24190_isc_iinlim_values[ARRAY_SIZE(bq24190_isc_iinlim_values) - 1])
++			bdi->iinlim = v;
++		else
++			dev_warn(bdi->dev, "invalid value for input-current-limit-microamp: %u\n", v);
++	}
++
++	if (device_property_read_u32(bdi->dev, "input-voltage-limit-microvolt", &v) == 0) {
++		v /= 1000;
++		if (v >= 3880 && v <= 5080)
++			bdi->vindpm = v;
++		else
++			dev_warn(bdi->dev, "invalid value for input-voltage-limit-microvolt: %u\n", v);
++	}
++
+ 	if (!power_supply_get_battery_info(bdi->charger, &info)) {
+ 		v = info->precharge_current_ua / 1000;
+ 		if (v >= BQ24190_REG_PCTCC_IPRECHG_MIN
+-- 
+2.56.0
+

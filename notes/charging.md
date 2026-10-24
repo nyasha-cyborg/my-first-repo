@@ -26,6 +26,27 @@
   host USB disconnects. Input ≈ 1 A at the 4.36 V floor → the cable drops ~0.6 V; the limit above 1.5 A
   is irrelevant on this cable. n9-charge.start now holds **VINDPM 4.20 V (code 4) + IINLIM 2.0 A**.
   Not lower than 4.20 V without checking Palmas/chipidea VBUS detection.
+- 2026-10-25 08:10 NZDT: **RepSOC 51.3 %** after ~10 h (3.4 % at 22:48), +256 mA at 3.92 V, no reboot.
+
+### 2026-10-25 — vendor input-current logic (REA) and the kernel fix
+
+REA of the Lineage 16 kernel (`boot-backup-lineage16.img`; symbols recovered offline with the new
+`tools/kallsyms-decode.py`, window `ffffffc0006da700-6dec00` wrapped by image2elf, Ghidra):
+- `htc_battery_bq2419x_aicl_wq` = **AICL**: set 900 mA, then +300 mA steps (900 → 1200 → 1500) every
+  200 ms, averaging `bq2419x_get_vbus` 3× per step. If VBUS falls disproportionately
+  (`(V900−V1200)·3 < (V1200−V1500)·2`) it drops back to 900 mA and retries after 300 s. Cap 1500 mA (0x5db).
+- `htc_battery_bq2419x_input_control`: VBUS < ~4.1 V (`< 0x1003` mV) → 900 mA.
+- `bq2419x_set_dpm_input_voltage(mV)`: REG00[6:3] = (mV − 3880)/80; stock DT
+  `input-voltage-limit-millivolt = <0x1158>` → **VINDPM 4.44 V**. So stock is stricter than our 4.20 V;
+  it relies on the stock charger + short cable and backs off by measuring VBUS (mainline can't: no VBUS
+  ADC while the Palmas GPADC times out).
+
+Kernel (local `7b0972efa`, `patches/candidates/bq24190-input-limits-from-dt.patch`): bq24190 reads
+`input-current-limit-microamp` / `input-voltage-limit-microvolt` (bq256xx names), applies them at probe
+and on every PG rising edge; binding updated; flounder DT 2.0 A / 4.20 V. Compile-tested only. The
+driver is built in, so the test needs a new Image (not just a DTB swap). checkpatch: two >100-column
+`dev_warn` lines to wrap before upstreaming. Risk to keep in mind: on a weak 500 mA port a 2 A
+request relies on VINDPM alone (vendor ramped from 900 mA).
 - Open: proper fix in the kernel (DT `input-current-limit` / charger detection from the Tegra USB PHY,
   as the vendor does); verify a wall adapter actually delivers ~1.5 A; the earlier "DCP replug kills
   mainline" hang (a laptop→laptop replug survived today at 22:36).

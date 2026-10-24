@@ -236,6 +236,18 @@ If pmOS still does not bring the network up: boot `n9pmos-inst-stripped.img` aga
 tries), `mount /dev/mmcblk0p31 /data`, `mount -o loop /data/pmos/rootfs.img /mnt/pmos`, and inspect
 `/mnt/pmos/etc/NetworkManager/system-connections/wifi-home.nmconnection` and the `finish-rootfs.sh` assumptions.
 
+## 2026-10-25 — host reboot wiped /tmp (resume here for charging/gauge)
+
+- The host rebooted 2026-10-24 22:52: **/tmp/n9build and /tmp/bootfix are gone** — including
+  `n9bootfix-v2-stripped.img` (rebuild from `tools/pmos/init` + kernel tree DT commits; README content is
+  in this note's 2026-10-24 sections), the AVP REA ELFs (`/tmp/n9build/rea-avp`, `vendor-video`), and
+  the earlier `kallsyms.fixed`. Work dirs now live in `~/code/scratch/n9work/` (persistent).
+- `tools/kallsyms-decode.py` recovers stock-kernel symbols from the Image alone (no running Android).
+- Gauge test image rebuilt: `~/code/scratch/n9work/gaugeimg/n9gauge-stripped.img` (md5 `08afc9d5…`,
+  identical to the original): known-good LNX image + `maxim,rsns-microohm`. Not booted yet.
+- Charging works under pmOS via `/etc/local.d/n9-charge.start` (VINDPM 4.20 V, IINLIM 2.0 A): 3.4 % →
+  51 % overnight on the laptop USB-C port. Kernel equivalent is a candidate patch (notes/charging.md).
+
 ## 2026-10-24 20:30 — CORRECTION: the battery is really low; mainline froze the gauge (see notes/charging.md)
 
 - pmOS `capacity` 11 % vs `charge_now` 96 %: mainline's max17042 probe (no `maxim,rsns-microohm` in
