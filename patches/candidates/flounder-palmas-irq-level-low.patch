@@ -1,0 +1,49 @@
+From 8af4d3f06ea3e0dbb5d7195acebecc62bd799867 Mon Sep 17 00:00:00 2001
+From: nyasha <nmushambi@proton.me>
+Date: Sat, 24 Oct 2026 16:18:54 +1300
+Subject: [PATCH] WIP arm64: tegra132: flounder: type the Palmas IRQ level-low
+
+The Palmas INT line is level, active-low: the vendor kernel runs with
+PMIC POLARITY_CTRL=0 and PMC_CNTRL.INTR_POLARITY bit 17=0. This tree
+keeps the same PMC state (nvidia,invert-interrupt removed) but left the
+trigger untyped, so gic_irq_domain_translate() warned and irq_set_type()
+was never called: the line behaved as whatever edge hboot programmed. An
+event latching while the regmap-irq thread ran, or during a failed
+status read (-EREMOTEIO / "Failed to read IRQ status: -121"), was then
+lost because no new edge follows.
+
+Type it IRQ_TYPE_LEVEL_LOW so the GIC latches the level and pending
+events survive a failed status read. Do not use LEVEL_HIGH: palmas
+derives its INT output polarity from this flag and would flip the PMIC
+to active-high against the PMC's non-inverting path (the n9dbgC hang).
+
+Co-Authored-By: Claude Code <noreply@anthropic.com>
+---
+ arch/arm64/boot/dts/nvidia/tegra132-flounder.dts | 11 ++++++++++-
+ 1 file changed, 10 insertions(+), 1 deletion(-)
+
+diff --git a/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts b/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
+index 6b787bd2f..ed23c68ec 100644
+--- a/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
++++ b/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
+@@ -908,7 +908,16 @@ i2c@7000d000 {
+ 		palmas: tps65913@58 {
+ 			compatible = "ti,tps65913", "ti,palmas";
+ 			reg = <0x58>;
+-			interrupts = <GIC_SPI 86 IRQ_TYPE_NONE>;
++			/*
++			 * Palmas INT is a level, active-low line: the vendor kernel
++			 * has POLARITY_CTRL=0 and PMC_CNTRL.INTR_POLARITY=0. Type it
++			 * LEVEL_LOW so the GIC latches the level (IRQ_TYPE_NONE left
++			 * the trigger to hboot and behaved as an edge: events that
++			 * latched during a -121 status read were lost).
++			 * Never LEVEL_HIGH: palmas derives its INT polarity from this
++			 * flag and would invert the line against the PMC.
++			 */
++			interrupts = <GIC_SPI 86 IRQ_TYPE_LEVEL_LOW>;
+ 
+ 			#interrupt-cells = <2>;
+ 			interrupt-controller;
+-- 
+2.56.0
+
