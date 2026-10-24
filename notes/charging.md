@@ -20,6 +20,12 @@
   avg +262 mA → 11:10 616 mAh / **9.3 %** / 3.72 V / avg +275 mA (VFSOC 13.6 %). +394 mAh in 82 min
   = ~288 mA, ~4.3 %/h. No reboot (the host rebooted at 22:52 NZDT without disturbing it), CGAIN still
   0x4000, IINLIM held at 1.5 A, no charger faults.
+- 2026-10-25 00:38 NZDT, laptop USB-C port1 (3.0 A Type-C source, non-PD partner = the C→micro-B cable):
+  VINDPM/IINLIM step test, 30 s each, battery current: 4.36 V/1.5 A +200 mA; 4.28 V +349; **4.20 V +423**;
+  4.20 V/2.0 A +453 (reg avg 434); 4.20 V/3.0 A +420 (447). DPM active throughout, PG=1, no faults, no
+  host USB disconnects. Input ≈ 1 A at the 4.36 V floor → the cable drops ~0.6 V; the limit above 1.5 A
+  is irrelevant on this cable. n9-charge.start now holds **VINDPM 4.20 V (code 4) + IINLIM 2.0 A**.
+  Not lower than 4.20 V without checking Palmas/chipidea VBUS detection.
 - Open: proper fix in the kernel (DT `input-current-limit` / charger detection from the Tegra USB PHY,
   as the vendor does); verify a wall adapter actually delivers ~1.5 A; the earlier "DCP replug kills
   mainline" hang (a laptop→laptop replug survived today at 22:36).
