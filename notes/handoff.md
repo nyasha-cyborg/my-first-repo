@@ -218,11 +218,19 @@ Operational lessons from this session (they cost hours):
 - The installer does **not** auto-run `install-rootfs.sh`; start it manually, log to `/tmp/inst.log`.
 - `reboot` from the installer works (`reboot -f`); `reboot bootloader` does not.
 
-State at hand-off (19:25): LNX = pmOS boot image, rootfs complete, tablet rebooting into pmOS. Serial gadget
-enumerates (`0525:a4a7`, `/dev/ttyACM1`) but **WiFi (192.168.1.109) and SSH were not up yet** when this was written;
-the serial console printed nothing on attach, so the next step is to attach a reader to `/dev/ttyACM{0,1}` and
-check whether OpenRC reaches NetworkManager, and whether the rootfs `android-data` mountpoint in the boot
-init is doing anything odd.
+State at hand-off (19:55): **pmOS is running from flash and Phosh is up.**
+
+- The tablet came up on a **new DHCP lease, `192.168.1.111`** (not the old .109) — do not conclude "network dead"
+  from a failed ping to .109; check the ARP table for the MAC `b4:ce:f6:df:17:d3` and sweep the /24 first.
+- `ssh user@192.168.1.111` (key auth) works; root is `sudo` (password 147147, the pmbootstrap default).
+- Boot-time failure seen on the first flash boot: **greetd crashed, `phoc: failed to create server: could not
+  create renderer`**. Two fixes were needed and are now applied in the rootfs:
+  1. `seatd` was enabled but **not started** (`rc-service seatd start`); greetd needs it for the session seat.
+  2. `/etc/environment` only had `LD_LIBRARY_PATH=/opt/mesa-n9/lib`. Appended
+     `GBM_ALWAYS_SOFTWARE=1`, `LIBGL_ALWAYS_SOFTWARE=1`, `WLR_RENDERER=pixman` (the known phoc-on-tegra
+     fallback from notes/pmos.md) and restarted greetd → phoc + gnome-session stay up.
+  Both are persisted in the rootfs, so a reboot should keep working — verify on the next boot.
+- `n9-health` is logging temperatures/memory to the kernel log every 30 s; battery ~37 °C, CPU 2.5 GHz cap.
 
 If pmOS still does not bring the network up: boot `n9pmos-inst-stripped.img` again (fastboot may need several
 tries), `mount /dev/mmcblk0p31 /data`, `mount -o loop /data/pmos/rootfs.img /mnt/pmos`, and inspect
