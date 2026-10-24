@@ -1,0 +1,29 @@
+#!/sbin/openrc-run
+# Root shell on the USB serial gadget (ttyGS0 -> host /dev/ttyACM0), for tools/n9sh.sh.
+# In sysinit, before udev settles, so a boot that hangs later (udev settle, greetd, WiFi) can still be
+# inspected over the cable. No login: anyone with the USB cable gets root — development builds only.
+description="Root shell on the USB serial gadget"
+
+depend() {
+	need dev
+	before udev udev-trigger udev-settle
+}
+
+start() {
+	ebegin "Starting USB serial shell"
+	(
+		while :; do
+			[ -c /dev/ttyGS0 ] || { sleep 1; continue; }
+			stty -F /dev/ttyGS0 raw -echo 2>/dev/null
+			/bin/sh -s </dev/ttyGS0 >/dev/ttyGS0 2>&1
+			sleep 1
+		done
+	) >/dev/null 2>&1 &
+	echo $! >/run/n9-usbshell.pid
+	eend 0
+}
+
+stop() {
+	[ -f /run/n9-usbshell.pid ] && kill "$(cat /run/n9-usbshell.pid)" 2>/dev/null
+	rm -f /run/n9-usbshell.pid
+}
