@@ -455,3 +455,15 @@ The rail analysis still stands as a correctness fix: simplefb owns the panel rai
 failed last-user disable of `avdd-dsi-csi` (PMIC NAK burst) leaves the 1.2 V PHY rail stuck on with a
 WARN. `tegra_dsi_encoder_enable()` also ignores `drm_panel_prepare()/enable()` errors, so a failed panel
 init is silent — worth fixing if the lines ever return. Test images remain in /tmp/display-tests/.
+
+Correction (2026-10-25, later): the diagnostic boot above was **NOT simplefb**. /tmp/diag-serial.log
+shows `Console: switching to colour frame buffer device 192x128` and `[drm] fb0: tegradrmfb frame buffer
+device` at ~2.55 s, with logging continuing for 50+ s. So tegra-dc + tegra-dsi + the ganged panel path
+were live and clean with no userspace. What the diag boot never exercised is the compositor's GBM
+buffers (phoc uses tegra124 block-linear 16BX2 modifiers; fbdev uses linear/pitch). Therefore DSI/DC
+timing is largely exonerated, and the leading suspect for the lines is the userspace scanout buffer
+path (modifier/tiling/stride) or GPU writes into the scanout BO. Evidence: `WLR_DRM_NO_MODIFIERS=1`
+was "a bit more stable" in earlier notes; flickering blocks under GPU video. Experiments if it returns:
+screenshot the compositor (grim) vs panel; WLR_DRM_NO_MODIFIERS=1; nomodeset; software renderer;
+keep_power=0. The rail/regulator bug (simplefb owning panel supplies, failed LDO5 disable) is still a
+real, separate correctness fix.
