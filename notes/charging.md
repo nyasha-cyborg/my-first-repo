@@ -16,6 +16,10 @@
   `/var/log/n9-charge.log`); VINDPM 4.36 V throttles a weak source. Charger-mode boots additionally stop
   greetd + n9-modem, set powersave and backlight 0.
 - After: **+252…+341 mA into the battery (avg +281 mA) on the laptop port**, RepSOC rising.
+- Laptop-port charge log (gauge raw, tablet clock): 09:48 RepCap 222 mAh / RepSOC 3.4 % / 3.70 V /
+  avg +262 mA → 11:10 616 mAh / **9.3 %** / 3.72 V / avg +275 mA (VFSOC 13.6 %). +394 mAh in 82 min
+  = ~288 mA, ~4.3 %/h. No reboot (the host rebooted at 22:52 NZDT without disturbing it), CGAIN still
+  0x4000, IINLIM held at 1.5 A, no charger faults.
 - Open: proper fix in the kernel (DT `input-current-limit` / charger detection from the Tegra USB PHY,
   as the vendor does); verify a wall adapter actually delivers ~1.5 A; the earlier "DCP replug kills
   mainline" hang (a laptop→laptop replug survived today at 22:36).
