@@ -446,3 +446,12 @@ Next: four agents are producing (a) a DRM/DSI code diagnosis, (b) a PMIC/rail-se
 a GPU-vs-DSI discrimination plan, and (d) a fastboot-bootable test-image matrix (nomodeset,
 nouveau.modeset=0, keep_power on/off, EMC devfreq blacklist on/off). Boot variants only; nothing is
 flashed. The diag image remains the safe way to observe a Linux boot with no userspace.
+
+Resolution (same day): after the tablet recovered we booted the **control** image (normal pmOS, unchanged
+cmdline) from fastboot — **no vertical lines**, Phosh up, SSH reachable. So the lines were a transient
+latched panel/DSI state after the hard crashes, not a hardware fault and not a normal-boot bug. The
+panel/DSI hardware is confirmed good (bootloader, diag simplefb boot, and this normal boot all clean).
+The rail analysis still stands as a correctness fix: simplefb owns the panel rails at handover and the
+failed last-user disable of `avdd-dsi-csi` (PMIC NAK burst) leaves the 1.2 V PHY rail stuck on with a
+WARN. `tegra_dsi_encoder_enable()` also ignores `drm_panel_prepare()/enable()` errors, so a failed panel
+init is silent — worth fixing if the lines ever return. Test images remain in /tmp/display-tests/.
