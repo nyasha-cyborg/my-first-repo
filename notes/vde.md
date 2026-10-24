@@ -138,6 +138,20 @@ Open: temporal direct (98.60 %). Needs more than the coloc A2/A3 address: stock 
 B/MB buffer once per sequence and emits per-slice 0x30000000 (+coloc-valid bit) / 0xAB / 0x91
 commands; none are implemented. Parked until the playback path works.
 
+## 2026-10-25 — 1080p hangs the tablet (blocker for 4K)
+
+Two consecutive 1920x1080 attempts (a full scored decode and then a minimal 5-frame, module-loaded-once
+decode) ended with the whole tablet off the network (no ssh, no adb, no fastboot). No pstore record;
+`/data/pmos` boot/fsck logs show a normal boot, so these are hard hangs, not panics with saved logs.
+720p and smaller have been stable for many long runs, so 1080p is the prime suspect (large-MB-count /
+large-picture path; note stock fn_060c8 has a `0x80 < (w|h)` "large picture" branch and a separate
+0x20000000-size command that mainline does not implement). The driver sizes check out arithmetically
+(1920x1088 luma 2088960, chroma 522240, aux == chroma), so this is not an obvious under-allocation.
+
+Diagnosis plan: capture the last kernel messages to persistent storage before the decode
+(`cat /dev/kmsg >/data/pmos/hang.log &`), then reproduce; after the next power cycle read
+/data/pmos/hang.log (visible from Android root or pmOS). Control: the same procedure with a 720p clip.
+
 ## Playback path plan (2026-10-25, read-only audit)
 
 - Capture geometry (driver-only, first step): `tegra_fill_pixfmt_mp()` in v4l2.c now uses a 64-byte-GOB
