@@ -543,3 +543,18 @@ colour = home screen wallpaper.
   v 2048/12/4/8 — identical to mainline's default_mode.
 - Colour flicker unexplained. Next: fastboot-boot LineageOS (`boot-backup-lineage16.img`) and check the
   same wallpaper colours; if Android flickers too, it is the panel.
+
+### 2026-10-25 11:35 — correction: the D0 "fix" does not reproduce; flicker also under the stock kernel
+
+- TWRP (stock Android kernel and display driver) shows the same flicker on colourful content (owner).
+  Lineage boot stopped at the encryption-password prompt (MD1 crypt footer vs the pmOS ext4 /data — never
+  tap Reset there; fstab is `encryptable=`, not forceencrypt).
+- Kernel with MCS D0 {0x42,0x95} in prepare() (local c573ef3d3, patches/candidates/panel-jdi-vgh-vgl-
+  dividers.patch, image n9cmd3 md5 d6ed71b0…): owner reports the flicker **worse**; re-sending D0 live on
+  that boot changed nothing. The earlier "dark steady" after the live D0 write was most likely per-boot /
+  thermal variation, not the command. Treat the D0 patch as **unverified — do not upstream or flash**.
+- Conclusion so far: the pulsing/flicker is not caused by mainline software (pixels, brightness, DSI,
+  DC, timing all equal to stock; stock kernel flickers too). Likely panel/backlight hardware, possibly
+  worse when warm. Parked.
+- LNX restored to the known-good gauge image (md5 08afc9d5…, from /root/lnx-backup-gauge.img). The n9cmd
+  kernel's modules remain in /lib/modules/6.19.0-flounder-n9cmd (harmless; delete when not needed).

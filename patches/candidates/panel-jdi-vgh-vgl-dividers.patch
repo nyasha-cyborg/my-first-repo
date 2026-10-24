@@ -1,0 +1,40 @@
+From c573ef3d3b917924625ddf64138547c92e8d7e9b Mon Sep 17 00:00:00 2001
+From: nyasha <nmushambi@proton.me>
+Date: Sun, 25 Oct 2026 11:14:35 +1300
+Subject: [PATCH] drm/panel: jdi-lpm089a128a: set the VGH/VGL charge-pump
+ dividers (MCS 0xD0)
+
+Dark content made the backlight pulse: the TCON's charge-pump noise couples
+into the panel's backlight controller. Program VGH /3.3 and VGL /4.1, the
+values panel-jdi-lpm102a188a uses for the same JDI/Renesas family. Verified
+live on hardware through the debugfs cmd file: dark screens steady. A
+separate content-dependent flicker on colourful screens is also present
+under the stock kernel (TWRP), so it is a property of the panel.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ drivers/gpu/drm/panel/panel-jdi-lpm089a128a.c | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/drivers/gpu/drm/panel/panel-jdi-lpm089a128a.c b/drivers/gpu/drm/panel/panel-jdi-lpm089a128a.c
+index 2fa51db24..d3e73a383 100644
+--- a/drivers/gpu/drm/panel/panel-jdi-lpm089a128a.c
++++ b/drivers/gpu/drm/panel/panel-jdi-lpm089a128a.c
+@@ -239,6 +239,14 @@ static int jdi_panel_prepare(struct drm_panel *panel)
+ 	mipi_dsi_dual_generic_write_seq_multi(&dsi_ctx, jdi->link1, jdi->link2,
+ 					      JDI_MCS_CTRL,
+ 					      JDI_MCS_CTRL_ENABLE);
++	/*
++	 * Move the TCON charge-pump noise away from the backlight controller:
++	 * VGH divide 3.3, VGL divide 4.1 (MCS 0xD0), as panel-jdi-lpm102a188a
++	 * does for the same JDI/Renesas family. Without it dark content makes
++	 * the backlight pulse; verified live on the panel (2026-10-25).
++	 */
++	mipi_dsi_dual_generic_write_seq_multi(&dsi_ctx, jdi->link1, jdi->link2,
++					      0xd0, 0x42, 0x95);
+ 	mipi_dsi_dual_generic_write_seq_multi(&dsi_ctx, jdi->link1, jdi->link2,
+ 					      JDI_MCS_PAGE_SELECT,
+ 					      JDI_MCS_PAGE_DISPLAY);
+-- 
+2.56.0
+
