@@ -211,6 +211,18 @@ the MBE does not act on them as placed. Next lead: the 0x60031000 `0xC0200000` c
 field sits next to slice type and both list lengths, the likelier home of weighted_bipred_idc; and
 whether the per-slice SXE 0x60/0x64 carry it.
 
+**POC table (09:00, patch 0014, kernel local):** stock `fn_060c8` sends `0xC0000000 | w<<3` and then
+20 raw words (DPB record +0x1c) to the MBE; mainline sends `0xD0000000 / 0xD0200000 | frame_idx<<23`
+per frame with the **POC bits zero**. t124_mask2 bit 11 puts `frame->poc & 0x1fffff` there (current
+frame + refs). Result: implicit-WP `m_b` unchanged (98.91 %), but temporal direct `m_btemp` goes from
+95.91 % to **"Decoding failed: 2 macroblocks parsed"** on the first B frame — also with t124_mask bit
+22 (co-located MV buffer wired). So the MBE consumes these POCs. Next: decode the stock +0x1c word
+format (likely a pre-built 0xD0… command from libnvmmlite: check scale (POC vs 2·POC), sign/offset and
+long-term bit), and combine with the per-sequence 0x60 B/MB buffer (t124_mask bit 10).
+
+Fixed: GStreamer's plugin scan triggered `WARNING: Unknown pixelformat 0x344c4254` (videodev doesn't
+know TBL4); the driver now fills the description in enum_fmt (0 warnings after).
+
 Playback UAPI verified on hardware (v4l2-ctl): capture formats `YM12` (default) then `TBL4`; control
 `tegra_vde_block_linear_output_modifier` = 0x0300000000000010 (NVIDIA 16Bx2 block, h=0), read-only.
 

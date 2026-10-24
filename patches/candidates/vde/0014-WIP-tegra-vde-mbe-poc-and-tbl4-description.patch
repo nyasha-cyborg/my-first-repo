@@ -1,0 +1,101 @@
+From 9663ece5fc44d6d1c8a4f7dd7f76fb09e9aacaee Mon Sep 17 00:00:00 2001
+From: nyasha <nmushambi@proton.me>
+Date: Sun, 25 Oct 2026 08:44:26 +1300
+Subject: [PATCH] WIP tegra-vde T124: real POCs in MBE 0xD0 commands (mask2 bit
+ 11); name TBL4 in enum_fmt
+
+- MBE 0xD0000000/0xD0200000 | idx<<23 carry per-frame POCs; mainline sent 0.
+  With real POCs (bit 11) temporal direct stops at MB 2 ('Decoding failed:
+  2 macroblocks parsed'), with or without the co-located buffer (bit 22), so
+  the hardware consumes them; implicit WP (m_b) unchanged at 98.91 %.
+- Fill the TBL4 description in enum_fmt: videodev WARNs on every format
+  enumeration of an unknown private fourcc otherwise.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ .../media/platform/nvidia/tegra-vde/h264.c    | 30 +++++++++++++++----
+ .../media/platform/nvidia/tegra-vde/v4l2.c    |  4 +++
+ 2 files changed, 29 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/media/platform/nvidia/tegra-vde/h264.c b/drivers/media/platform/nvidia/tegra-vde/h264.c
+index 2dd8e6e17..59fb3f9de 100644
+--- a/drivers/media/platform/nvidia/tegra-vde/h264.c
++++ b/drivers/media/platform/nvidia/tegra-vde/h264.c
+@@ -64,7 +64,23 @@ static int tegra_vde_wait_mbe(struct tegra_vde *vde)
+ 					  tmp >= 0x10, 1, 100);
+ }
+ 
++/*
++ * MBE 0xD0000000 / 0xD0200000 | frame_idx << 23 are the per-frame top/bottom
++ * POC commands; mainline leaves the POC bits zero. Implicit weighted
++ * bi-prediction and temporal direct both scale by POC distances, so with
++ * every POC 0 they fall back to equal weights / zero distance.
++ * t124_mask2 bit 11 fills in the real POC (bits 0-20).
++ */
++static u32 tegra_vde_mbe_poc(struct tegra_video_frame *frame)
++{
++	if (!frame || !(t124_mask2 & BIT(11)))
++		return 0;
++
++	return frame->poc & 0x1fffff;
++}
++
+ static int tegra_vde_setup_mbe_frame_idx(struct tegra_vde *vde,
++					 struct tegra_video_frame *dpb_frames,
+ 					 unsigned int refs_nb,
+ 					 bool setup_refs)
+ {
+@@ -73,8 +89,10 @@ static int tegra_vde_setup_mbe_frame_idx(struct tegra_vde *vde,
+ 	unsigned int idx;
+ 	int err;
+ 
+-	tegra_vde_writel(vde, 0xD0000000 | (0 << 23), vde->mbe, 0x80);
+-	tegra_vde_writel(vde, 0xD0200000 | (0 << 23), vde->mbe, 0x80);
++	tegra_vde_writel(vde, 0xD0000000 | (0 << 23) | tegra_vde_mbe_poc(dpb_frames),
++			 vde->mbe, 0x80);
++	tegra_vde_writel(vde, 0xD0200000 | (0 << 23) | tegra_vde_mbe_poc(dpb_frames),
++			 vde->mbe, 0x80);
+ 
+ 	err = tegra_vde_wait_mbe(vde);
+ 	if (err)
+@@ -84,9 +102,11 @@ static int tegra_vde_setup_mbe_frame_idx(struct tegra_vde *vde,
+ 		return 0;
+ 
+ 	for (idx = 0, frame_idx = 1; idx < refs_nb; idx++, frame_idx++) {
+-		tegra_vde_writel(vde, 0xD0000000 | (frame_idx << 23),
++		tegra_vde_writel(vde, 0xD0000000 | (frame_idx << 23) |
++				 tegra_vde_mbe_poc(&dpb_frames[frame_idx]),
+ 				 vde->mbe, 0x80);
+-		tegra_vde_writel(vde, 0xD0200000 | (frame_idx << 23),
++		tegra_vde_writel(vde, 0xD0200000 | (frame_idx << 23) |
++				 tegra_vde_mbe_poc(&dpb_frames[frame_idx]),
+ 				 vde->mbe, 0x80);
+ 
+ 		frame_idx_enb_mask |= frame_idx << (6 * (idx % 4));
+@@ -652,7 +672,7 @@ static int tegra_vde_setup_hw_context(struct tegra_vde *vde,
+ 	if (vde->soc->t124_layout && (t124_mask2 & BIT(10)))
+ 		tegra_vde_writel(vde, 0xAB000000, vde->mbe, 0x80);
+ 
+-	err = tegra_vde_setup_mbe_frame_idx(vde,
++	err = tegra_vde_setup_mbe_frame_idx(vde, dpb_frames,
+ 					    ctx->dpb_frames_nb - 1,
+ 					    ctx->pic_order_cnt_type == 0);
+ 	if (err) {
+diff --git a/drivers/media/platform/nvidia/tegra-vde/v4l2.c b/drivers/media/platform/nvidia/tegra-vde/v4l2.c
+index cbaf1d092..0e4e3100c 100644
+--- a/drivers/media/platform/nvidia/tegra-vde/v4l2.c
++++ b/drivers/media/platform/nvidia/tegra-vde/v4l2.c
+@@ -551,6 +551,10 @@ static int tegra_enum_decoded_fmt(struct file *file, void *priv,
+ 		return -EINVAL;
+ 
+ 	f->pixelformat = ctx->coded_fmt_desc->decoded_fmts[f->index];
++	/* private fourcc: v4l_fill_fmtdesc() warns unless the driver names it */
++	if (f->pixelformat == V4L2_PIX_FMT_YUV420M_TEGRA_BL)
++		strscpy(f->description, "Tegra 16Bx2 block-linear YUV420M",
++			sizeof(f->description));
+ 
+ 	return 0;
+ }
+-- 
+2.56.0
+
