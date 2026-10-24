@@ -1,0 +1,15 @@
+#!/sbin/openrc-run
+# Charger input limits + charger-mode idling (tools/pmos/n9-charge.sh, notes/charging.md).
+# Its own service in the boot runlevel: local.d runs last in default, and a hung n9-modem start
+# kept it from ever running on normal boots (−1.4 A drain at 500 mA).
+description="Nexus 9 charger input limits"
+
+depend() {
+	after sysfs modules
+}
+
+start() {
+	ebegin "Applying charger input limits"
+	sh /usr/lib/n9/n9-charge.sh
+	eend 0
+}

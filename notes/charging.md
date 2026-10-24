@@ -47,6 +47,19 @@ and on every PG rising edge; binding updated; flounder DT 2.0 A / 4.20 V. Compil
 driver is built in, so the test needs a new Image (not just a DTB swap). checkpatch: two >100-column
 `dev_warn` lines to wrap before upstreaming. Risk to keep in mind: on a weak 500 mA port a 2 A
 request relies on VINDPM alone (vendor ramped from 900 mA).
+- **2026-10-25 08:17 NZDT — gauge DT fix verified on hardware.** `fastboot boot` of
+  `~/code/scratch/n9work/gaugeimg/n9gauge-stripped.img` (known-good LNX + `maxim,rsns-microohm`,
+  md5 08afc9d5…, normal boot). `/proc/device-tree/.../maxim,rsns-microohm` = 0x2710. `modprobe
+  max17042_battery` (blacklist still in place) left **CGAIN 0x4000 / MiscCFG 0x0810**; `capacity` = 51 =
+  RepSOC 0x3373; `current_now`/`current_avg` now exist. Odd: FullCAP (0x10) now reads 0x33c0 = DesignCap
+  (6624 mAh), was 0x2fd8 (6124) — not explained yet. Ready to flash once the owner OKs an LNX write;
+  then delete `/etc/modprobe.d/n9-gauge.conf`.
+- **Normal boots never ran the charge script:** `local` starts last in the default runlevel and
+  `n9-modem` hangs in "starting", so the charger stayed at 500 mA / 4.36 V and the tablet drained
+  −1.42 A with Phosh up. Now its own OpenRC service `n9-charge` in the **boot** runlevel
+  (`tools/pmos/n9-charge.initd` → `/etc/init.d/n9-charge`, script `tools/pmos/n9-charge.sh` →
+  `/usr/lib/n9/n9-charge.sh`). After: −168…−236 mA with full Phosh on the laptop port. The n9-modem
+  start hang is a separate open item.
 - Open: proper fix in the kernel (DT `input-current-limit` / charger detection from the Tegra USB PHY,
   as the vendor does); verify a wall adapter actually delivers ~1.5 A; the earlier "DCP replug kills
   mainline" hang (a laptop→laptop replug survived today at 22:36).
