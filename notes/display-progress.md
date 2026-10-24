@@ -485,3 +485,21 @@ Reported after the gauge-fix flash (LNX = n9gauge-stripped.img; DTB differs from
   always-on, Palmas IRQ LEVEL_LOW) on top of the gauge DTB and see whether it stops. Also compare stock
   Palmas regulator modes (PFM/eco vs forced PWM) for the panel's rails.
 - Gotcha: an SSH command that times out leaves its remote loop running (one polled debugfs for minutes).
+
+### 2026-10-25 10:20 — split the v2 DT changes; pulsing is per-boot
+
+Test images (fastboot boot, nothing flashed), built from the flashed gauge DTB in
+`~/code/scratch/n9work/panelimg/`:
+- `n9panel-stripped.img` (md5 509c3340…): simplefb supplies removed + LDO5 always-on + **Palmas
+  IRQ LEVEL_LOW**. Twice: "Booting OKAY", hboot then stops answering, no gadget, no network — the kernel
+  dies before USB comes up. Same as v2 on 10-24. **Palmas LEVEL_LOW (0x08) kills early boot** in this
+  kernel; do not reuse it without fixing what it triggers (likely an IRQ storm before palmas IRQ setup).
+- `n9rails-stripped.img` (md5 86e39964…): simplefb supplies removed + LDO5 always-on only. Kernel and
+  gadget come up (10 s); the console shows "Waiting for uevents to be processed" and the boot never
+  reaches WiFi; tegra_wdt reset it into LNX ~4 min later. No log saved (kmsg.log.1 empty — the n9-kmsg
+  writer never flushed). The owner saw **no pulsing on the text console** during that boot.
+- The following normal LNX boot (watchdog reset, 21:24 tablet time) is **not pulsing** on the login
+  screen, with the same image that pulsed at 20:41 → the pulsing is per-boot, i.e. depends on the state
+  the panel rails/handover end up in, not on anything running later.
+- Next: a login on the USB serial gadget (ttyGS0 getty) in the rootfs so a stuck boot can be inspected
+  without WiFi; then retry the rails-only image and read which driver blocks udev settle.
