@@ -19,7 +19,7 @@ if [ ! -d sysroot/usr/lib/pkgconfig ]; then
 	cp /tmp/n9build/pmos/keys/*.pub sysroot/etc/apk/keys/	# from tools/pmos/build.sh
 	cp /etc/ssl/certs/ca-certificates.crt sysroot/etc/ssl/cert.pem
 	unshare -r apkx/sbin/apk.static --root "$W/sysroot" --arch aarch64 --initdb --no-scripts -U -X $A/main -X $A/community \
-		add musl-dev linux-headers libdrm-dev wayland-dev wayland-protocols expat-dev zlib-dev zstd-dev libgcc libstdc++-dev gcc
+		add musl-dev linux-headers libdrm-dev wayland-dev wayland-protocols expat-dev zlib-dev zstd-dev libgcc libstdc++-dev gcc libx11-dev libxcb-dev libxext-dev libxfixes-dev libxshmfence-dev libxxf86vm-dev libxrandr-dev xorgproto libxdamage-dev
 fi
 [ -f mesa-$V.tar.xz ] || curl -fsSLO https://archive.mesa3d.org/mesa-$V.tar.xz
 echo "$SHA512  mesa-$V.tar.xz" | sha512sum -c -
@@ -31,7 +31,7 @@ mkdir -p buildpc; printf 'wayland_scanner=%s\nName: Wayland Scanner\nDescription
 printf "[binaries]\nwayland-scanner = '%s'\n\n[built-in options]\npkg_config_path = ['%s']\n" "$W/wayland-scanner-1.25" "$W/buildpc" > native.ini
 export PATH=$W/venv/bin:$PATH
 (cd mesa-$V && meson setup "$W/build" --cross-file "$W/aarch64-alpine.cross" --native-file "$W/native.ini" --prefix=/opt/mesa-n9 \
-	--buildtype=release -Dgallium-drivers=tegra,nouveau,softpipe -Dvulkan-drivers= -Dglx=disabled -Dplatforms=wayland \
+	--buildtype=release -Dgallium-drivers=tegra,nouveau,softpipe -Dvulkan-drivers= -Dglx=dri -Dplatforms=wayland,x11 \
 	-Degl=enabled -Dgbm=enabled -Dgles1=disabled -Dgles2=enabled -Dopengl=true -Dllvm=disabled -Dvideo-codecs= \
 	-Dgallium-va=disabled -Dteflon=false -Dtools= -Dlibunwind=disabled -Dvalgrind=disabled -Dzstd=enabled -Dexpat=enabled \
 	-Dbuild-tests=false >/dev/null)

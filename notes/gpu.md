@@ -189,3 +189,11 @@
 - 14:25 owner: PIN lock screen still shown during boot login. Cause: `sm.puri.phosh.lockscreen require-unlock` default
   true. Fix: schema override `/usr/share/glib-2.0/schemas/99_n9-nolock.gschema.override` (copy in tools/pmos/,
   run `glib-compile-schemas`); effective on the next boot/phosh start. Not yet verified on a boot.
+- 14:40 owner: most apps "failed to start". Cause: /opt/mesa-n9 was built `-Dglx=disabled`, so its libgallium lacks
+  loader_dri3_* symbols that the system libGL.so.1 (loaded by GTK/Firefox/Settings) needs ->
+  `Error relocating /usr/lib/libGL.so.1: loader_dri3_*: symbol not found`. Only a few apps are installed
+  (Firefox, mpv, Settings, htop; no terminal emulator, so htop also fails).
+  Fix: rebuilt with `-Dglx=dri -Dplatforms=wayland,x11` (+ X11 dev packages in the sysroot), deployed to the
+  tablet (old copy: /opt/mesa-n9.bak). Relocation errors gone; Firefox stays up 30 s on the GPU. Owner re-test pending.
+- Open: owner sees occasional corrupted graphics and some instability on the GPU path (panel flicker is known on
+  the stock kernel too; GPU-side corruption not yet investigated). Memory is ~1.8 GB usable, ~70 C under Firefox.
