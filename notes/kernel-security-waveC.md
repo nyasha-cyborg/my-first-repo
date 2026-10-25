@@ -332,3 +332,9 @@ Suggested test order: secB3 first (only one change vs. tested secB), then secC.
 | CVE-2024-27424 | CVE-2024-27424/4.4/0001.patch | net/netrom/af_netrom.c | SKIP | not compiled |
 | CVE-2024-27425 | CVE-2024-27425/4.4/0001.patch | net/netrom/af_netrom.c | SKIP | not compiled |
 - 10:47-11:00 boot-3.10.108-secB3 x1 and boot-3.10.108-secC (3.10.108-gbb3052c7115) x2: all USB OK (20 s), LTE OK (Spark NZ/LTE/IP), Wi-Fi on, cameraserver running, 0 oops. **secC is the current release candidate.**
+
+## 2026-10-26 11:00 — FLASHED (owner approved): secC is now in LNX
+- Backup first: `~/Downloads/nexus9/boot-backups/lnx-lineage16-20251224-3.10.103.img` (full 32 MiB LNX dump, sha256 4748dc9e...,
+  verified on tablet and host; kernel 3.10.103 + ramdisk 961b8af0). Restore: `fastboot flash boot <that file>`.
+- `fastboot flash boot ~/n9kernel/out/boot-3.10.108-secC.img` (sha256 3554259b...), LNX head verified to match.
+- First boot from flash: adb 25 s, `3.10.108-gbb3052c7115`, boot_completed, Wi-Fi on, 0 oops, LTE Spark NZ / LTE / IP at 5 min.
