@@ -17,7 +17,9 @@ start() {
 		while :; do
 			[ -c /dev/ttyGS0 ] || { sleep 1; continue; }
 			stty -F /dev/ttyGS0 raw -echo 2>/dev/null
-			/bin/sh -s </dev/ttyGS0 >/dev/ttyGS0 2>&1
+			# stdin through a pipe keeps ash non-interactive: no prompt, no line editing and no
+			# ESC[6n cursor queries, which left the shell stuck in half-read commands
+			cat /dev/ttyGS0 | /bin/sh -s >/dev/ttyGS0 2>&1
 			sleep 1
 		done
 	) >/dev/null 2>&1 &

@@ -3,6 +3,65 @@
 Written for an AI agent or person taking over. Read this first, then the topic note for the area you
 work on. Kept current by the previous agent at each test cycle (last update: 2026-10-24 ~22:45).
 
+## >>> START HERE — handoff 2026-10-25 13:00 (owner asked for a hand-off to another AI)
+
+Read this block first, then the topic note for what you work on. Owner preferences (also in the
+Claude memory for this project): explain in **simple terms**; **answer the owner's questions immediately**
+(run any wait > ~30 s in the background); **USB first**, WiFi as fallback; **use REA** on vendor
+binaries before guessing; ask before writing LNX unless the owner already said to install; push nexus9
+commits right away (scan for secrets; the kernel tree stays local, export patches).
+
+**Tablet right now:** on, pmOS, known-good boot image in LNX (md5 08afc9d5…, kernel
+6.19.0-htc-flounder-g0fa4171fc82c #173 + DTB with `maxim,rsns-microohm`). DHCP 192.168.1.111.
+Desktop runs with **software rendering** (`/etc/environment`: GBM_ALWAYS_SOFTWARE=1,
+LIBGL_ALWAYS_SOFTWARE=1, WLR_RENDERER=pixman, LD_LIBRARY_PATH=/opt/mesa-n9/lib).
+
+**Access**
+- USB serial root shell: `tools/n9sh.sh '<cmd>' [secs]` (host /dev/ttyACM0 ↔ tablet ttyGS0, service
+  `n9-usbshell` in sysinit, now fed through a pipe so it is non-interactive). Long multi-part commands
+  can still get "no reply": keep commands short; if stuck, see the raw-probe recipe in this session's
+  notes (send `'`, `"`, `)` lines). Files: `python3 -I tools/n9push.py <file> <remote>` (md5-checked,
+  1.4-2.8 MB/s) — no WiFi needed.
+- SSH: `ssh root@192.168.1.111` (key). Note: SSH sessions inherit /etc/environment (software GL!) —
+  `unset GBM_ALWAYS_SOFTWARE LIBGL_ALWAYS_SOFTWARE` before GPU tests.
+- Host-initiated reboots (`sync; echo b > /proc/sysrq-trigger`) come back in androidboot.mode=charger
+  (cable attached) → `n9-charge` stops greetd and blanks the screen. The owner must press power for a
+  normal boot. TODO: fix n9-charge (keep UI unless bootreason says plug-in) or set the PMC reboot reason.
+- Never `pkill -f` patterns that match your own command line; SSH commands that time out leave their
+  remote loops running (kill them by PID).
+
+**Done this session (details in the topic notes)**
+- Battery gauge: mainline zeroed CGAIN (no `maxim,rsns-microohm`) → frozen %. DT fix flashed; gauge
+  registers restored; battery % correct (notes/charging.md).
+- Charging: bq24190 IINLIM stuck at 500 mA → `n9-charge` boot service holds 2.0 A / VINDPM 4.20 V;
+  ~+400 mA into the battery on the laptop USB-C port. Kernel candidate:
+  patches/candidates/bq24190-input-limits-from-dt.patch (not booted). Vendor AICL decoded via REA.
+- VDE (H.264): hardened module + TBL4 fourcc/modifier verified; bit-exact except **implicit weighted
+  bipred** (x264 default) and temporal direct; MBE POC commands found live (notes/vde.md).
+- Tools: tools/kallsyms-decode.py (stock-kernel symbols from the Image alone), tools/avp-ucode2elf.sh,
+  tools/vde-clips.sh, tools/n9push.py, tools/pmos/n9-usbshell.initd, tools/pmos/n9-hangwatch.initd
+  (installed: records /var/log/hang-*.log when udev has not settled at 60 s).
+- Screen flicker/pulsing: **parked** — also under the stock kernel (TWRP); not a mainline bug
+  (notes/display-progress.md). Palmas IRQ LEVEL_LOW in the DT kills early boot — do not use.
+
+**Open, in priority order**
+1. **3D acceleration (owner's current ask).** Fresh finding 13:00: with software mode unset,
+   `kmscube -D /dev/dri/card0` (Mesa 26.1.6 from /opt/mesa-n9) fails:
+   `nvc0_screen_create: Error allocating PGRAPH context for M2MF: -110`; kernel:
+   `nouveau 57000000.gpu: gr: failed to construct context` / `fifo … ectx 0[gr]: -110`. GR context
+   construction times out (FECS). On 10-23 the same stack worked (kmscube ~30 fps, phoc GLES2) with
+   `NvGk20aDvfs=0` + `NvClkMode=8` and the devfreq blacklist; today's cmdline has DVFS off and the
+   blacklist, but **no NvClkMode** ("fixed pstate index 7"). Check: GR firmware load messages, the
+   pinned GPU clock/voltage (smps45), and notes/gpu.md (EMC/GR history; candidate
+   patches/candidates/gk20a-gr-vendor-reset.patch). When kmscube runs on NVIDIA, drop the three
+   software variables from /etc/environment and restart greetd (phoc should log "Creating GLES2
+   renderer … NVIDIA").
+2. **Intermittent boot stall** at "Waiting for uevents to be processed" (~half of today's boots, both
+   kernels; watchdog reset after ~3 min). Read /var/log/hang-*.log after the next stall.
+3. **H.264 playback path**: VDE output is block-linear (TBL4); needs a detile/convert step (GPU import
+   or Tegra VIC) before a player can show it — depends on item 1.
+4. Implicit weighted bipred / temporal direct in tegra-vde (notes/vde.md 2026-10-25 08:20-09:00).
+
 ## Goal and current focus
 
 - Target: installed postmarketOS (Phosh) on the Nexus 9 with GPU acceleration and video playback.
