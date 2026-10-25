@@ -1,0 +1,4 @@
+# Let group wheel toggle power of the laptop USB port the Nexus 9 is plugged into (bus 3 port 7, xHCI 0000:00:14.0),
+# so tools/usb-kick.sh can "unplug/replug" the tablet in software. Install once:
+#   sudo install -m644 tools/udev/99-n9-usbport.rules /etc/udev/rules.d/ && sudo udevadm control --reload && sudo udevadm trigger -s usb
+ACTION=="add|change", SUBSYSTEM=="usb", KERNEL=="3-0:1.0", RUN+="/bin/sh -c 'chgrp wheel /sys%p/usb3-port7/disable && chmod g+w /sys%p/usb3-port7/disable'"
