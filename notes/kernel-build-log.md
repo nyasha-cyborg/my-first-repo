@@ -87,3 +87,33 @@ reference-branch extras (DenyUSB sysctl, cfq SSD tweak, workqueue rescuer,
   **LTE regression**: modem boots (ks.ready=1, rmnet_usb0..3, SIM LOADED) but never registers (`NOT_REG_MT_SEARCHING_OP`, LTE srv_status flapping, reg status 13).
 - Control, same session: reboot to the installed 3.10.103 -> Spark NZ / LTE / rmnet_usb0 IP within ~7 min of boot. So 3.10.104..108 breaks LTE registration (or suspend/USB-HSIC behaviour that the modem needs).
 - Next: bisect by tag (build v3.10.104..107 intermediate images), suspects: drivers/usb (host/ehci, cdc/qmi), kernel/power + PM QoS (suspend loop), net/core.
+
+## 2026-10-26 — per-tag bisect images (built, not yet booted)
+- Worktree `~/n9kernel/wt` (detached), shared build dir `~/n9kernel/build-bisect` (built one after another), logs `out/build-10[4-7].log` (warnings only). Script `/tmp/bis.sh`.
+- 106 and 107 need the posix_acl duplicate fix (`d70b80d5d56`, applied to the working tree, not committed); 104/105 have no duplicate.
+- The worktree build has no `-g<hash>` suffix (setlocalversion does not see the `.git` file in a worktree).
+- All checked with `bootimg-split.py`: ramdisk `961b8af0` unchanged, ROM header and cmdline kept.
+
+| Image | Merge commit | `Linux version` | sha256 |
+|---|---|---|---|
+| `out/boot-3.10.104.img` | `f5c4c0b62de` | `3.10.104` | `e1d521a7f38ca6e5` |
+| `out/boot-3.10.105.img` | `4aceb5e1f15` | `3.10.105` | `ccbc7a145c6a3527` |
+| `out/boot-3.10.106.img` | `759b8cfd131` + acl fix | `3.10.106` | `51bb66abb7610b30` |
+| `out/boot-3.10.107.img` | `701bc9dc8ac` + acl fix | `3.10.107` | `3d843344fea2cbba` |
+
+- Next: `fastboot boot` each one and check LTE registration (start with 106 to split the range in half).
+
+## 2026-10-26 02:00-02:40 — bisect by stable tag (fastboot boot only; /tmp/n9watch/lte-try.sh)
+| image | adb after | LTE |
+|---|---|---|
+| 3.10.103 (installed) | normal | Spark NZ / LTE / IP |
+| boot-3.10.106.img | 15 s | **OK** (Spark NZ, LTE, rmnet_usb0 IP) |
+| boot-3.10.107.img | 20 s | **OK** |
+| boot-3.10.108.img (try 1, 01:20) | ~9 min | **FAIL** (never registers, suspend churn) |
+| boot-3.10.108.img (try 2, 02:04) | never (35+ min, 5 port power-cycles via tools/usb-kick.sh) | unknown, tablet unreachable (no USB, no Wi-Fi) |
+=> The regression is inside the **v3.10.107 -> v3.10.108** step (141 commits). 104/105 untested (not needed).
+Top suspects from notes/lte-regression-suspects.md that are in this step should be checked first (`git log v3.10.107..v3.10.108`
+equivalent: merge 701bc9dc8ac..n9-3.10.108 tip). USB gadget late/absent + modem not registering + suspend churn point at USB core
+(config.c endpoint parsing, hub reset wait) or PM/RTC changes.
+- Safe state: nothing flashed. Tablet left hung in the 108 test kernel at ~02:40; a long power-button press returns it to the installed kernel.
+- Next: build 107 + halves of the 108 step (git bisect within 701bc9dc8ac..tip), or revert the drivers/usb/core/config.c trio on 108 for one boot.
