@@ -728,3 +728,5 @@ metric 200, `ping -I wwan0 1.1.1.1` 4/4 (27-77 ms).
 - Pmos is gone from the device (userdata formatted); pmOS boot images/rootfs build still in the repo.
 - Next: owner finishes the setup wizard, inserts the SIM, enables USB debugging; check `getprop gsm.network.type`,
   `ip link` for wwan0, `getprop gsm.sim.state`.
+- 15:30 owner: **LTE works on stock Android 7.1.1** (mobile data up, nothing to configure). Stock vendor stack
+  (qcks/qmuxd/netmgrd/ril) is the reference for the pmOS modem flow, now confirmed working end to end on this unit.
