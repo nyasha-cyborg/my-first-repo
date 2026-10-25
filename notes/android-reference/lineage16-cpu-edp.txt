@@ -1,0 +1,127 @@
+### cpufreq
+affected_cpus=0 1
+cpuinfo_cur_freq=1020000
+cpuinfo_max_freq=2499000
+cpuinfo_min_freq=204000
+cpuinfo_transition_latency=300000
+policy_max_freq=1020000
+policy_min_freq=510000
+related_cpus=0 1
+scaling_available_frequencies=204000 229500 255000 280500 306000 331500 357000 382500 408000 433500 459000 484500 510000 535500 561000 586500 612000 637500 663000 688500 714000 739500 765000 790500 816000 841500 867000 892500 918000 943500 969000 994500 102000
+scaling_available_governors=interactive conservative ondemand powersave userspace performance 
+scaling_cur_freq=1020000
+scaling_driver=tegra
+scaling_governor=interactive
+scaling_max_freq=1020000
+scaling_min_freq=510000
+scaling_setspeed=<unsupported>
+throttle=0
+### interactive
+above_hispeed_delay=20000
+boost=0
+boostpulse=
+boostpulse_duration=1000000
+go_hispeed_load=99
+hispeed_freq=1530000
+io_is_busy=0
+min_sample_time=80000
+rt_priority=99
+target_loads=65 228000:75 624000:85
+timer_rate=20000
+timer_slack=20000
+### cpu topology
+0-1
+0-1
+      2 CPU implementer	: 0x4e
+      2 CPU part	: 0x000
+### cpu-tegra
+/sys/kernel/debug/cpu-tegra/edp_alarm: 0
+/sys/kernel/debug/cpu-tegra/reg_mode: 0xfffffffe
+/sys/kernel/debug/cpu-tegra/reg_mode_force_normal: 0
+### edp
+/sys/kernel/debug/edp:
+sysedp
+vdd_cpu
+vdd_gpu
+
+/sys/kernel/debug/edp/sysedp:
+batmon
+capping
+min_budget
+status
+
+/sys/kernel/debug/edp/sysedp/batmon:
+ibat
+ocv
+r_const
+rbat
+vsys_min
+
+/sys/kernel/debug/edp/sysedp/capping:
+cap_method
+corecaps
+cpucaps
+favor_gpu
+force_cpu
+force_emc
+force_gpu
+gain
+gpu_high_count
+gpu_threshold
+gpu_window
+-- VDD_CPU EDP table (16800mA = 22800mA - 6000mA) --
+ Temp.     1-core    2-cores
+  23C:    2499000    2300000
+  40C:    2499000    2300000
+  50C:    2499000    2300000
+> 60C:    2499000    2300000
+  70C:    2499000    2300000
+  74C:    2499000    2300000
+  78C:    2499000    2300000
+  82C:    2499000    2300000
+  86C:    2499000    2300000
+  90C:    2499000    2300000
+  94C:    2499000    2300000
+  98C:    2499000    2300000
+ 102C:    2499000    2300000
+2295000
+Limit override: 6000 mA. Effective limit: 16800 mA
+0
+-- VDD_GPU EDP table (16800mA = 22800mA - 6000mA) --
+ Temp. Freq_limit
+ 20C:     852000
+ 50C:     852000
+ 70C:     852000
+ 75C:     852000
+ 80C:     852000
+ 85C:     852000
+ 90C:     852000
+ 95C:     852000
+100C:     852000
+105C:     852000
+### sysedp
+batmon
+capping
+min_budget
+status
+4400
+  avail_budget     : 29944
+- pmax_sum         : 2737
+- margin           : 0
+( minimum budget   : 4400)
+= remaining (OC=1) : 27207
++ oc_relax         : 0
+= remaining (OC=0) : 27207
+------------------------------------------
+consumer            pmax pthresh
+------------------------------------------
+tegra-dsi-backlight.0       0       0
+qcom-mdm-9k            8       8
+imx219               411     411
+tps61310               0       0
+ov9760                 0       0
+sdhci-tegra.3          0       0
+sdhci-tegra.0          0       0
+speaker                0       0
+battery_oc4            0       0
+wifi                2318    2318

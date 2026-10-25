@@ -1,0 +1,86 @@
+### thermal zones+trips
+-- Tboard_tegra policy=step_wise temp=39000
+   trip_point_0_temp=26000 type=active
+-- Tdiode_tegra policy=pid_thermal_gov temp=42000
+   trip_point_0_temp=113000 type=passive
+   trip_point_1_temp=83000 type=passive
+   trip_point_2_temp=15000 type=active
+   trip_point_3_temp=30000 type=active
+   trip_point_4_temp=50000 type=active
+   trip_point_5_temp=70000 type=active
+   trip_point_6_temp=120000 type=active
+   trip_point_7_temp=20000 type=active
+   trip_point_8_temp=15000 type=active
+-- battery policy=step_wise temp=34600
+cat: /sys/class/thermal/thermal_zone2/trip_point_*_temp: No such file or directory
+   trip_point_*_temp= type=
+-- CPU-therm policy=pid_thermal_gov temp=48500
+   trip_point_0_temp=105000 type=critical
+   trip_point_10_temp=77000 type=active
+   trip_point_11_temp=81000 type=active
+   trip_point_12_temp=85000 type=active
+   trip_point_13_temp=89000 type=active
+   trip_point_14_temp=93000 type=active
+   trip_point_15_temp=62000 type=active
+   trip_point_16_temp=72000 type=active
+   trip_point_17_temp=82000 type=active
+   trip_point_18_temp=14000 type=active
+   trip_point_19_temp=29000 type=active
+   trip_point_1_temp=102000 type=hot
+   trip_point_20_temp=50000 type=active
+   trip_point_21_temp=70000 type=active
+   trip_point_22_temp=120000 type=active
+   trip_point_2_temp=85000 type=passive
+   trip_point_3_temp=18000 type=active
+   trip_point_4_temp=35000 type=active
+   trip_point_5_temp=45000 type=active
+   trip_point_6_temp=55000 type=active
+   trip_point_7_temp=65000 type=active
+   trip_point_8_temp=69000 type=active
+   trip_point_9_temp=73000 type=active
+-- GPU-therm policy=pid_thermal_gov temp=45000
+   trip_point_0_temp=101000 type=critical
+   trip_point_10_temp=89000 type=active
+   trip_point_11_temp=94000 type=active
+   trip_point_12_temp=9000 type=active
+   trip_point_13_temp=29000 type=active
+   trip_point_14_temp=50000 type=active
+   trip_point_15_temp=70000 type=active
+   trip_point_16_temp=14000 type=active
+   trip_point_1_temp=99000 type=hot
+   trip_point_2_temp=89000 type=passive
+   trip_point_3_temp=14000 type=active
+   trip_point_4_temp=44000 type=active
+   trip_point_5_temp=64000 type=active
+   trip_point_6_temp=69000 type=active
+   trip_point_7_temp=74000 type=active
+   trip_point_8_temp=79000 type=active
+   trip_point_9_temp=84000 type=active
+-- MEM-therm policy=pid_thermal_gov temp=46000
+   trip_point_0_temp=101000 type=critical
+-- PLL-therm policy=pid_thermal_gov temp=48500
+   trip_point_0_temp=62000 type=active
+   trip_point_1_temp=72000 type=active
+   trip_point_2_temp=82000 type=active
+   trip_point_3_temp=19000 type=active
+-- therm_est policy=adaptive_skin temp=34705
+   trip_point_0_temp=45000 type=passive
+### cooling
+gk20a_cdev cur=0 max=4294967295
+shutdown_warning cur=0 max=1
+cpu_hot cur=0 max=3
+cpu_cold cur=2 max=5
+core_cold cur=1 max=1
+gpu_cold cur=1 max=1
+gpu_scaling cur=2 max=4
+core_hot cur=0 max=3
+tegra-dram cur=0 max=1
+gpu_edp cur=2 max=9
+cpu_edp cur=3 max=12
+tegra-shutdown cur=0 max=3
+tegra-heavy cur=0 max=3
+skin-balanced cur=0 max=25
+therm_est_activ cur=0 max=1
+cpu-balanced cur=0 max=83
+gpu-balanced cur=0 max=83
+cpu_cold cur=2 max=5

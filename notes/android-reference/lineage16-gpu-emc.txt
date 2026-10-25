@@ -1,0 +1,94 @@
+### gk20a scaling
+/sys/kernel/debug/gk20a.0: elpg_residency elpg_transitions gr_idle_timeout_default_us ltc_enabled monitor pll_reg rate status timeouts_enabled trace_cmdbuf  /sys/kernel/debug/gk20a.0_scaling: bias block_window damp hint_
+/sys/kernel/debug/gk20a.0_scaling/bias: 80
+/sys/kernel/debug/gk20a.0_scaling/block_window: 50000
+/sys/kernel/debug/gk20a.0_scaling/damp: 7
+/sys/kernel/debug/gk20a.0_scaling/hint_hi_limit: 997
+/sys/kernel/debug/gk20a.0_scaling/hint_lo_limit: 500
+/sys/kernel/debug/gk20a.0_scaling/load_max: 900
+/sys/kernel/debug/gk20a.0_scaling/load_target: 700
+/sys/kernel/debug/gk20a.0_scaling/scaledown_limit: 1300
+/sys/kernel/debug/gk20a.0_scaling/scaleup_limit: 1100
+/sys/kernel/debug/gk20a.0_scaling/slowdown_delay: 10
+/sys/kernel/debug/gk20a.0_scaling/smooth: 10
+/sys/kernel/debug/gk20a.0_scaling/use_throughput_hint: 0
+/sys/devices/virtual/nvidia-gpu/nvhost-as-gpu/: dev power subsystem uevent  /sys/devices/virtual/nvidia-gpu/nvhost-ctrl-gpu/: dev power subsystem uevent  /sys/devices/virtual/nvidia-gpu/nvhost-gpu/: dev power subsystem u
+/sys/devices/virtual/nvidia-gpu/nvhost-as-gpu/dev: 240:1
+/sys/devices/virtual/nvidia-gpu/nvhost-as-gpu/uevent: MAJOR=240
+MINOR=1
+DEVNAME=nvhost-as-gpu
+/sys/devices/virtual/nvidia-gpu/nvhost-ctrl-gpu/dev: 240:2
+/sys/devices/virtual/nvidia-gpu/nvhost-ctrl-gpu/uevent: MAJOR=240
+MINOR=2
+DEVNAME=nvhost-ctrl-gpu
+/sys/devices/virtual/nvidia-gpu/nvhost-gpu/dev: 240:0
+/sys/devices/virtual/nvidia-gpu/nvhost-gpu/uevent: MAJOR=240
+MINOR=0
+DEVNAME=nvhost-gpu
+### emc
+-- table_info
+Table info:
+   Rev: 0x19
+   Table ID: 02_12750_01_V6.0.4_V1.1
+    12750
+Table info:
+   Rev: 0x19
+   Table ID: 02_20400_01_V6.0.4_V1.1
+    20400
+Table info:
+   Rev: 0x19
+   Table ID: 02_40800_01_V6.0.4_V1.1
+    40800
+Table info:
+   Rev: 0x19
+   Table ID: 02_68000_01_V6.0.4_V1.1
+    68000
+Table info:
+   Rev: 0x19
+   Table ID: 02_102000_01_V6.0.4_V1.1
+    102000
+Table info:
+   Rev: 0x19
+   Table ID: 02_136000_01_V6.0.4_V1.1
+    136000
+Table info:
+   Rev: 0x19
+   Table ID: 02_204000_01_V6.0.4_V1.1
+    204000
+Table info:
+   Rev: 0x19
+-- efficiency
+80
+-- emc_usage_table
+EMC USAGE		ISO SHARE % @ last bw 0
+[0]: DC1			= 18(vary across bw)
+[1]: DC1+DC2			= 17(vary across bw)
+[2]: DC1+VI			= 17(vary across bw)
+[3]: DC1+DC2+VI			= 17(vary across bw)
+[4]: reserved
+[5]: reserved
+[6]: reserved
+[7]: reserved
+-- stats
+rate kHz   time      
+12750      0         
+20400      0         
+40800      0         
+68000      0         
+102000     0         
+136000     0         
+204000     7517      
+300000     590       
+396000     95        
+528000     30        
+600000     1661      
+792000     1244      
+924000     15297     
+transitions:    529
+time-stamp:     1431652077
+-- dram_temperature
+3
+-- over_temp_state
+0
+-- clkchange_delay
+100
