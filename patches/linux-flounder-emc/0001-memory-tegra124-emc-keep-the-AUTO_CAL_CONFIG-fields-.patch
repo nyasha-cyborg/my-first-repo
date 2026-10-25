@@ -1,0 +1,40 @@
+From 7acfe218cc49357c63cef0abb749a514560f2d8a Mon Sep 17 00:00:00 2001
+From: nyasha <nmushambi@proton.me>
+Date: Mon, 26 Oct 2026 00:04:34 +1300
+Subject: [PATCH] memory: tegra124-emc: keep the AUTO_CAL_CONFIG fields when
+ the rate changes
+
+When a timing change also changes EMC_AUTO_CAL_CONFIG, the new value is queued
+in the CCFIFO with the AUTO_CAL_START bit cleared, so the calibration is not
+restarted before the clock change. The mask was inverted: the code kept only
+AUTO_CAL_START and cleared every other field (enables, PD/PU offsets, stall
+configuration), so the pads ran uncalibrated after the switch. The downstream
+tegra12_emc_set_clock() does 'config & ~START' (bug 1372978 comment).
+
+Tegra124 boards where every rate has the same AUTO_CAL_CONFIG never hit it.
+The Nexus 9 (Tegra132) tables use 0xa1430000 for the low rates and 0xa1430404 /
+0xa1430808 for 792 / 924 MHz, so every switch to or from the top two rates wrote
+0x80000000. With EMC scaling enabled that showed up as random memory corruption
+(oopses, GPU hangs); pinning the EMC at 924 MHz avoided it.
+
+Signed-off-by: nyasha <nmushambi@proton.me>
+---
+ drivers/memory/tegra/tegra124-emc.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/memory/tegra/tegra124-emc.c b/drivers/memory/tegra/tegra124-emc.c
+index 9978ff911..2dceb5255 100644
+--- a/drivers/memory/tegra/tegra124-emc.c
++++ b/drivers/memory/tegra/tegra124-emc.c
+@@ -716,7 +716,7 @@ static int tegra124_emc_prepare_timing_change(struct tegra_emc *emc,
+ 
+ 	if (timing->emc_auto_cal_config != last->emc_auto_cal_config) {
+ 		val = timing->emc_auto_cal_config;
+-		val &= EMC_AUTO_CAL_CONFIG_AUTO_CAL_START;
++		val &= ~EMC_AUTO_CAL_CONFIG_AUTO_CAL_START;
+ 		emc_ccfifo_writel(emc, val, EMC_AUTO_CAL_CONFIG);
+ 	}
+ 
+-- 
+2.56.0
+

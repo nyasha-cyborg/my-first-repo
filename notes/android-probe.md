@@ -58,3 +58,23 @@ Probed 2026-10-25 23:59 on LineageOS 16.0-20251224 (root adb, idle home screen).
 - Brightness on Android: 0..255 sysfs, same curve as mainline's jdi_bl_map (7..90..255) -> brightness path is equal.
 - So far NOT yet different from mainline: timings, brightness curve, CABC (0x55=0), PM1. Still to compare: pmOS
   DSI PHY timing/PKT_SEQ/HS clock registers (above), panel init MCS order/timing, DC underrun/FIFO settings.
+
+## 2026-10-26 01:10 — ROOT CAUSE CANDIDATE for "EMC DVFS corrupts memory": inverted AUTO_CAL_CONFIG mask in mainline
+Source of truth: downstream `arch/arm/mach-tegra/tegra12_emc.c` (linckandrea/android_kernel_htc_flounder@lineage-16.0, saved as
+`notes/android-reference/tegra12_emc.c.vendor-lineage16`), function `emc_set_clock()` step 4.1 vs mainline
+`drivers/memory/tegra/tegra124-emc.c` `tegra124_emc_prepare_timing_change()`:
+- vendor: `auto_cal_config = next->emc_auto_cal_config & ~(1 << AUTO_CAL_START_SHIFT); ccfifo_writel(.., EMC_AUTO_CAL_CONFIG)`
+- mainline: `val &= EMC_AUTO_CAL_CONFIG_AUTO_CAL_START;` -> keeps ONLY bit 31, wipes enables/offsets (0x80000000).
+- Why it hits this tablet: `tegra132-flounder-emc.dtsi` has `nvidia,emc-auto-cal-config` = 0xa1430000 for rates <= 600 MHz
+  but **0xa1430404 (792 MHz) and 0xa1430808 (924 MHz)** (both ram codes). Every switch to/from 792/924 wrote 0x80000000, so the
+  pads ran with calibration enable + PD/PU offsets cleared. Jetson TK1 tables have one value, so nobody saw it upstream.
+  Fits all earlier symptoms: random corruption/oopses/GR failures after EMC DVFS, stable when EMC pinned at 924 (no switches).
+- Fix: `patches/linux-flounder-emc/0001-memory-tegra124-emc-keep-the-AUTO_CAL_CONFIG-fields-.patch` (branch `emc-autocal-fix`
+  in ~/code/linux-flounder, 7acfe218c). One line: `&= ~EMC_AUTO_CAL_CONFIG_AUTO_CAL_START`. UNTESTED on hardware.
+- Test plan (needs pmOS back on the tablet): build this kernel, boot WITHOUT `initcall_blacklist=tegra_devfreq_driver_init`
+  (re-enables actmon EMC scaling), run `tools/pmos/gpu-boot-test.sh 8` and `tools/pmos/gr-cycle-test.sh 8`; watch
+  /sys/kernel/debug/tegra_emc stats and dmesg for oops/GR failures. Good outcome: 8/8 clean with EMC scaling -> lower heat/power.
+- Other vendor-vs-mainline differences noticed (lower priority, not yet tested): vendor disables AUTO_CAL_INTERVAL (=0) *before*
+  programming burst registers (mainline does it at the end); vendor also kicks AUTO_CAL START in step 2.5.1 when the next config
+  requests it; vendor writes MC "burst_up_down" (latency-allowance/PTSA) registers after the switch when going up and before when
+  going down (mainline uses tegra_mc_write_emem_configuration only, before); vendor holds `tegra12_mc_holdoff_enable()`.
