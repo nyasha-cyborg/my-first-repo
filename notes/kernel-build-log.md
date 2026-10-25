@@ -325,3 +325,8 @@ Step commits in order (q1 = 1-35, q2 = 1-70, q3 = 1-106; 107-141 only in full 10
 - Built branch n9-108-q4-devc = q4 + that dev.c resolution. **Its tree hash is identical to n9-3.10.108** (cfc4d7c785c9). Output: `out/boot-q4-devc.img` (uname 3.10.108, sha256 92dd58c88efac4d1, log out/build-108-q4-devc.log). bootimg-split: ramdisk 961b8af0 unchanged, cmdline kept.
 - Meaning: q4 and the failing boot-3.10.108.img come from (almost) the same source. The only difference is code that does the same thing. So the "108 regression" is most likely intermittent (q2 also lost USB once, and q3, a superset, did not), or a build difference (boot-3.10.108.img was built in build-108 at 01:17; q4 was built in build-bisect).
 - Next: boot boot-q4-devc.img several times. Then boot boot-3.10.108.img again several times and compare USB-gadget and LTE results. Repeat boot-108-q4.img too. If 108 fails while devc passes, compare the build-108 and build-bisect .config files and toolchains.
+- 09:36-10:05 repeat runs: boot-q4-devc x2, boot-3.10.108 x2, boot-108-q4 x1 -> **5/5 USB OK (15-20 s) and LTE OK** (Spark NZ/LTE/IP).
+  The two overnight 3.10.108 failures (01:20 and 02:04) did not reproduce. Conclusion: no deterministic regression in 3.10.104-108;
+  the failures are intermittent (also seen once on q2). Possible factors: boot right after previous hung kernel, modem state,
+  the laptop port (tablet moved to the LG hub at ~09:15; all passes since then are on the hub). Need a failure-rate baseline on
+  3.10.103 before blaming the kernel. boot-3.10.108.img (n9-3.10.108, gd70b80d5d56) is the release candidate.
