@@ -713,3 +713,18 @@ metric 200, `ping -I wwan0 1.1.1.1` 4/4 (27-77 ms).
   serial console only matters for the test images, the goal is an installed pmOS).
 - For the rootfs: install `qmi-connect`, `mdm-net.sh` next to `mdm-boot.sh` in /usr/lib/n9-modem and set APN in
   /etc/conf.d/n9-modem (tools/rootfs/n9-modem.initd).
+
+## 2026-10-25 15:10 — owner switched back to Android: stock Google 7.1.1 N4F27P flashed (LTE stack present)
+
+- Decision (owner): leave pmOS (3D works but slow/unstable on 1.8 GB; LTE only via our own work); try stock Android first
+  for LTE, YouTube-alternatives (NewPipe/SmartTube) and Stremio. LineageOS 16 + vendor-blob transplant is plan B
+  (stock vendor files are in ~/Downloads/nexus9/google-volantisg-n4f27p/).
+- Flash (host fastboot 37, unlocked bootloader 3.50.0.0143 = factory one, so the bootloader image was NOT flashed):
+  `fastboot -w update` fails on this bootloader (`Snapshot cancel FAILED (remote: 'not allowed')`). Worked instead:
+  unzip image-volantisg-n4f27p.zip, then `fastboot flash boot|recovery|system|vendor|cache`, `fastboot format userdata`
+  (f2fs; plain `erase` only warns). `fastboot reboot` -> Android enumerates (18d1:4ee1 MTP).
+- Gotcha: from pmOS, software reboot-to-bootloader (PMC bit + sysrq b) did NOT reach fastboot (hboot ignored it, came
+  back as charger-mode pmOS); only Power + Volume Down by hand worked.
+- Pmos is gone from the device (userdata formatted); pmOS boot images/rootfs build still in the repo.
+- Next: owner finishes the setup wizard, inserts the SIM, enables USB debugging; check `getprop gsm.network.type`,
+  `ip link` for wwan0, `getprop gsm.sim.state`.
