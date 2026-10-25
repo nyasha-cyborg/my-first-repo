@@ -131,3 +131,4 @@ failed. The kernel builds with no new errors or warnings (270 warnings, same as 
 - "Compiled in" check uses the old build dir's objects; header-only patches are counted by their .c files.
 - nvmap / nvhost / nvgpu (the ion/kgsl equivalents) are still unpatched: no upstream patches,
   need hand-porting from Google bulletins (separate task).
+- 10:10-10:22 boot-3.10.108-secA.img x2: USB OK (15/20 s), LTE OK (Spark NZ/LTE/IP), Wi-Fi on, cameraserver running, no oops. Wave A passes the boot test.
