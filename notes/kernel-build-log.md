@@ -310,3 +310,8 @@ Step commits in order (q1 = 1-35, q2 = 1-70, q3 = 1-106; 107-141 only in full 10
   - be3e7b176c2 USB: serial: console: fix use-after-free after failed setup — drivers/usb/serial/console.c
   - 78da094deb3 net: set sk_prot_creator when cloning sockets — net/core/sock.c
 - Next: boot q4. OK -> suspect the 6 / merge resolutions; FAIL -> step commits 107-141.
+- 09:30 boot-108-q4.img (all 141 step commits minus the 6 that did not cherry-pick): **USB OK** (20 s), **LTE OK** (Spark NZ/LTE/IP).
+  => The full n9-3.10.108 failure comes from the 6 skipped commits as resolved in the merge (1bff8a2960f net/core/dev.c,
+  69ddef7b41f UDP frag, 3937c2c918c ALSA seq, 7136ca73ff3 brcmfmac, be3e7b176c2 usb serial console, 78da094deb3 sock clone)
+  or from a conflict resolution in that merge. q4 (`3.10.108`, branch n9-108-q4) is the working base candidate.
+  Next: hand-port the 6 one at a time on q4 (start with be3e7b176c2 USB serial console and 78da094deb3 sock clone), boot-test each.
