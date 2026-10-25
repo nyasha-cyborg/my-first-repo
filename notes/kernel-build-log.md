@@ -289,3 +289,7 @@ Step commits in order (q1 = 1-35, q2 = 1-70, q3 = 1-106; 107-141 only in full 10
 141 e7a59c7f266 Linux 3.10.108
 ```
 - Next: boot q2; LTE OK -> q3, FAIL -> q1. Separately boot usbrevert.
+- 09:00 108 tablet had been up 7 h on boot-3.10.108 with no USB gadget at all and LTE unregistered; physical replug brought adb back.
+  tools/usb-kick.sh port "disable" does NOT replace a replug (VBUS stays on; the tablet's gadget never sees a disconnect).
+- 09:13 boot-108-q2.img (step commits 1-70): **LTE OK** (Spark NZ/LTE/IP) but **USB gadget dead until physical replug** (adb at 635 s).
+  => two separate regressions: USB-gadget enumeration in commits 1-70, LTE registration in commits 71-141.
