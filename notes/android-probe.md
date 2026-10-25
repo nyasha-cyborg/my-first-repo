@@ -78,3 +78,8 @@ Source of truth: downstream `arch/arm/mach-tegra/tegra12_emc.c` (linckandrea/and
   programming burst registers (mainline does it at the end); vendor also kicks AUTO_CAL START in step 2.5.1 when the next config
   requests it; vendor writes MC "burst_up_down" (latency-allowance/PTSA) registers after the switch when going up and before when
   going down (mainline uses tegra_mc_write_emem_configuration only, before); vendor holds `tegra12_mc_holdoff_enable()`.
+
+## 2026-10-26 headphone jack on LineageOS 16
+- Plug detection works: `/sys/class/switch/h2w/state` 0 -> 2 (headphone, no mic) when plugged; `dumpsys audio` routes
+  STREAM_MUSIC to `headphone` (speaker only listed for other streams). Codec = rt5677 (`card0 tegra-rt5677`).
+- Audible test file `/sdcard/Music/tone.wav` (3 s 440 Hz left, then 3 s 660 Hz right) pushed; listening result pending (owner).
