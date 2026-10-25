@@ -764,3 +764,15 @@ but not the Qualcomm files or `rild`.
   no SIM detected by the modem (tray empty/unseated, or a SIM the modem cannot read). Needs a SIM in the tray; then check
   `getprop gsm.sim.state`, `gsm.operator.alpha`, `dumpsys telephony.registry`, APN settings.
 - Not yet done: sepolicy for efsks.pid, IMSA (`qmi_client_init failure(31) for IMSA`, VoLTE not needed), SIM test, data test.
+
+## 2026-10-26 00:46 — MILESTONE: LTE mobile data works on LineageOS 16 (Skinny NZ, Spark network)
+- Chain that finally worked: stock vendor LTE files + `rild` (see above) + (1) `android.hardware.telephony(.gsm)` feature XMLs in
+  /vendor/etc/permissions (without them nothing connects), (2) static RRO `/vendor/overlay/N9MobileOverlay.apk` adding mobile
+  entries to `networkAttributes`/`radioAttributes` (the Wi-Fi build's framework-res only had wifi/bluetooth/ethernet, so
+  `Supported types: 1 7 9 17` and RILJ never requested the radio HAL), (3) Skinny APN `wapaccess.co.nz` (530/05) inserted into
+  telephony.db (empty on this build), (4) preferred network mode 9 (LTE/GSM/WCDMA).
+- Result: SIM `LOADED`, operator `Spark NZ`, RAT LTE (14), `mDataConnectionState=2`, `rmnet_usb0` got 10.197.202.x,
+  with Wi-Fi off: ping 1.1.1.1 21-38 ms, DNS ok, active network MOBILE[LTE] apn wapaccess.co.nz.
+- Files: tools/android/lte/{install-lte-lineage16.sh,install-lte-lineage16.sh.notes,rild.rc,vintf-manifest-radio.diff,
+  overlay/,permissions/,apn-skinny.sql}. Not yet verified: survives a reboot untouched (all changes are on /vendor + /data),
+  voice/SMS (tablet is data-only, config_voice_capable=false), IMS/VoLTE (not needed), the `efsks.pid` SELinux denial.

@@ -1,0 +1,8 @@
+Extra steps done by hand after the script (needed on the Wi-Fi-only build):
+1. Telephony feature flags: adb push permissions/*.xml /vendor/etc/permissions/ (chmod 644, restorecon).
+2. Mobile network types: build overlay/ with aapt2 (build-tools 34, android.jar 30), zipalign, apksigner (any test key; do NOT
+   commit the keystore), push to /vendor/overlay/N9MobileOverlay.apk. Without it ConnectivityManager reports no TYPE_MOBILE
+   and RIL.java never connects to the radio HAL ("Supported types: 1 7 9 17").
+3. APN: apn-skinny.sql (the carriers table is empty on this build).
+4. LTE preferred: settings put global preferred_network_mode 9; preferred_network_mode1 9 (NZ has no 2G, 3G is being retired).
+/vendor is read-only after every reboot: adb root; adb remount before pushing.
