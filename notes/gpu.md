@@ -165,3 +165,20 @@
   the shared PWR_I2C). REA `tegra_i2c_probe/xfer`: stock enables `cl_dvfs_ref` + `cl_dvfs_soc` around every
   transfer when `nvidia,require-cldvfs-clock` is set (stock DT has it). Series 0041 does the same in mainline
   i2c-tegra + flounder DT: bursts remain (84, 45 on two boots) -> not sufficient; DFLL handover still open.
+
+## 2026-10-25 13:30-14:10 — 3D "gr: failed to construct context -110": vendor GR reset fixes it so far (2 boots)
+
+- Symptom (handoff item 1): kmscube on NVIDIA failed; dmesg `gr: wait for idle timeout (en: 1, ctxsw: 0, busy: 1)`,
+  `gr: init failed, -11/-110`, then `failed to construct context`. EMC blacklist and 612 MHz pin were already in place,
+  so this is not the EMC-corruption failure; PGRAPH was simply busy at first use. Reloading nouveau live does not
+  recover it and `rmmod nouveau` oopses in `gk20a_devfreq_get_dev_status` (needs a reboot).
+- Change: applied the stashed REA candidate (vendor `gk20a_init_gr_prepare` / `reset_enable_hw` order, GK20A only)
+  = `patches/candidates/gk20a-gr-vendor-reset.patch`, built as module for release `...g0fa4171fc82c`, installed
+  into the rootfs (`nouveau.ko.zst`; original saved as /root/nouveau.ko.zst.orig on the tablet).
+- Result: 2 of 2 fresh boots: `kmscube -D /dev/dri/card0 -c 600` rc=0, renderer "tegra", 0 `gr:` errors
+  (stop greetd first, else "failed to set mode: Permission denied" = phoc owns DRM master).
+  Old failure rate was ~half of boots, so 2/2 is encouraging, not proof. More boots needed.
+- Tool: `tools/pmos/gr-cycle-test.sh N [ip]` (reboot + kmscube per boot). It uses pmboot.sh, which reboots the
+  tablet itself; do not power-cycle by hand while it runs, and do not `pkill -f` it from the same shell.
+- Next: more boots without errors -> commit the kernel patch properly, drop the 3 software-GL variables from
+  /etc/environment, restart greetd (phoc should say "Creating GLES2 renderer ... NVIDIA").
