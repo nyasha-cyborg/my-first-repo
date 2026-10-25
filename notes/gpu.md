@@ -197,3 +197,8 @@
   tablet (old copy: /opt/mesa-n9.bak). Relocation errors gone; Firefox stays up 30 s on the GPU. Owner re-test pending.
 - Open: owner sees occasional corrupted graphics and some instability on the GPU path (panel flicker is known on
   the stock kernel too; GPU-side corruption not yet investigated). Memory is ~1.8 GB usable, ~70 C under Firefox.
+- 14:55 owner: Firefox works, Settings "fails". Settings runs fine from a shell and activates in ~8 s with Firefox
+  closed; with Firefox open (≈500 MB) MemAvailable fell to ~200 MB, load 8-9, and `gapplication launch
+  org.gnome.Settings` hit "Activate: Timeout was reached" (phosh reports "failed to start"). Cause = memory/CPU
+  pressure (1.8 GB usable, 256 MB CMA), not the GPU stack. Idea: trim background services (evolution-*,
+  udiskie, gnome-online-accounts) to free RAM.
