@@ -298,3 +298,15 @@ Step commits in order (q1 = 1-35, q2 = 1-70, q3 = 1-106; 107-141 only in full 10
   Note q2 (1-70) lost USB once but q3 (superset) did not -> the USB symptom may be intermittent; needs repeats.
   Remaining candidates: step commits 107-141, the 6 skipped commits (1bff8a2960f 69ddef7b41f 3937c2c918c 7136ca73ff3 be3e7b176c2
   78da094deb3), or conflict resolutions in the n9-3.10.108 merge. Next: q4 = all 141 minus the 6 skipped.
+
+## 2026-10-26 — q4 image (built, not booted)
+- `out/boot-108-q4.img` (branch n9-108-q4, script `/tmp/q4/b.sh`): 701bc9dc8ac + acl fix + all 141 step commits minus the same 6 conflicts (no new conflicts; 136 commits on base). uname 3.10.108, sha256 f4c9a51bfebfed58. bootimg-split: ramdisk 961b8af0 unchanged, cmdline kept.
+- Difference q4 vs real n9-3.10.108 = the 6 skipped commits + merge conflict resolutions.
+- The 6 skipped commits (prepared, not built):
+  - 1bff8a2960f net: reduce skb_warn_bad_offload() noise — net/core/dev.c
+  - 69ddef7b41f udp: consistently apply ufo or fragmentation — net/ipv4/ip_output.c, net/ipv4/udp.c, net/ipv6/ip6_output.c
+  - 3937c2c918c ALSA: seq: fix use-after-free at creating a port — sound/core/seq/seq_clientmgr.c, seq_ports.c
+  - 7136ca73ff3 brcmfmac: fix buffer overflow in brcmf_cfg80211_mgmt_tx() — drivers/net/wireless/brcm80211/brcmfmac/wl_cfg80211.c
+  - be3e7b176c2 USB: serial: console: fix use-after-free after failed setup — drivers/usb/serial/console.c
+  - 78da094deb3 net: set sk_prot_creator when cloning sockets — net/core/sock.c
+- Next: boot q4. OK -> suspect the 6 / merge resolutions; FAIL -> step commits 107-141.
