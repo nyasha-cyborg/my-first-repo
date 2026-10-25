@@ -208,3 +208,10 @@
   removed ≈ 120 MB). "Used" memory (≈1.0-1.2 GB) is mostly kernel/GPU buffers + page cache + 235 MB in zram.
   Test with Firefox open: Settings now launches (20 s, no timeout, no error) vs. a timeout before.
   Still slow: load 5, CPU ~70 C. Next ideas: lighter browser settings, review n9-health/n9-kmsg/haveged/logbookd.
+- 15:50 corruption hunt: tools/pmos/gpucheck/gpucheck.c (GLES2 via GBM card0 = same tegra+nouveau stack as phoc):
+  upload fresh random CPU texture, sample 1:1 into FBO, read back, compare every pixel. 1800 iterations (512² and
+  1024²) with desktop + Firefox running: 0 bad pixels, no nouveau errors. grim screenshots of the idle desktop are
+  clean (only the wifi icon changes). => the GPU data path is not corrupting; owner's "flicker/flashes" = panel
+  (also on stock kernel, see display-progress.md), "broken blocks" not reproduced. Open: reproduce while video/scroll.
+- Owner asked about going back to LineageOS (stock 3.10 kernel). Answer given: mainline kernel cannot run NVIDIA's
+  Android userspace; own AOSP+Mesa build = months; LineageOS 16 recommended for YouTube/Stremio. Decision pending.
