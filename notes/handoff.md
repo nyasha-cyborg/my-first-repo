@@ -432,3 +432,7 @@ adb sideload ROM. Once Android runs (root adb), measure and write results into n
   `twrp sideload` + `adb sideload`, 175 s). Boots, unencrypted, no FRP prompt, `adb root` works. LTE: not available on
   this build. Stock Android 7.1.1 (LTE works) is overwritten; its factory zip is still in ~/Downloads/nexus9.
   Next: the probing described above.
+- 2026-10-26 01:30 (owner asleep): probing finished. Read `notes/options-assessment.md` (decision table + recommendation),
+  `notes/android-probe.md` (Android clocks/thermal/display reference, EMC AUTO_CAL root-cause candidate) and
+  `notes/android-reference/` (raw dumps + vendor tegra12_emc.c). The tablet is on LineageOS 16 (Wi-Fi build, no LTE);
+  nothing was flashed overnight. Untested patches: `patches/linux-flounder-emc/`, `patches/linux-flounder-gpu/`.
