@@ -1,0 +1,90 @@
+From f51da75e822f1646629dc3f7c0fe9dcc582e977a Mon Sep 17 00:00:00 2001
+From: nyasha <nmushambi@proton.me>
+Date: Sun, 25 Oct 2026 14:35:40 +1300
+Subject: [PATCH] drm/nouveau/gr/gk20a: reset PGRAPH and FECS before loading
+ the context-switch ucode
+
+The vendor nvgpu driver (gk20a_init_gr_prepare/reset_enable_hw, found by
+reverse-engineering the stock kernel) resets PGRAPH and the FECS ctxsw
+engine before loading the ucode. Mainline's gk104 reset map has no GR
+entry, so GR is never reset at init, and on Tegra132 the first GR use
+sometimes failed with 'gr: init failed, -11/-110' until the next reboot.
+
+Reset the GR engine the way the vendor driver does, GK20A only.
+
+Tested on a Nexus 9 (Tegra132): kmscube and the phoc compositor run on
+the GPU; 2/2 boots clean, more boots needed to be sure.
+
+Signed-off-by: nyasha <nmushambi@proton.me>
+---
+ .../gpu/drm/nouveau/nvkm/engine/gr/gk20a.c    | 48 +++++++++++++++++++
+ 1 file changed, 48 insertions(+)
+
+diff --git a/drivers/gpu/drm/nouveau/nvkm/engine/gr/gk20a.c b/drivers/gpu/drm/nouveau/nvkm/engine/gr/gk20a.c
+index 035ea213f..d9e347c7c 100644
+--- a/drivers/gpu/drm/nouveau/nvkm/engine/gr/gk20a.c
++++ b/drivers/gpu/drm/nouveau/nvkm/engine/gr/gk20a.c
+@@ -185,12 +185,60 @@ gk20a_gr_set_hww_esr_report_mask(struct gf100_gr *gr)
+ 	nvkm_wr32(device, 0x419e4c, 0x7f);
+ }
+ 
++/*
++ * GK20A: reset GR before loading the ctxsw ucode, as the vendor driver does on
++ * every power-on (nvgpu gk20a_init_gr_prepare + gk20a_init_gr_reset_enable_hw).
++ * The MC reset map has no GR entry, so without this GR starts in whatever state
++ * it was left in; on some boots FECS then never answered its first method
++ * (gr: init failed, -110) and GPC registers faulted on the priv ring.
++ */
++static void
++gk20a_gr_reset_hw(struct gf100_gr *gr)
++{
++	struct nvkm_device *device = gr->base.engine.subdev.device;
++
++	/* disable FIFO access, reset PGRAPH + BLG + PERFMON, re-enable */
++	if (nvkm_rd32(device, 0x000200) & 0x00001000)
++		nvkm_mask(device, 0x400500, 0x00000001, 0x00000000);
++	nvkm_mask(device, 0x000200, 0x18001000, 0x00000000);
++	nvkm_rd32(device, 0x000200);
++	udelay(20);
++	nvkm_mask(device, 0x000200, 0x18001000, 0x18001000);
++	nvkm_rd32(device, 0x000200);
++	udelay(20);
++	nvkm_wr32(device, 0x400500, 0x00010001);
++
++	nvkm_wr32(device, 0x400100, 0xffffffff);
++	nvkm_wr32(device, 0x40013c, 0xffffffff);
++
++	/* FE power mode force-on, reset FECS/GPCCS, back to auto */
++	nvkm_wr32(device, 0x404170, 0x00000012);
++	nvkm_msec(device, 2000,
++		if (!(nvkm_rd32(device, 0x404170) & 0x00000010))
++			break;
++	);
++	nvkm_wr32(device, 0x409614, 0x00000070);
++	nvkm_rd32(device, 0x409614);
++	udelay(20);
++	nvkm_wr32(device, 0x409614, 0x00000770);
++	nvkm_rd32(device, 0x409614);
++	udelay(20);
++	nvkm_wr32(device, 0x404170, 0x00000010);
++	nvkm_msec(device, 2000,
++		if (!(nvkm_rd32(device, 0x404170) & 0x00000010))
++			break;
++	);
++}
++
+ int
+ gk20a_gr_init(struct gf100_gr *gr)
+ {
+ 	struct nvkm_device *device = gr->base.engine.subdev.device;
+ 	int ret;
+ 
++	if (device->chipset == 0xea)
++		gk20a_gr_reset_hw(gr);
++
+ 	/* Clear SCC RAM */
+ 	nvkm_wr32(device, 0x40802c, 0x1);
+ 
+-- 
+2.56.0
+

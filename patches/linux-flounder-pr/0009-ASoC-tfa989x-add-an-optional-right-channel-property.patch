@@ -1,0 +1,50 @@
+From 3ef0b36a4d0dd24d785e3ef9b5aadca72b55b443 Mon Sep 17 00:00:00 2001
+From: nyasha <nmushambi@proton.me>
+Date: Fri, 23 Oct 2026 11:02:41 +1300
+Subject: [PATCH 09/13] ASoC: tfa989x: add an optional right-channel property
+
+CHSA selects which I2S channel the amplifier takes its input from.  Some
+boards route the bottom speaker to the right channel, so allow the DT to say
+so with nxp,right-channel instead of hardcoding the left channel.
+
+Signed-off-by: nyasha <nmushambi@proton.me>
+---
+ sound/soc/codecs/tfa989x.c | 12 ++++++++----
+ 1 file changed, 8 insertions(+), 4 deletions(-)
+
+diff --git a/sound/soc/codecs/tfa989x.c b/sound/soc/codecs/tfa989x.c
+index 7204be155..7ee1f1ab7 100644
+--- a/sound/soc/codecs/tfa989x.c
++++ b/sound/soc/codecs/tfa989x.c
+@@ -283,12 +283,16 @@ static const struct tfa989x_rev tfa9897_rev = {
+  * Ideally NXP (or now Goodix) should release proper documentation for these
+  * amplifiers so that support for the "CoolFlux DSP" can be implemented properly.
+  */
+-static int tfa989x_dsp_bypass(struct regmap *regmap)
++static int tfa989x_dsp_bypass(struct regmap *regmap, bool right)
+ {
+ 	int ret;
+ 
+-	/* Clear CHSA to bypass DSP and take input from I2S 1 left channel */
+-	ret = regmap_clear_bits(regmap, TFA989X_I2SREG, TFA989X_I2SREG_CHSA_MSK);
++	/*
++	 * CHSA = 0 bypasses the DSP and takes input from the I2S 1 left
++	 * channel, CHSA = 1 takes the right channel.
++	 */
++	ret = regmap_update_bits(regmap, TFA989X_I2SREG, TFA989X_I2SREG_CHSA_MSK,
++				 right ? 1 << TFA989X_I2SREG_CHSA : 0);
+ 	if (ret)
+ 		return ret;
+ 
+@@ -392,7 +396,7 @@ static int tfa989x_i2c_probe(struct i2c_client *i2c)
+ 		return ret;
+ 	}
+ 
+-	ret = tfa989x_dsp_bypass(regmap);
++	ret = tfa989x_dsp_bypass(regmap, device_property_read_bool(dev, "nxp,right-channel"));
+ 	if (ret) {
+ 		dev_err(dev, "failed to enable DSP bypass: %d\n", ret);
+ 		return ret;
+-- 
+2.56.0
+

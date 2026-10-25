@@ -1,0 +1,139 @@
+From 190e69884f3aea0c1d82716d7cab636615ae0955 Mon Sep 17 00:00:00 2001
+From: nyasha <nmushambi@proton.me>
+Date: Fri, 23 Oct 2026 11:02:40 +1300
+Subject: [PATCH 07/13] usb: chipidea: tegra: support the Tegra124 UDC and HSIC
+ port power
+
+Tegra124's VBUS state comes from the PMIC through extcon, not from the
+controller's OTGSC register, so the ChipIdea OTG path never sees a session
+and the gadget never connects.  Add a tegra124_udc_soc_info that treats the
+controller as non-OTG with VBUS permanently active and forces the PHY VBUS
+comparators on controller reset, matching what the vendor tegra_udc.c does
+for support_pmu_vbus.
+
+On HSIC, run the PHY port-power hook whenever the hub powers or resets the
+port, because the controller reset loses the PHY's DEVLC programming.
+
+Also clear SLOM when pulling up in device mode: the bootloader leaves it
+clear and the core's lockout-on-setup default breaks some host stacks.
+
+Signed-off-by: nyasha <nmushambi@proton.me>
+---
+ drivers/usb/chipidea/ci_hdrc_tegra.c | 51 +++++++++++++++++++++++++++-
+ drivers/usb/chipidea/udc.c           |  6 ++++
+ 2 files changed, 56 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/usb/chipidea/ci_hdrc_tegra.c b/drivers/usb/chipidea/ci_hdrc_tegra.c
+index 372788f0f..359fecee8 100644
+--- a/drivers/usb/chipidea/ci_hdrc_tegra.c
++++ b/drivers/usb/chipidea/ci_hdrc_tegra.c
+@@ -34,10 +34,18 @@ struct tegra_usb {
+ 	bool needs_double_reset;
+ };
+ 
++/* USB_PHY_VBUS_SENSORS: software override of the VBUS comparators */
++#define USB_PHY_VBUS_SENSORS			0x404
++#define  VBUS_ASESSION_VLD_SW_EN		BIT(19)
++#define  VBUS_ASESSION_VLD_SW_VALUE		BIT(20)
++#define  VBUS_A_VLD_SW_EN			BIT(27)
++#define  VBUS_A_VLD_SW_VALUE			BIT(28)
++
+ struct tegra_usb_soc_info {
+ 	unsigned long flags;
+ 	unsigned int txfifothresh;
+ 	enum usb_dr_mode dr_mode;
++	bool pmu_vbus;
+ };
+ 
+ static const struct tegra_usb_soc_info tegra20_ehci_soc_info = {
+@@ -72,6 +80,23 @@ static const struct tegra_usb_soc_info tegra30_udc_soc_info = {
+ 	.txfifothresh = 16,
+ };
+ 
++/*
++ * Tegra124's VBUS state comes from the PMIC (palmas) through extcon, not from
++ * the controller's OTGSC register, so the ChipIdea OTG path never sees a
++ * session.  Treat this controller as non-OTG with VBUS permanently active;
++ * the gadget can then connect when it is bound.
++ */
++static const struct tegra_usb_soc_info tegra124_udc_soc_info = {
++	.flags = CI_HDRC_REQUIRES_ALIGNED_DMA |
++		 CI_HDRC_OVERRIDE_PHY_CONTROL |
++		 CI_HDRC_SUPPORTS_RUNTIME_PM |
++		 CI_HDRC_DUAL_ROLE_NOT_OTG |
++		 CI_HDRC_FORCE_VBUS_ACTIVE_ALWAYS,
++	.dr_mode = USB_DR_MODE_UNKNOWN,
++	.txfifothresh = 16,
++	.pmu_vbus = true,
++};
++
+ static const struct of_device_id tegra_usb_of_match[] = {
+ 	{
+ 		.compatible = "nvidia,tegra20-ehci",
+@@ -90,7 +115,7 @@ static const struct of_device_id tegra_usb_of_match[] = {
+ 		.data = &tegra30_udc_soc_info,
+ 	}, {
+ 		.compatible = "nvidia,tegra124-udc",
+-		.data = &tegra30_udc_soc_info,
++		.data = &tegra124_udc_soc_info,
+ 	}, {
+ 		/* sentinel */
+ 	}
+@@ -157,6 +182,22 @@ static int tegra_usb_notify_event(struct ci_hdrc *ci, unsigned int event)
+ 
+ 	switch (event) {
+ 	case CI_HDRC_CONTROLLER_RESET_EVENT:
++		/*
++		 * On Tegra124 the VBUS state comes from the PMIC (palmas)
++		 * through extcon, not from the controller's OTGSC or the PHY
++		 * comparators, so the core never sees A-valid or
++		 * A-session-valid and refuses to drive the D+ pull-up.
++		 * tegra_udc.c on the vendor kernel forces the same two
++		 * comparators for the same reason (support_pmu_vbus).
++		 */
++		if (usb->soc->pmu_vbus) {
++			u32 v = readl(ci->hw_bank.abs + USB_PHY_VBUS_SENSORS);
++
++			v |= VBUS_A_VLD_SW_VALUE | VBUS_A_VLD_SW_EN |
++			     VBUS_ASESSION_VLD_SW_VALUE |
++			     VBUS_ASESSION_VLD_SW_EN;
++			writel(v, ci->hw_bank.abs + USB_PHY_VBUS_SENSORS);
++		}
+ 		if (ci->hcd) {
+ 			ehci = hcd_to_ehci(ci->hcd);
+ 			ehci->has_tdi_phy_lpm = false;
+@@ -245,6 +286,14 @@ static int tegra_ehci_hub_control(struct ci_hdrc *ci, u16 typeReq, u16 wValue,
+ 
+ 	switch (typeReq) {
+ 	case SetPortFeature:
++		/*
++		 * HSIC: the vendor driver runs the PHY's port-power hook (DEVLC bit 26 etc.,
++		 * lost on the controller reset) every time the hub powers or resets the port.
++		 */
++		if ((wValue == USB_PORT_FEAT_POWER || wValue == USB_PORT_FEAT_RESET) &&
++		    ci->platdata->phy_mode == USBPHY_INTERFACE_MODE_HSIC)
++			usb_phy_set_suspend(ci->usb_phy, 0);
++
+ 		if (wValue != USB_PORT_FEAT_RESET || !usb->needs_double_reset)
+ 			break;
+ 
+diff --git a/drivers/usb/chipidea/udc.c b/drivers/usb/chipidea/udc.c
+index 64a421ae0..a298c6951 100644
+--- a/drivers/usb/chipidea/udc.c
++++ b/drivers/usb/chipidea/udc.c
+@@ -1965,6 +1965,12 @@ static int ci_udc_pullup(struct usb_gadget *_gadget, int is_on)
+ 	if (ci_otg_is_fsm_mode(ci) || ci->role == CI_ROLE_HOST)
+ 		return 0;
+ 
++	/*
++	 * hboot leaves SLOM clear in device mode; the core's default of
++	 * lockout-on-setup breaks some host stacks.
++	 */
++	hw_write(ci, OP_USBMODE, USBMODE_SLOM, 0);
++
+ 	pm_runtime_get_sync(ci->dev);
+ 	if (is_on)
+ 		hw_write(ci, OP_USBCMD, USBCMD_RS, USBCMD_RS);
+-- 
+2.56.0
+

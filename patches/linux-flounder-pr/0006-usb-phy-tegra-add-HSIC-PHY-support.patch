@@ -1,0 +1,382 @@
+From 339d677295f320fd0e0a57ff87d9e2e3a1984a8a Mon Sep 17 00:00:00 2001
+From: nyasha <nmushambi@proton.me>
+Date: Fri, 23 Oct 2026 11:02:40 +1300
+Subject: [PATCH 06/13] usb: phy: tegra: add HSIC PHY support
+
+Add support for the UHSIC block in the Tegra USB PHY driver: run the vendor
+power-on sequence, clear the pad power-down bits, keep the PHY powered across
+link power management transitions, and release the PMC USB_AO pad isolation.
+
+The flounder LTE modem hangs off this block on an HSIC port, so it needs the
+PHY to stay up across controller resets.
+
+Signed-off-by: nyasha <nmushambi@proton.me>
+---
+ drivers/usb/phy/phy-tegra-usb.c   | 249 +++++++++++++++++++++++++++++-
+ include/linux/usb/tegra_usb_phy.h |   5 +
+ 2 files changed, 249 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/usb/phy/phy-tegra-usb.c b/drivers/usb/phy/phy-tegra-usb.c
+index fb9031628..01de1012e 100644
+--- a/drivers/usb/phy/phy-tegra-usb.c
++++ b/drivers/usb/phy/phy-tegra-usb.c
+@@ -38,12 +38,38 @@
+ 
+ /* HOSTPC1 PTS/PHCD bits, Tegra30 and above */
+ #define TEGRA_USB_HOSTPC1_DEVLC			0x1b4
++#define TEGRA_USB_PORTSC1_HOSTPC		0x174
+ #define TEGRA_USB_HOSTPC1_DEVLC_PTS(x)		(((x) & 0x7) << 29)
+ #define TEGRA_USB_HOSTPC1_DEVLC_PHCD		BIT(22)
+ 
+ /* Bits of PORTSC1, which will get cleared by writing 1 into them */
+ #define TEGRA_PORTSC1_RWC_BITS	(PORT_CSC | PORT_PEC | PORT_OCC)
+ 
++/*
++ * UHSIC: the controller-side HSIC PHY block at +0xc00 of the USB controller.
++ * Register meanings come from the vendor driver (uhsic_phy_power_on/off in
++ * the Android kernel); only the PLL and PADS_CFG1 bit names are known, the
++ * rest are kept by offset.
++ */
++#define UHSIC_PLL_CFG1				0xc04
++#define   UHSIC_PLLU_ENABLE_DLY_COUNT(x)	(((x) & 0x1f) << 14)
++#define   UHSIC_XTAL_FREQ_COUNT(x)		((x) & 0xfff)
++#define UHSIC_HSRX_CFG0				0xc08
++#define UHSIC_HSRX_CFG1				0xc0c
++#define UHSIC_TX_CFG0				0xc10
++#define UHSIC_MISC_CFG0				0xc14
++#define   UHSIC_MISC_CFG0_PORT_POWER		BIT(8)
++#define UHSIC_MISC_CFG1				0xc18
++#define UHSIC_PADS_CFG0				0xc1c
++#define UHSIC_PADS_CFG1				0xc20
++#define   UHSIC_PADS_CFG1_PD_MASK		0x664
++#define   UHSIC_PADS_CFG1_POWER_DOWN		0x5c
++#define UHSIC_SPARE_CFG0			0xc2c
++#define UHSIC_STAT_CFG0				0xc34
++
++#define TEGRA_USB_TXFILLTUNING			0x154
++#define TEGRA_USB_USBMODE			0x1f8
++
+ #define USB_SUSP_CTRL				0x400
+ #define   USB_WAKE_ON_RESUME_EN			BIT(2)
+ #define   USB_WAKE_ON_CNNT_EN_DEV		BIT(3)
+@@ -711,6 +737,174 @@ static int utmi_phy_power_off(struct tegra_usb_phy *phy)
+ 	return utmip_pad_power_off(phy);
+ }
+ 
++/* XTAL_FREQ_COUNT for the HSIC PLL, per oscillator frequency (vendor table) */
++static const struct {
++	unsigned int freq;
++	u16 xtal_freq_count;
++} tegra_hsic_pll_table[] = {
++	{ 12000000, 0x1ca },
++	{ 13000000, 0x1f0 },
++	{ 19200000, 0x2dd },
++	{ 26000000, 0x3e0 },
++};
++
++static void hsic_rmw(void __iomem *base, unsigned int off, u32 clear, u32 set)
++{
++	u32 val = readl_relaxed(base + off);
++
++	writel_relaxed((val & ~clear) | set, base + off);
++}
++
++static int hsic_phy_power_on(struct tegra_usb_phy *phy)
++{
++	void __iomem *base = phy->regs;
++	u32 val, pll = 0;
++	unsigned int i;
++	int err;
++
++	for (i = 0; i < ARRAY_SIZE(tegra_hsic_pll_table); i++)
++		if (tegra_hsic_pll_table[i].freq == phy->freq->freq)
++			pll = tegra_hsic_pll_table[i].xtal_freq_count;
++	if (!pll)
++		return -EINVAL;
++
++	/*
++	 * Vendor uhsic_powerup_pmc_wake_detect: release the PMC USB_AO pad
++	 * isolation of the HSIC port (bits 19:16, or 15:12 for the second
++	 * port) that the bootloader leaves set.
++	 */
++	if (phy->pmc_regmap)
++		regmap_clear_bits(phy->pmc_regmap, PMC_USB_AO, 0xff000);
++
++	if (phy->hsic_pad) {
++		err = phy_init(phy->hsic_pad);
++		if (err)
++			return err;
++
++		err = phy_power_on(phy->hsic_pad);
++		if (err) {
++			phy_exit(phy->hsic_pad);
++			return err;
++		}
++	}
++
++	if (phy->hsic_pad2) {
++		phy_init(phy->hsic_pad2);
++		phy_power_on(phy->hsic_pad2);
++	}
++
++	val = readl_relaxed(base + UHSIC_PADS_CFG1);
++	writel_relaxed(val & ~UHSIC_PADS_CFG1_PD_MASK, base + UHSIC_PADS_CFG1);
++	writel_relaxed((val & ~UHSIC_PADS_CFG1_PD_MASK) | 0x89,
++		       base + UHSIC_PADS_CFG1);
++
++	hsic_rmw(base, USB_SUSP_CTRL, 0, USB_SUSP_SET);
++	udelay(1);
++	hsic_rmw(base, USB_SUSP_CTRL, 0, BIT(19));
++
++	hsic_rmw(base, UHSIC_HSRX_CFG0, 0, 0x23040);
++	hsic_rmw(base, UHSIC_HSRX_CFG1, 0, 0x12);
++	hsic_rmw(base, UHSIC_TX_CFG0, 0x200, 0);
++	hsic_rmw(base, UHSIC_MISC_CFG0, 0, 0x80);
++	hsic_rmw(base, UHSIC_MISC_CFG1, 0, phy->freq->stable_count << 2);
++	hsic_rmw(base, UHSIC_PLL_CFG1, 0,
++		 UHSIC_PLLU_ENABLE_DLY_COUNT(phy->freq->enable_delay) |
++		 UHSIC_XTAL_FREQ_COUNT(pll));
++
++	hsic_rmw(base, USB_SUSP_CTRL, USB_SUSP_SET, 0);
++	udelay(1);
++
++	hsic_rmw(base, UHSIC_PADS_CFG1, 0x8, 0);
++
++	val = readl_relaxed(base + UHSIC_PADS_CFG1);
++	writel_relaxed(val & ~0x10, base + UHSIC_PADS_CFG1);
++	usleep_range(25, 50);
++	writel_relaxed(val | 0x10, base + UHSIC_PADS_CFG1);
++
++	hsic_rmw(base, UHSIC_SPARE_CFG0, 0, 0x1000);
++
++	hsic_rmw(base, USB_SUSP_CTRL, 0, USB_SUSP_CLR);
++	hsic_rmw(base, USB_SUSP_CTRL, USB_SUSP_CLR, 0);
++
++	/* vendor _usb_phy_init(): generic controller setup */
++	hsic_rmw(base, TEGRA_USB_HOSTPC1_DEVLC, BIT(28), 0);
++	hsic_rmw(base, 0x498, 0, 0x30);
++
++	hsic_rmw(base, TEGRA_USB_USBMODE, 0, 3);
++	hsic_rmw(base, TEGRA_USB_USBMODE, 0x10, 0);
++	val = readl_relaxed(base + TEGRA_USB_HOSTPC1_DEVLC);
++	writel_relaxed((val & 0x09ffffff) | 0x84000000,
++		       base + TEGRA_USB_HOSTPC1_DEVLC);
++	hsic_rmw(base, TEGRA_USB_PORTSC1_HOSTPC, 0x600000, 0);
++	hsic_rmw(base, UHSIC_TX_CFG0, 0, 0x40);
++	val = readl_relaxed(base + UHSIC_PADS_CFG0);
++	writel_relaxed((val & 0xff00f0ff) | 0xa00, base + UHSIC_PADS_CFG0);
++
++	err = utmi_wait_register(base + USB_SUSP_CTRL, USB_PHY_CLK_VALID,
++				 USB_PHY_CLK_VALID);
++	if (err) {
++		dev_err(phy->u_phy.dev, "HSIC PHY clock did not become valid\n");
++		goto power_off_pad;
++	}
++
++	if ((readl_relaxed(base + TEGRA_USB_TXFILLTUNING) & 0x1f0000) !=
++	    0x100000)
++		writel_relaxed(0x100000, base + TEGRA_USB_TXFILLTUNING);
++
++	/* what the vendor driver does when the port gets power */
++	hsic_rmw(base, UHSIC_MISC_CFG0, 0, UHSIC_MISC_CFG0_PORT_POWER);
++	udelay(1);
++
++	return 0;
++
++power_off_pad:
++	if (phy->hsic_pad) {
++		phy_power_off(phy->hsic_pad);
++		phy_exit(phy->hsic_pad);
++	}
++	return err;
++}
++
++/*
++ * What the vendor driver does every time the port gets power
++ * (uhsic_phy_bus_port_power): the controller reset done by the chipidea core
++ * clears DEVLC bit 26, which has to be set again for HSIC.
++ */
++static void hsic_phy_port_power(struct tegra_usb_phy *phy)
++{
++	void __iomem *base = phy->regs;
++	u32 val;
++
++	hsic_rmw(base, TEGRA_USB_USBMODE, 0, 3);
++	val = readl_relaxed(base + TEGRA_USB_HOSTPC1_DEVLC);
++	writel_relaxed((val & 0x19ffffff) | 0x84000000,
++		       base + TEGRA_USB_HOSTPC1_DEVLC);
++	hsic_rmw(base, UHSIC_MISC_CFG0, 0, UHSIC_MISC_CFG0_PORT_POWER);
++	udelay(1);
++}
++
++static int hsic_phy_power_off(struct tegra_usb_phy *phy)
++{
++	void __iomem *base = phy->regs;
++
++	writel_relaxed(0, base + 0x138);
++	hsic_rmw(base, TEGRA_USB_HOSTPC1_DEVLC, 0, TEGRA_USB_HOSTPC1_DEVLC_PHCD);
++	hsic_rmw(base, UHSIC_PADS_CFG1, 0, UHSIC_PADS_CFG1_POWER_DOWN);
++	utmi_wait_register(base + USB_SUSP_CTRL, USB_PHY_CLK_VALID, 0);
++
++	if (phy->hsic_pad2) {
++		phy_power_off(phy->hsic_pad2);
++		phy_exit(phy->hsic_pad2);
++	}
++
++	if (phy->hsic_pad) {
++		phy_power_off(phy->hsic_pad);
++		phy_exit(phy->hsic_pad);
++	}
++
++	return 0;
++}
++
+ static int ulpi_phy_power_on(struct tegra_usb_phy *phy)
+ {
+ 	void __iomem *base = phy->regs;
+@@ -810,7 +1004,9 @@ static int tegra_usb_phy_power_on(struct tegra_usb_phy *phy)
+ 	if (phy->powered_on)
+ 		return 0;
+ 
+-	if (phy->is_ulpi_phy)
++	if (phy->is_hsic_phy)
++		err = hsic_phy_power_on(phy);
++	else if (phy->is_ulpi_phy)
+ 		err = ulpi_phy_power_on(phy);
+ 	else
+ 		err = utmi_phy_power_on(phy);
+@@ -832,7 +1028,9 @@ static int tegra_usb_phy_power_off(struct tegra_usb_phy *phy)
+ 	if (!phy->powered_on)
+ 		return 0;
+ 
+-	if (phy->is_ulpi_phy)
++	if (phy->is_hsic_phy)
++		err = hsic_phy_power_off(phy);
++	else if (phy->is_ulpi_phy)
+ 		err = ulpi_phy_power_off(phy);
+ 	else
+ 		err = utmi_phy_power_off(phy);
+@@ -854,10 +1052,11 @@ static void tegra_usb_phy_shutdown(struct usb_phy *u_phy)
+ 	usb_phy_set_wakeup(u_phy, false);
+ 	tegra_usb_phy_power_off(phy);
+ 
+-	if (!phy->is_ulpi_phy)
++	if (!phy->is_ulpi_phy && !phy->is_hsic_phy)
+ 		utmip_pad_close(phy);
+ 
+ 	regulator_disable(phy->vbus);
++	clk_disable_unprepare(phy->pll_u_480m);
+ 	clk_disable_unprepare(phy->pll_u);
+ 
+ 	phy->freq = NULL;
+@@ -938,6 +1137,17 @@ static int tegra_usb_phy_set_suspend(struct usb_phy *u_phy, int suspend)
+ 	if (WARN_ON(!phy->freq))
+ 		return -EINVAL;
+ 
++	/*
++	 * The HSIC PHY must not be power cycled by the controller's low-power
++	 * transitions: that resets the link in the middle of the hub's
++	 * enumeration (the vendor driver has a dedicated resume path instead).
++	 */
++	if (phy->is_hsic_phy) {
++		if (!suspend)
++			hsic_phy_port_power(phy);
++		return 0;
++	}
++
+ 	/*
+ 	 * PHY is sharing IRQ with the CI driver, hence here we either
+ 	 * disable interrupt for both PHY and CI or for CI only.  The
+@@ -1019,6 +1229,12 @@ static int tegra_usb_phy_init(struct usb_phy *u_phy)
+ 	if (err)
+ 		return err;
+ 
++	if (phy->pll_u_480m) {
++		err = clk_prepare_enable(phy->pll_u_480m);
++		if (err)
++			goto disable_clk;
++	}
++
+ 	parent_rate = clk_get_rate(clk_get_parent(phy->pll_u));
+ 	for (i = 0; i < ARRAY_SIZE(tegra_freq_table); i++) {
+ 		if (tegra_freq_table[i].freq == parent_rate) {
+@@ -1040,7 +1256,7 @@ static int tegra_usb_phy_init(struct usb_phy *u_phy)
+ 		goto disable_clk;
+ 	}
+ 
+-	if (!phy->is_ulpi_phy) {
++	if (!phy->is_ulpi_phy && !phy->is_hsic_phy) {
+ 		err = utmip_pad_open(phy);
+ 		if (err)
+ 			goto disable_vbus;
+@@ -1057,13 +1273,14 @@ static int tegra_usb_phy_init(struct usb_phy *u_phy)
+ 	return 0;
+ 
+ close_phy:
+-	if (!phy->is_ulpi_phy)
++	if (!phy->is_ulpi_phy && !phy->is_hsic_phy)
+ 		utmip_pad_close(phy);
+ 
+ disable_vbus:
+ 	regulator_disable(phy->vbus);
+ 
+ disable_clk:
++	clk_disable_unprepare(phy->pll_u_480m);
+ 	clk_disable_unprepare(phy->pll_u);
+ 
+ 	phy->freq = NULL;
+@@ -1340,6 +1557,28 @@ static int tegra_usb_phy_probe(struct platform_device *pdev)
+ 		tegra_phy->pad_rst = reset;
+ 		break;
+ 
++	case USBPHY_INTERFACE_MODE_HSIC:
++		tegra_phy->is_hsic_phy = true;
++
++		/* the HSIC logic runs from the PLL_U 480 MHz output (separate gate) */
++		tegra_phy->pll_u_480m = devm_clk_get_optional(&pdev->dev, "pll_u_480m");
++		if (IS_ERR(tegra_phy->pll_u_480m))
++			return dev_err_probe(&pdev->dev, PTR_ERR(tegra_phy->pll_u_480m),
++					     "Failed to get pll_u_480m clock\n");
++
++		tegra_phy->hsic_pad = devm_phy_optional_get(&pdev->dev, "hsic");
++		if (IS_ERR(tegra_phy->hsic_pad))
++			return dev_err_probe(&pdev->dev,
++					     PTR_ERR(tegra_phy->hsic_pad),
++					     "Failed to get HSIC pad PHY\n");
++
++		tegra_phy->hsic_pad2 = devm_phy_optional_get(&pdev->dev, "hsic2");
++		if (IS_ERR(tegra_phy->hsic_pad2))
++			return dev_err_probe(&pdev->dev,
++					     PTR_ERR(tegra_phy->hsic_pad2),
++					     "Failed to get second HSIC pad PHY\n");
++		break;
++
+ 	case USBPHY_INTERFACE_MODE_ULPI:
+ 		tegra_phy->is_ulpi_phy = true;
+ 
+diff --git a/include/linux/usb/tegra_usb_phy.h b/include/linux/usb/tegra_usb_phy.h
+index 40afcee8b..8c650272c 100644
+--- a/include/linux/usb/tegra_usb_phy.h
++++ b/include/linux/usb/tegra_usb_phy.h
+@@ -7,6 +7,7 @@
+ #define __TEGRA_USB_PHY_H
+ 
+ #include <linux/clk.h>
++#include <linux/phy/phy.h>
+ #include <linux/regmap.h>
+ #include <linux/reset.h>
+ #include <linux/usb/otg.h>
+@@ -73,6 +74,10 @@ struct tegra_usb_phy {
+ 	struct usb_phy u_phy;
+ 	bool is_legacy_phy;
+ 	bool is_ulpi_phy;
++	bool is_hsic_phy;
++	struct phy *hsic_pad;
++	struct phy *hsic_pad2;
++	struct clk *pll_u_480m;
+ 	struct gpio_desc *reset_gpio;
+ 	struct reset_control *pad_rst;
+ 	bool wakeup_enabled;
+-- 
+2.56.0
+

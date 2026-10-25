@@ -1,0 +1,59 @@
+From 43a789676dd5a637dc8b04f4e4a9eac63f349387 Mon Sep 17 00:00:00 2001
+From: nyasha <nmushambi@proton.me>
+Date: Fri, 23 Oct 2026 11:02:41 +1300
+Subject: [PATCH 10/13] ASoC: tegra: support codecs without set_sysclk and
+ release I2S pads
+
+The generic machine driver calls set_sysclk on every DAI; tolerate codecs
+that do not implement it.  snd_soc_dai_set_sysclk() itself returns -ENOTSUPP
+for a missing op, so check for that value (EOPNOTSUPP would not match).
+
+Also release I2S pads the bootloader left in GPIO mode before the card is
+registered.  On flounder the DAP2/DAP3 pins stay tristated otherwise and the
+speaker amplifiers never lock.
+
+Signed-off-by: nyasha <nmushambi@proton.me>
+---
+ sound/soc/tegra/tegra_asoc_machine.c | 19 ++++++++++++++++++-
+ 1 file changed, 18 insertions(+), 1 deletion(-)
+
+diff --git a/sound/soc/tegra/tegra_asoc_machine.c b/sound/soc/tegra/tegra_asoc_machine.c
+index 5a80ca82a..a0ec9ff4a 100644
+--- a/sound/soc/tegra/tegra_asoc_machine.c
++++ b/sound/soc/tegra/tegra_asoc_machine.c
+@@ -362,7 +362,10 @@ static int tegra_machine_hw_params(struct snd_pcm_substream *substream,
+ 	}
+ 
+ 	err = snd_soc_dai_set_sysclk(codec_dai, clk_id, mclk, SND_SOC_CLOCK_IN);
+-	if (err < 0) {
++	/* Codecs that derive their clock from BCLK (e.g. the TFA9895 speaker
++	 * amps on flounder) do not implement set_sysclk; that is not an error.
++	 */
++	if (err < 0 && err != -ENOTSUPP) {
+ 		dev_err(card->dev, "codec_dai clock not set: %d\n", err);
+ 		return err;
+ 	}
+@@ -455,6 +458,20 @@ int tegra_asoc_machine_probe(struct platform_device *pdev)
+ 	machine->hp_jack_gpio = &tegra_machine_hp_jack_gpio;
+ 	snd_soc_card_set_drvdata(card, machine);
+ 
++	/*
++	 * Some bootloaders leave the DAP pads in GPIO mode, which overrides the
++	 * I2S function the pinmux selects: the pads then sit at a fixed level
++	 * and the codec never sees BCLK/LRCK.  Freeing a Tegra GPIO hands the
++	 * pad back to its alternate function, so request and release each one.
++	 */
++	for (i = 0; i < gpiod_count(dev, "nvidia,i2s-pad"); i++) {
++		gpiod = gpiod_get_index(dev, "nvidia,i2s-pad", i, GPIOD_ASIS);
++		if (IS_ERR(gpiod))
++			return dev_err_probe(dev, PTR_ERR(gpiod),
++					     "failed to release I2S pad %d\n", i);
++		gpiod_put(gpiod);
++	}
++
+ 	gpiod = devm_gpiod_get_optional(dev, "nvidia,hp-mute", GPIOD_OUT_HIGH);
+ 	machine->gpiod_hp_mute = gpiod;
+ 	if (IS_ERR(gpiod))
+-- 
+2.56.0
+

@@ -1,0 +1,46 @@
+From 0177d025834140f854808c610113c237e7ec7361 Mon Sep 17 00:00:00 2001
+From: nyasha <nmushambi@proton.me>
+Date: Fri, 23 Oct 2026 11:02:40 +1300
+Subject: [PATCH 05/13] phy: tegra: allow the HSIC pad to run without a supply
+
+The HSIC pad regulator is optional on some boards: the rail may be always-on
+or controlled by the modem power sequence instead.  Only enable and disable
+it when a supply was found.
+
+Signed-off-by: nyasha <nmushambi@proton.me>
+---
+ drivers/phy/tegra/xusb-tegra124.c | 11 +++++++----
+ 1 file changed, 7 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/phy/tegra/xusb-tegra124.c b/drivers/phy/tegra/xusb-tegra124.c
+index f4f75ea03..2162e32e5 100644
+--- a/drivers/phy/tegra/xusb-tegra124.c
++++ b/drivers/phy/tegra/xusb-tegra124.c
+@@ -870,9 +870,11 @@ static int tegra124_hsic_phy_power_on(struct phy *phy)
+ 	u32 value;
+ 	int err;
+ 
+-	err = regulator_enable(pad->supply);
+-	if (err)
+-		return err;
++	if (pad->supply) {
++		err = regulator_enable(pad->supply);
++		if (err)
++			return err;
++	}
+ 
+ 	padctl_writel(padctl, hsic->strobe_trim,
+ 		      XUSB_PADCTL_HSIC_STRB_TRIM_CONTROL);
+@@ -945,7 +947,8 @@ static int tegra124_hsic_phy_power_off(struct phy *phy)
+ 		 XUSB_PADCTL_HSIC_PAD_CTL1_PD_TX;
+ 	padctl_writel(padctl, value, XUSB_PADCTL_HSIC_PADX_CTL1(index));
+ 
+-	regulator_disable(pad->supply);
++	if (pad->supply)
++		regulator_disable(pad->supply);
+ 
+ 	return 0;
+ }
+-- 
+2.56.0
+

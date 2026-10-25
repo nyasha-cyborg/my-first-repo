@@ -1,0 +1,33 @@
+From 55f9282bedb26679058ba0f6bb7c6d715e142290 Mon Sep 17 00:00:00 2001
+From: nyasha <nmushambi@proton.me>
+Date: Fri, 23 Oct 2026 11:02:40 +1300
+Subject: [PATCH 08/13] ASoC: dt-bindings: tfa989x: document nxp,right-channel
+
+Document the optional nxp,right-channel property, which selects the right
+I2S input channel for boards that route a speaker there.
+
+Signed-off-by: nyasha <nmushambi@proton.me>
+---
+ Documentation/devicetree/bindings/sound/nxp,tfa989x.yaml | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/Documentation/devicetree/bindings/sound/nxp,tfa989x.yaml b/Documentation/devicetree/bindings/sound/nxp,tfa989x.yaml
+index fd2415e23..cb3289cd2 100644
+--- a/Documentation/devicetree/bindings/sound/nxp,tfa989x.yaml
++++ b/Documentation/devicetree/bindings/sound/nxp,tfa989x.yaml
+@@ -30,6 +30,12 @@ properties:
+ 
+   sound-name-prefix: true
+ 
++  nxp,right-channel:
++    type: boolean
++    description:
++      Take the amplifier input from the right channel of the I2S stream
++      instead of the left one (stereo pair on one bus).
++
+   vddd-supply:
+     description: regulator phandle for the VDDD power supply.
+ 
+-- 
+2.56.0
+

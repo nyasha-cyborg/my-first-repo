@@ -1,0 +1,56 @@
+From cfc538ce0338bc88adae2064dd1f34ca3aae414d Mon Sep 17 00:00:00 2001
+From: nyasha <nmushambi@proton.me>
+Date: Fri, 23 Oct 2026 11:02:42 +1300
+Subject: [PATCH 13/13] flounder_defconfig: enable the charger, USB gadget and
+ LTE modem drivers
+
+Enable the palmas charger and extcon, the ChipIdea gadget stack, and the
+Qualcomm modem drivers (qmi_wwan, cdc-wdm, qcserial) needed once the HSIC
+modem has booted.
+
+Signed-off-by: nyasha <nmushambi@proton.me>
+---
+ arch/arm64/configs/flounder_defconfig | 9 ++++++---
+ 1 file changed, 6 insertions(+), 3 deletions(-)
+
+diff --git a/arch/arm64/configs/flounder_defconfig b/arch/arm64/configs/flounder_defconfig
+index 37e4fb847..2b173e798 100644
+--- a/arch/arm64/configs/flounder_defconfig
++++ b/arch/arm64/configs/flounder_defconfig
+@@ -3545,7 +3545,7 @@ CONFIG_BATTERY_MAX17042=m
+ # CONFIG_CHARGER_MAX77976 is not set
+ # CONFIG_CHARGER_MAX8971 is not set
+ # CONFIG_CHARGER_BQ2415X is not set
+-CONFIG_CHARGER_BQ24190=m
++CONFIG_CHARGER_BQ24190=y
+ # CONFIG_CHARGER_BQ24257 is not set
+ # CONFIG_CHARGER_BQ24735 is not set
+ # CONFIG_CHARGER_BQ2515X is not set
+@@ -5781,7 +5781,7 @@ CONFIG_USB_BDC_UDC=y
+ # CONFIG_USB_EG20T is not set
+ # CONFIG_USB_GADGET_XILINX is not set
+ # CONFIG_USB_MAX3420_UDC is not set
+-CONFIG_USB_TEGRA_XUDC=m
++CONFIG_USB_TEGRA_XUDC=y
+ # CONFIG_USB_DUMMY_HCD is not set
+ # end of USB Peripheral Controller
+ 
+@@ -6482,7 +6482,7 @@ CONFIG_EXTCON=y
+ # CONFIG_EXTCON_LC824206XA is not set
+ # CONFIG_EXTCON_MAX3355 is not set
+ # CONFIG_EXTCON_MAX14526 is not set
+-CONFIG_EXTCON_PALMAS=m
++CONFIG_EXTCON_PALMAS=y
+ # CONFIG_EXTCON_PTN5150 is not set
+ # CONFIG_EXTCON_RT8973A is not set
+ # CONFIG_EXTCON_SM5502 is not set
+@@ -8298,3 +8298,6 @@ CONFIG_MEMTEST=y
+ CONFIG_IO_URING_ZCRX=y
+ CONFIG_DRM_PANEL_JDI_LPM089A128A=y
+ CONFIG_DRM_MIPI_DSI=y
++CONFIG_USB_NET_QMI_WWAN=m
++CONFIG_USB_WDM=m
++CONFIG_USB_SERIAL_QUALCOMM=m
+-- 
+2.56.0
+

@@ -1,0 +1,37 @@
+From aa4307fff1a6055fc30eb791e5d46df80a5112df Mon Sep 17 00:00:00 2001
+From: nyasha <nmushambi@proton.me>
+Date: Fri, 23 Oct 2026 11:02:41 +1300
+Subject: [PATCH 11/13] Bluetooth: hci_bcm: power the chip before the serdev
+ port opens
+
+The flounder Broadcom chip must be powered before serdev opens the UART:
+the port otherwise sees the unpowered chip's TX held low and only one reply
+gets through.  Power it from the driver's probe path.
+
+Signed-off-by: nyasha <nmushambi@proton.me>
+---
+ drivers/bluetooth/hci_bcm.c | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/drivers/bluetooth/hci_bcm.c b/drivers/bluetooth/hci_bcm.c
+index 9286a5f40..2f63e521b 100644
+--- a/drivers/bluetooth/hci_bcm.c
++++ b/drivers/bluetooth/hci_bcm.c
+@@ -1543,6 +1543,14 @@ static int bcm_serdev_probe(struct serdev_device *serdev)
+ 	if (err)
+ 		dev_err(&serdev->dev, "Failed to power down\n");
+ 
++	/* The flounder chip must be powered before serdev opens the UART:
++	 * the port otherwise sees the unpowered chip's TX held low and only
++	 * one reply gets through.
++	 */
++	err = bcm_gpio_set_power(bcmdev, true);
++	if (err)
++		dev_err(&serdev->dev, "Failed to power up\n");
++
+ 	data = device_get_match_data(bcmdev->dev);
+ 	if (data) {
+ 		bcmdev->max_autobaud_speed = data->max_autobaud_speed;
+-- 
+2.56.0
+

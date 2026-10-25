@@ -1,0 +1,317 @@
+From de78dfefe2438719835194329a92267c68c16a51 Mon Sep 17 00:00:00 2001
+From: nyasha <nmushambi@proton.me>
+Date: Fri, 23 Oct 2026 11:02:41 +1300
+Subject: [PATCH 12/13] arm64: tegra132: flounder: enable audio, Bluetooth, USB
+ and modem
+
+Wire up the peripherals the board carries beyond the display path: the
+tfa989x speaker amplifiers and rt5677 supplies, the Broadcom Bluetooth chip
+on HSUART2, the USB2 host/gadget controller, the charger and its VBUS
+regulator, and the PMC interrupt polarity.
+
+The LTE modem is an HSIC device and is hosted on the USB2 controller at
+7d004000 (phy2), not on the USB3 controller.  With the port there, the
+modem's boot ROM enumerates and the modem OS comes up.
+
+Signed-off-by: nyasha <nmushambi@proton.me>
+---
+ .../boot/dts/nvidia/tegra132-flounder.dts     | 171 ++++++++++++++++--
+ 1 file changed, 160 insertions(+), 11 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts b/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
+index 0f27efe22..89d222065 100644
+--- a/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
++++ b/arch/arm64/boot/dts/nvidia/tegra132-flounder.dts
+@@ -11,6 +11,11 @@ / {
+ 	compatible = "google,flounder64_lte", "nvidia,tegra132";
+ 
+ 	aliases {
++		serial0 = "/serial@70006000";
++		serial1 = "/serial@70006040";
++		serial2 = "/serial@70006200";
++		serial3 = "/serial@70006300";
++
+ 		i2c0 = "/i2c@7000c000";
+ 		i2c1 = "/i2c@7000c400";
+ 		i2c2 = "/i2c@7000c500";
+@@ -365,15 +370,31 @@ dap3_din_pp1 {
+ 				nvidia,tristate = <TEGRA_PIN_ENABLE>;
+ 				nvidia,enable-input = <TEGRA_PIN_ENABLE>;
+ 			};
++			/* The vendor kernel un-tristates the DAP pads around
++			 * playback (tegra_asoc_utils_tristate_dap); mainline has
++			 * no such hook, so leave the Tegra-driven outputs
++			 * enabled.
++			 */
+ 			dap3_dout_pp2 {
+ 				nvidia,pins = "dap3_dout_pp2",
+ 					      "dap3_fs_pp0",
+ 					      "dap3_sclk_pp3";
+ 				nvidia,function = "i2s2";
+ 				nvidia,pull = <TEGRA_PIN_PULL_NONE>;
+-				nvidia,tristate = <TEGRA_PIN_ENABLE>;
++				nvidia,tristate = <TEGRA_PIN_DISABLE>;
+ 				nvidia,enable-input = <TEGRA_PIN_DISABLE>;
+ 			};
++			/* Same pad drive as Android (drive_dap3 = 0x00605008). */
++			drive_dap3 {
++				nvidia,pins = "drive_dap3";
++				nvidia,high-speed-mode = <TEGRA_PIN_DISABLE>;
++				nvidia,schmitt = <TEGRA_PIN_ENABLE>;
++				nvidia,low-power-mode = <TEGRA_PIN_LP_DRIVE_DIV_8>;
++				nvidia,pull-down-strength = <5>;
++				nvidia,pull-up-strength = <6>;
++				nvidia,slew-rate-rising = <TEGRA_PIN_SLEW_RATE_FASTEST>;
++				nvidia,slew-rate-falling = <TEGRA_PIN_SLEW_RATE_FASTEST>;
++			};
+ 			/* TODO: I2S 3 */
+ 			dap4_din_pp5 {
+ 				nvidia,pins = "dap4_din_pp5";
+@@ -673,16 +694,41 @@ serial@70006000 {
+ 	 * the second UART sits at +0x40 rather than +0x100, so the addresses
+ 	 * are not evenly spaced.
+ 	 *
+-	 * Android drove the chip through an rfkill, so a control pin exists
+-	 * somewhere, but it is not established and none is declared. See
+-	 * notes/bluetooth.md. The firmware the driver will ask for,
+-	 * brcm/BCM4354.hcd, is in the ROM's vendor partition.
++	 * The module is a BCM4350C0. Its ROM answers HCI at 115200 with
++	 * RTS/CTS and switches to 3 Mbaud on VSC 0xfc18, exactly the sequence
++	 * hci_bcm runs. Control pins, from live Android (/d/gpio, BT on/off):
++	 * BT_REG_ON (PR1) is active high, BT_WAKE (PEE1) is active low.
++	 * btbcm has no subver entry for the chip, so it loads the vendor
++	 * bcm4350c0.hcd under its fallback name brcm/BCM.hcd.
++	 * See notes/bluetooth.md in the nexus9 repo.
+ 	 */
+ 	serial@70006200 {
++		/* The Tegra HSUART driver, as Android uses (ttyTHS2). */
++		compatible = "nvidia,tegra124-hsuart", "nvidia,tegra30-hsuart";
++		/delete-property/ reg-shift;
++		reset-names = "serial";
+ 		status = "okay";
++		/* 3 Mbaud needs the clock trim from the Shield/Pixel C nodes. */
++		nvidia,adjust-baud-rates = <0 9600 100>,
++					   <9600 115200 200>,
++					   <1000000 4000000 136>;
+ 
+ 		bluetooth {
+-			compatible = "brcm,bcm43540-bt";
++			/* Test n9bt77: a compatible without
++			 * no_early_set_baudrate, so hci_uart switches to 3M
++			 * before the download and back to 115200 after Launch
++			 * RAM (a real change, which reprograms the UART after
++			 * the chip reboots) — Android's sequence.
++			 */
++			compatible = "brcm,bcm4335a0";
++			max-speed = <3000000>;
++			shutdown-gpios = <&gpio TEGRA_GPIO(R, 1) GPIO_ACTIVE_HIGH>;
++			device-wakeup-gpios = <&gpio TEGRA_GPIO(EE, 1) GPIO_ACTIVE_LOW>;
++			/* HOST_WAKE (PU6) is left out until its polarity is
++			 * measured; without it hci_bcm skips runtime PM.
++			 */
++			clocks = <&palmas_clk32kg>;
++			clock-names = "lpo";
+ 		};
+ 	};
+ 
+@@ -722,7 +768,7 @@ bq24193@6b {
+ 			compatible = "ti,bq24192";
+ 			reg = <0x6b>;
+ 			interrupt-parent = <&gpio>;
+-			interrupts = <TEGRA_GPIO(J, 0) GPIO_ACTIVE_HIGH>;
++			interrupts = <TEGRA_GPIO(J, 0) IRQ_TYPE_EDGE_FALLING>;
+ 			monitored-battery = <&battery>;
+ 			omit-battery-class;
+ 
+@@ -790,6 +836,7 @@ tfa9895_r: audio-codec@34 {
+ 			#sound-dai-cells = <0>;
+ 			vddd-supply = <&spk_ldo>;
+ 			sound-name-prefix = "Speaker Right";
++			nxp,right-channel;
+ 		};
+ 
+ 		tfa9895_l: audio-codec@35 {
+@@ -912,9 +959,13 @@ palmas_usb: palmas-usb {
+ 				ti,enable-vbus-detection;
+ 			};
+ 
+-			clock {
++			palmas_clk32kg: clock {
+ 				compatible = "ti,palmas-clk32kg";
+ 				#clock-cells = <0>;
++				/* LPO for the BCM4354; the vendor kernel
++				 * boot-enables it as well.
++				 */
++				ti,clock-boot-enable;
+ 			};
+ 
+ 			pmic {
+@@ -1132,7 +1183,6 @@ rt5677@0 {
+ 	};
+ 
+ 	pmc@7000e400 {
+-		nvidia,invert-interrupt;
+ 		nvidia,suspend-mode = <0>;
+ 		nvidia,cpu-pwr-good-time = <500>;
+ 		nvidia,cpu-pwr-off-time = <300>;
+@@ -1175,6 +1225,26 @@ usb2-0 {
+ 					};
+ 				};
+ 			};
++
++			/* LTE modem link (Qualcomm MDM9k over HSIC); which of the
++			 * two lanes it uses is not known yet, so both are
++			 * described and phy2 below picks one.
++			 */
++			hsic {
++				status = "okay";
++
++				lanes {
++					hsic0: hsic-0 {
++						nvidia,function = "snps";
++						status = "okay";
++					};
++
++					hsic1: hsic-1 {
++						nvidia,function = "snps";
++						status = "okay";
++					};
++				};
++			};
+ 		};
+ 
+ 		ports {
+@@ -1187,8 +1257,29 @@ usb2-0 {
+ 		};
+ 	};
+ 
++	/*
++	 * HSIC host for the LTE modem: the USB2 controller (vendor tegra-ehci.1,
++	 * 7d004000; confirmed by running the vendor flow, notes/lte.md). Power the
++	 * modem separately (AP2MDM_* GPIOs, see notes/lte.md) before expecting a
++	 * device to appear.
++	 */
++	usb@7d004000 {
++		status = "okay";
++		dr_mode = "host";
++		phy_type = "hsic";
++	};
++
++	/* BT_REG_ON (PR1) and BT_WAKE (PEE1) belong to the bluetooth node
++	 * under serial@70006200; hci_bcm drives both.
++	 */
++
+ 	pwrseq_wifi: pwrseq-wifi {
+ 		compatible = "mmc-pwrseq-simple";
++		/* n9bt89: LPO first, then WL_REG_ON, then 300 ms, then the
++		 * SDIO scan (was an always-on regulator racing the LPO).
++		 */
++		clocks = <&palmas_clk32kg>;
++		clock-names = "ext_clock";
+ 		reset-gpios = <&gpio TEGRA_GPIO(X, 7) GPIO_ACTIVE_LOW>;
+ 		post-power-on-delay-ms = <300>;
+ 		power-off-delay-us = <300>;
+@@ -1267,6 +1358,33 @@ spk_ldo: regulator-spk-ldo {
+ 		enable-active-high;
+ 	};
+ 
++	/*
++	 * The rt5677's supply gates, taken from the downstream machine driver's
++	 * power sequence (tegra_rt5677.c). Neither mainline codec driver nor the
++	 * binding knows them, so they are modelled as always-on fixed
++	 * regulators: without V_IO_1V8 the codec's I2C side is dead and its ID
++	 * register reads 0x0 ("Device with ID register 0x0 is not rt5677").
++	 * Downstream order: PK0, then palmas LDO2 (vdd_audio), then PV3, then
++	 * reset PX4.
++	 */
++	vdd_io_1v8: regulator-rt5677-io {
++		compatible = "regulator-fixed";
++		regulator-name = "vdd-io-1v8";
++		gpio = <&gpio TEGRA_GPIO(K, 0) GPIO_ACTIVE_HIGH>;
++		enable-active-high;
++		regulator-always-on;
++		regulator-boot-on;
++	};
++
++	vdd_aud_1v8: regulator-rt5677-aud {
++		compatible = "regulator-fixed";
++		regulator-name = "vdd-aud-1v8";
++		gpio = <&gpio TEGRA_GPIO(V, 3) GPIO_ACTIVE_HIGH>;
++		enable-active-high;
++		regulator-always-on;
++		regulator-boot-on;
++	};
++
+ 	/*
+ 	 * Speaker card: one I2S and two amplifiers on a single stereo link.
+ 	 * No generic card driver expresses that shape, so the link is declared
+@@ -1283,6 +1401,16 @@ sound-speakers {
+ 		nvidia,i2s-controller = <&tegra_i2s2>;
+ 		nvidia,audio-codec = <&tfa9895_r>, <&tfa9895_l>;
+ 
++		/*
++		 * The bootloader leaves the DAP3 pads as GPIO outputs driving
++		 * low; the machine driver releases them so the I2S2 function
++		 * reaches the amplifiers.
++		 */
++		nvidia,i2s-pad-gpios = <&gpio TEGRA_GPIO(P, 0) GPIO_ACTIVE_HIGH>,
++				       <&gpio TEGRA_GPIO(P, 1) GPIO_ACTIVE_HIGH>,
++				       <&gpio TEGRA_GPIO(P, 2) GPIO_ACTIVE_HIGH>,
++				       <&gpio TEGRA_GPIO(P, 3) GPIO_ACTIVE_HIGH>;
++
+ 		/* The amplifiers' pin is "OUT"; the prefix tells them apart. */
+ 		nvidia,audio-routing =
+ 			"Speakers", "Speaker Right OUT",
+@@ -1331,6 +1459,12 @@ sound {
+ 		nvidia,i2s-controller = <&tegra_i2s1>;
+ 		nvidia,audio-codec = <&rt5677>;
+ 
++		/* DAP2 pads are left as GPIOs by the bootloader, see above. */
++		nvidia,i2s-pad-gpios = <&gpio TEGRA_GPIO(A, 2) GPIO_ACTIVE_HIGH>,
++				       <&gpio TEGRA_GPIO(A, 3) GPIO_ACTIVE_HIGH>,
++				       <&gpio TEGRA_GPIO(A, 4) GPIO_ACTIVE_HIGH>,
++				       <&gpio TEGRA_GPIO(A, 5) GPIO_ACTIVE_HIGH>;
++
+ 		clocks = <&tegra_car TEGRA124_CLK_PLL_A>,
+ 			 <&tegra_car TEGRA124_CLK_PLL_A_OUT0>,
+ 			 <&tegra_pmc TEGRA_PMC_CLK_OUT_1>;
+@@ -1351,7 +1485,7 @@ extcon_usb_otg: extcon-usb-gpio {
+ 	usb@7d000000 {
+ 		compatible = "nvidia,tegra124-udc";
+ 		status = "okay";
+-		dr_mode = "otg";
++		dr_mode = "peripheral";
+ 		extcon = <&palmas_usb>, <&extcon_usb_otg>;
+ 		vbus-supply = <&vbus_usb_otg>;
+ 	};
+@@ -1359,7 +1493,9 @@ usb@7d000000 {
+ 	usb-phy@7d000000 {
+ 		status = "okay";
+ 		dr_mode = "otg";
+-		vbus-supply = <&avdd_usb>;
++		/* Leave the palmas AVDD_USB rail alone; hboot enables it and
++		 * enabling it here occasionally deadlocks the probe.
++		 */
+ 	};
+ 
+ 	clk32k_in: clock-32k {
+@@ -1524,3 +1660,16 @@ pllx_throttle_trip {
+ 	};
+ 
+ };
++
++&phy2 {
++	status = "okay";
++	clocks = <&tegra_car TEGRA124_CLK_USB2>,
++		 <&tegra_car TEGRA124_CLK_PLL_U>,
++		 <&tegra_car TEGRA124_CLK_USBD>,
++		 <&tegra_car TEGRA124_CLK_PLL_U_480M>;
++	clock-names = "reg", "pll_u", "utmi-pads", "pll_u_480m";
++	phy_type = "hsic";
++	/* The vendor EHCI HSIC path never touches the XUSB padctl HSIC pad
++	 * (the UHSIC block in the controller drives the pad), so no phys.
++	 */
++};
+-- 
+2.56.0
+

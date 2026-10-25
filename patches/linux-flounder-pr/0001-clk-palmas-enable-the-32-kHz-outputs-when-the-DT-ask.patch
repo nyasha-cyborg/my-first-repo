@@ -1,0 +1,43 @@
+From 5891fdcf8dedf61d5fd55e0029852d86c98f91e5 Mon Sep 17 00:00:00 2001
+From: nyasha <nmushambi@proton.me>
+Date: Fri, 23 Oct 2026 11:02:39 +1300
+Subject: [PATCH 01/13] clk: palmas: enable the 32 kHz outputs when the DT asks
+ for them
+
+The vendor binding marks the 32 kHz outputs boot-enabled, and some boards
+need the LPO running even when no clock consumer has bound yet.  Flounder's
+Bluetooth chip is one: it needs the low-power oscillator before hci_bcm
+opens the UART.
+
+Honour an optional ti,clock-boot-enable property and enable the output at
+probe time.
+
+Signed-off-by: nyasha <nmushambi@proton.me>
+---
+ drivers/clk/clk-palmas.c | 10 ++++++++++
+ 1 file changed, 10 insertions(+)
+
+diff --git a/drivers/clk/clk-palmas.c b/drivers/clk/clk-palmas.c
+index 39049f62d..5a7fceb99 100644
+--- a/drivers/clk/clk-palmas.c
++++ b/drivers/clk/clk-palmas.c
+@@ -264,6 +264,16 @@ static int palmas_clks_probe(struct platform_device *pdev)
+ 		return ret;
+ 	}
+ 
++	/* Vendor DT marks the 32 kHz outputs boot-enabled; several boards
++	 * (the flounder BT chip among them) need the LPO running even when
++	 * no driver consumes it.
++	 */
++	if (of_property_read_bool(node, "ti,clock-boot-enable")) {
++		ret = clk_prepare_enable(cinfo->hw.clk);
++		if (ret < 0)
++			dev_err(&pdev->dev, "Clock enable failed, %d\n", ret);
++	}
++
+ 	ret = of_clk_add_hw_provider(node, of_clk_hw_simple_get, &cinfo->hw);
+ 	if (ret < 0)
+ 		dev_err(&pdev->dev, "Fail to add clock driver, %d\n", ret);
+-- 
+2.56.0
+
