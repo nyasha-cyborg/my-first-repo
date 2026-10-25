@@ -202,3 +202,9 @@
   org.gnome.Settings` hit "Activate: Timeout was reached" (phosh reports "failed to start"). Cause = memory/CPU
   pressure (1.8 GB usable, 256 MB CMA), not the GPU stack. Idea: trim background services (evolution-*,
   udiskie, gnome-online-accounts) to free RAM.
+- 15:25 trimmed autostarts (per-user `Hidden=true` files in /home/user/.config/autostart: Evolution-alarm-notify,
+  geoclue-demo-agent, gsd PrintNotifications/Sharing/Smartcard/Color, udiskie). Each of these is only 5-12 MB, so
+  the memory gain is small; the desktop itself is lean (sum of all process RSS ≈ 520 MB with Firefox's ~400 MB
+  removed ≈ 120 MB). "Used" memory (≈1.0-1.2 GB) is mostly kernel/GPU buffers + page cache + 235 MB in zram.
+  Test with Firefox open: Settings now launches (20 s, no timeout, no error) vs. a timeout before.
+  Still slow: load 5, CPU ~70 C. Next ideas: lighter browser settings, review n9-health/n9-kmsg/haveged/logbookd.
