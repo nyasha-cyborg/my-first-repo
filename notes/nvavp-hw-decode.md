@@ -65,3 +65,14 @@ Repacked: secC header, cmdline and ramdisk with the new Image.gz-dtb. Checked wi
 
 - No upstream fix exists in any linckandrea branch (checked 2026-10-26).
 - Not tested on hardware yet.
+
+## 2026-10-26 11:32 — VERIFIED on the tablet: hardware H.264 decode works
+- Kernel fix (boot-secC-nvavp.img, fastboot boot): `nvavp nvavp: allocated IOVA at 8ff00000 for AVP os`, driver bound, /dev/tegra_avpchannel.
+- Second, userspace cause: NvOMX init failed silently ("OMX plugin failed w/ error 0x80001001 after registering 0 components", no
+  device opened) right after a failed dlopen of `/vendor/lib/liboemcrypto.so` (Widevine; NEEDED: libnvos libnvavp libnvrm), which the
+  LineageOS 16 Wi-Fi build does not ship. Fix: push stock N4F27P `/vendor/lib/liboemcrypto.so` (42660 B, from stock vendor.img), 644,
+  restorecon. Media codec list is cached at boot -> needs a reboot.
+- Result in SmartTube (H.264): `makeComponentInstance(OMX.Nvidia.h264.decode)`, media.codec CPU ~20 % (was ~90 % with
+  OMX.google.h264.decoder), CPU temp 71 C.
+- Persistence: liboemcrypto is on /vendor (survives reboots, lost on ROM update -> add to the LTE install script). Kernel fix is NOT
+  flashed yet (LNX still has secC without it).
