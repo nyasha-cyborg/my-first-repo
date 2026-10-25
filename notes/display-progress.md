@@ -558,3 +558,12 @@ colour = home screen wallpaper.
   worse when warm. Parked.
 - LNX restored to the known-good gauge image (md5 08afc9d5…, from /root/lnx-backup-gauge.img). The n9cmd
   kernel's modules remain in /lib/modules/6.19.0-flounder-n9cmd (harmless; delete when not needed).
+
+### 2026-10-25 15:20 — correction: stock Android 7.1.1 shows (almost) no flicker (owner)
+
+- After flashing stock N4F27P the owner reports the screen flicker is "almost gone". The 11:35 conclusion ("also under
+  the stock kernel / panel hardware, parked") was based on TWRP only (recovery uses a different, simpler display
+  path). Treat the pmOS flicker as a mainline-driver difference, not panel hardware.
+- If pmOS is revisited: diff the live DSI/DC/panel state of the running stock kernel against mainline (REA of the stock
+  `dsi_j_qxga_8_9` panel driver was done for init commands and backlight curve; not yet compared: PWM frequency /
+  backlight enable timing, DSI clock lane / HS timing registers, DC pixel clock jitter, CABC/MIE after init).
