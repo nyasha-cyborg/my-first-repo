@@ -182,3 +182,7 @@
   tablet itself; do not power-cycle by hand while it runs, and do not `pkill -f` it from the same shell.
 - Next: more boots without errors -> commit the kernel patch properly, drop the 3 software-GL variables from
   /etc/environment, restart greetd (phoc should say "Creating GLES2 renderer ... NVIDIA").
+- 14:15 desktop switched to the GPU: removed GBM_ALWAYS_SOFTWARE / LIBGL_ALWAYS_SOFTWARE / WLR_RENDERER from
+  /etc/environment (backup /root/environment.software.bak on the tablet), restarted greetd. phoc now holds
+  /dev/dri/renderD129 (nouveau) open and has no software variables; no `gr:` errors in dmesg. Not yet confirmed
+  by the "Creating GLES2 renderer ... NVIDIA" log line or a visual smoothness check; survive-reboot check pending.
