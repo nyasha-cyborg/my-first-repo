@@ -315,3 +315,13 @@ Step commits in order (q1 = 1-35, q2 = 1-70, q3 = 1-106; 107-141 only in full 10
   69ddef7b41f UDP frag, 3937c2c918c ALSA seq, 7136ca73ff3 brcmfmac, be3e7b176c2 usb serial console, 78da094deb3 sock clone)
   or from a conflict resolution in that merge. q4 (`3.10.108`, branch n9-108-q4) is the working base candidate.
   Next: hand-port the 6 one at a time on q4 (start with be3e7b176c2 USB serial console and 78da094deb3 sock clone), boot-test each.
+
+## 2026-10-26 — the 6 "skipped" commits: already in the base (no port needed)
+- Checked each upstream commit against q4 and the base 701bc9dc8ac. **All 6 fixes are already in the downstream base** (the Lineage tree had them backported).
+  That is why they did not cherry-pick: there was nothing left to apply. So q4 already has them, and hand-porting changes nothing. The per-commit images would match boot-108-q4.img byte for byte, so they were not built.
+  - 69ddef7b41f (UDP UFO), 3937c2c918c (ALSA seq), 7136ca73ff3 (brcmfmac; CONFIG_BRCMFMAC is off anyway), be3e7b176c2 (usb serial console), 78da094deb3 (sk_prot_creator): same in base, q4 and n9-3.10.108.
+  - 1bff8a2960f (skb_warn_bad_offload): in base. Base uses the newer `err = skb_cow_head(skb, 0)` in `__skb_gso_segment`. **The n9-3.10.108 merge resolution reverted this to the old upstream `skb_header_cloned() && pskb_expand_head(skb,0,0,GFP_ATOMIC)`.**
+    This is the only difference: `git diff n9-108-q4 n9-3.10.108` = net/core/dev.c, 2 lines. They do the same thing, because skb_cow_head(skb,0) expands only when the header is cloned.
+- Built branch n9-108-q4-devc = q4 + that dev.c resolution. **Its tree hash is identical to n9-3.10.108** (cfc4d7c785c9). Output: `out/boot-q4-devc.img` (uname 3.10.108, sha256 92dd58c88efac4d1, log out/build-108-q4-devc.log). bootimg-split: ramdisk 961b8af0 unchanged, cmdline kept.
+- Meaning: q4 and the failing boot-3.10.108.img come from (almost) the same source. The only difference is code that does the same thing. So the "108 regression" is most likely intermittent (q2 also lost USB once, and q3, a superset, did not), or a build difference (boot-3.10.108.img was built in build-108 at 01:17; q4 was built in build-bisect).
+- Next: boot boot-q4-devc.img several times. Then boot boot-3.10.108.img again several times and compare USB-gadget and LTE results. Repeat boot-108-q4.img too. If 108 fails while devc passes, compare the build-108 and build-bisect .config files and toolchains.
