@@ -91,3 +91,4 @@ DENYUSB (0005-*, as requested). Candidates for a later wave if secD proves stabl
 - secD is not boot-tested; the hardening can expose latent use-after-free bugs in vendor
   drivers as BUG() crashes. If a BUG names a specific cache/driver, that is a real bug to fix,
   not a reason to drop the hardening right away.
+- 11:56-12:11 boot-secD.img x2: USB OK (20 s), no oops, cameraserver running, Wi-Fi on, nvavp IOVA OK. LTE not registered both runs because the SIM was removed by the owner (qcril card_error 3 'No ATR', card_state 2). LTE needs a recheck with the SIM back in before/after flashing.
