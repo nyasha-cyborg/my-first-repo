@@ -294,3 +294,7 @@ Step commits in order (q1 = 1-35, q2 = 1-70, q3 = 1-106; 107-141 only in full 10
 - 09:13 boot-108-q2.img (step commits 1-70): **LTE OK** (Spark NZ/LTE/IP) but **USB gadget dead until physical replug** (adb at 635 s).
   => two separate regressions: USB-gadget enumeration in commits 1-70, LTE registration in commits 71-141.
 - 09:19 boot-108-q1.img (step commits 1-35): **USB OK** (adb 20 s), **LTE OK** (~5 min). => USB-gadget regression is in step commits 36-70.
+- 09:25 boot-108-q3.img (step commits 1-106, minus 6 skipped conflicting commits): **USB OK** (15 s), **LTE OK** (5 min).
+  Note q2 (1-70) lost USB once but q3 (superset) did not -> the USB symptom may be intermittent; needs repeats.
+  Remaining candidates: step commits 107-141, the 6 skipped commits (1bff8a2960f 69ddef7b41f 3937c2c918c 7136ca73ff3 be3e7b176c2
+  78da094deb3), or conflict resolutions in the n9-3.10.108 merge. Next: q4 = all 141 minus the 6 skipped.
