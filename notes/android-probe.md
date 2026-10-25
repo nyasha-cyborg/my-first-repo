@@ -83,3 +83,17 @@ Source of truth: downstream `arch/arm/mach-tegra/tegra12_emc.c` (linckandrea/and
 - Plug detection works: `/sys/class/switch/h2w/state` 0 -> 2 (headphone, no mic) when plugged; `dumpsys audio` routes
   STREAM_MUSIC to `headphone` (speaker only listed for other streams). Codec = rt5677 (`card0 tegra-rt5677`).
 - Audible test file `/sdcard/Music/tone.wav` (3 s 440 Hz left, then 3 s 660 Hz right) pushed; owner heard the tone through the headphones (left/right split and speaker mute not confirmed).
+
+## 2026-10-26 00:55 — cameraserver crash loop on the fresh LineageOS install (likely cause of freezes/"tablet died")
+- Symptom: 50 tombstones in minutes (`/data/tombstones`), `init.svc.cameraserver=restarting`, SIGSEGV in
+  `libnvos.so NvOsFwriteInternal <- libnvmm_camera_v3.so NvCameraIspDumpFactoryToFile <- NvCameraIspInitialize` (camera HAL
+  tries to write `/data/nvcam/factory_*` and fwrite()s a NULL FILE*).
+- Cause: `/data/nvcam` did not exist. The vendor init.rc has `mkdir /data/nvcam 0700 cameraserver camera`, but on this build
+  `vendor_init` is denied (`avc: denied { write } ... scontext=u:r:vendor_init:s0 tcontext=u:object_r:system_data_file:s0
+  tclass=dir` on `/` of /data), so ALL `mkdir /data/<x>` lines in /vendor/etc/init/init.rc fail on a freshly formatted /data.
+  Missing after the format: `/data/nvcam`, `/data/qcks`(+mdm), `/data/gps`, `/data/efs`.
+- Fix (persists, /data survives reboots): `mkdir`+`chown`+`chmod`+`restorecon` by hand as root:
+  `/data/nvcam cameraserver:camera 0700`, `/data/qcks system:system 0770`, `/data/qcks/mdm`, `/data/gps gps:system 0770`,
+  `/data/efs system:system 0771`. cameraserver then stays up and writes factory_copy_0.bin / nvcam_cache_*.bin.
+- Follow-up for a proper fix: sepolicy `allow vendor_init system_data_file:dir { write add_name }` or create the dirs from
+  a `u:r:init` rc (system init), or ship them in the ROM. If /data is wiped again, repeat.
