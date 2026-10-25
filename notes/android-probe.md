@@ -82,4 +82,4 @@ Source of truth: downstream `arch/arm/mach-tegra/tegra12_emc.c` (linckandrea/and
 ## 2026-10-26 headphone jack on LineageOS 16
 - Plug detection works: `/sys/class/switch/h2w/state` 0 -> 2 (headphone, no mic) when plugged; `dumpsys audio` routes
   STREAM_MUSIC to `headphone` (speaker only listed for other streams). Codec = rt5677 (`card0 tegra-rt5677`).
-- Audible test file `/sdcard/Music/tone.wav` (3 s 440 Hz left, then 3 s 660 Hz right) pushed; listening result pending (owner).
+- Audible test file `/sdcard/Music/tone.wav` (3 s 440 Hz left, then 3 s 660 Hz right) pushed; owner heard the tone through the headphones (left/right split and speaker mute not confirmed).
