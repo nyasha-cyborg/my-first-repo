@@ -186,3 +186,6 @@
   /etc/environment (backup /root/environment.software.bak on the tablet), restarted greetd. phoc now holds
   /dev/dri/renderD129 (nouveau) open and has no software variables; no `gr:` errors in dmesg. Not yet confirmed
   by the "Creating GLES2 renderer ... NVIDIA" log line or a visual smoothness check; survive-reboot check pending.
+- 14:25 owner: PIN lock screen still shown during boot login. Cause: `sm.puri.phosh.lockscreen require-unlock` default
+  true. Fix: schema override `/usr/share/glib-2.0/schemas/99_n9-nolock.gschema.override` (copy in tools/pmos/,
+  run `glib-compile-schemas`); effective on the next boot/phosh start. Not yet verified on a boot.
