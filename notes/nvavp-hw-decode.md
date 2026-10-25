@@ -76,3 +76,6 @@ Repacked: secC header, cmdline and ramdisk with the new Image.gz-dtb. Checked wi
   OMX.google.h264.decoder), CPU temp 71 C.
 - Persistence: liboemcrypto is on /vendor (survives reboots, lost on ROM update -> add to the LTE install script). Kernel fix is NOT
   flashed yet (LNX still has secC without it).
+- 11:40 FLASHED (owner approved): LNX = boot-secC-nvavp.img (sha256 72dbb4ae...), verified on-device; boots 3.10.108-gb9078499b80,
+  nvavp IOVA allocated. Backups in ~/Downloads/nexus9/boot-backups/: lnx-lineage16-20251224-3.10.103.img (original) and
+  boot-3.10.108-secC.img (previous flash).
