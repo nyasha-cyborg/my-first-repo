@@ -331,3 +331,4 @@ Suggested test order: secB3 first (only one change vs. tested secB), then secC.
 | CVE-2023-52601 | CVE-2023-52601/4.4/0008.patch | fs/jfs/jfs_dmap.c | SKIP | not compiled |
 | CVE-2024-27424 | CVE-2024-27424/4.4/0001.patch | net/netrom/af_netrom.c | SKIP | not compiled |
 | CVE-2024-27425 | CVE-2024-27425/4.4/0001.patch | net/netrom/af_netrom.c | SKIP | not compiled |
+- 10:47-11:00 boot-3.10.108-secB3 x1 and boot-3.10.108-secC (3.10.108-gbb3052c7115) x2: all USB OK (20 s), LTE OK (Spark NZ/LTE/IP), Wi-Fi on, cameraserver running, 0 oops. **secC is the current release candidate.**
