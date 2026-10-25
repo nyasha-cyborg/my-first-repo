@@ -293,3 +293,4 @@ Step commits in order (q1 = 1-35, q2 = 1-70, q3 = 1-106; 107-141 only in full 10
   tools/usb-kick.sh port "disable" does NOT replace a replug (VBUS stays on; the tablet's gadget never sees a disconnect).
 - 09:13 boot-108-q2.img (step commits 1-70): **LTE OK** (Spark NZ/LTE/IP) but **USB gadget dead until physical replug** (adb at 635 s).
   => two separate regressions: USB-gadget enumeration in commits 1-70, LTE registration in commits 71-141.
+- 09:19 boot-108-q1.img (step commits 1-35): **USB OK** (adb 20 s), **LTE OK** (~5 min). => USB-gadget regression is in step commits 36-70.
