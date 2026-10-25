@@ -427,3 +427,8 @@ adb sideload ROM. Once Android runs (root adb), measure and write results into n
 - Display: panel/DSI live register values, backlight PWM, CABC/MIE, clocks; compare to mainline (flicker was NOT
   present on stock Android, so it is a mainline driver difference).
 - Video: how the HW decoder path is driven (vendor libs in /vendor via REA).
+- 2026-10-25 23:58 DONE: LineageOS 16.0-20251224-UNOFFICIAL-flounder (retiredtab, Wi-Fi build, md5 verified) installed
+  via TWRP 3.5.0_9-0 (`fastboot flash recovery`, GUI Wipe > Format Data to drop the MD1 forceencrypt state, then
+  `twrp sideload` + `adb sideload`, 175 s). Boots, unencrypted, no FRP prompt, `adb root` works. LTE: not available on
+  this build. Stock Android 7.1.1 (LTE works) is overwritten; its factory zip is still in ~/Downloads/nexus9.
+  Next: the probing described above.
