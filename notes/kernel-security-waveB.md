@@ -417,3 +417,4 @@ one new harmless warning. **Not boot-tested.**
 | CVE-2019-14053 | CVE-2019-14053/3.4/0002.patch | net/xfrm/xfrm_user.c | OK | bcaa06b1c42 | ok |
 | CVE-2019-14283 | CVE-2019-14283/3.18/0004.patch | drivers/block/floppy.c | SKIP | not compiled |  |
 | CVE-2020-29660 | CVE-2020-29660/3.18/0007.patch | drivers/tty/tty_io.c | FAIL | patch does not apply |  |
+- 10:29-10:40 boot-3.10.108-secB.img x2: USB OK (15/20 s), LTE OK (Spark NZ/LTE/IP), Wi-Fi on, cameraserver running, 0 oops/panic. Wave B passes the boot test. (A manual hub kick at 10:33 was unnecessary: script output was buffered.)
