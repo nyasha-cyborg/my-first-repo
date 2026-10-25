@@ -1,5 +1,5 @@
 #!/bin/bash
-# Software "unplug/replug" of the Nexus 9 on this laptop's USB port 3-7.
+# Software "unplug/replug" of the Nexus 9: LG monitor hub 3-3 port 1 (uhubctl, real power cut) or laptop port 3-7.
 #   tools/usb-kick.sh            kick now
 #   tools/usb-kick.sh --watch N  watch; kick when no adb/fastboot/gadget is seen for N seconds (default 240)
 # Connected-but-stuck: usbreset on the tablet's device node (no root needed, udev ACL).
@@ -7,6 +7,8 @@
 PORT=/sys/bus/usb/devices/3-0:1.0/usb3-port7/disable
 seen() { lsusb | grep -qiE "18d1:|0955:|0525:a4a7"; }
 kick() {
+	# Preferred: real power cut on the LG monitor hub (3-3 port 1, needs tools/udev/99-n9-lghub.rules + ~/.local/bin/uhubctl)
+	if command -v uhubctl >/dev/null && uhubctl -l 3-3 -p 1 >/dev/null 2>&1; then echo "$(date +%T) uhubctl power cycle hub 3-3 port 1"; uhubctl -l 3-3 -p 1 -a cycle -d 4 >/dev/null; return; fi
 	local dev; dev=$(lsusb | grep -iE "18d1:|0955:|0525:a4a7" | head -1 | awk '{print $2"/"substr($4,1,3)}')
 	if [ -n "$dev" ]; then echo "$(date +%T) usbreset /dev/bus/usb/$dev"; usbreset "/dev/bus/usb/$dev"; return; fi
 	if [ -w "$PORT" ]; then echo "$(date +%T) port 3-7 power cycle"; echo 1 > "$PORT"; sleep 3; echo 0 > "$PORT"

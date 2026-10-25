@@ -1,0 +1,4 @@
+# Let group wheel switch per-port power on the LG monitor hub (043e:9a46, laptop hub 3-3) where the Nexus 9 sits on port 1,
+# so tools/usb-kick.sh can do a real unplug/replug with uhubctl. Install once:
+#   sudo install -m644 tools/udev/99-n9-lghub.rules /etc/udev/rules.d/ && sudo udevadm control --reload && sudo udevadm trigger -s usb
+SUBSYSTEM=="usb", ATTR{idVendor}=="043e", ATTR{idProduct}=="9a46", MODE="0664", GROUP="wheel"
