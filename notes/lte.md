@@ -750,3 +750,17 @@ but not the Qualcomm files or `rild`.
   /vendor/lib64), `android.hardware.radio@1.x`/`deprecated IOemHook` entries in /vendor/etc/vintf/manifest.xml, rild init
   service (`vendor.ril-daemon`), sepolicy for qmuxd/netmgrd/rild, then a SIM test. Raw EF1/EF2/RCA/CDR backups are in
   ~/Downloads/nexus9/modem-private (never commit them).
+
+## 2026-10-26 00:30 — LTE on LineageOS 16: whole telephony stack runs; modem says "No ATR received" (no SIM seen)
+- Built `rild` (LineageOS lineage-16.0 hardware/ril rild.c + librilutils, NDK r26d clang aarch64 API 28, linked against the
+  tablet's libcutils/libril) -> `/vendor/bin/hw/rild`; `/vendor/etc/init/rild.rc` defines `ril-daemon` (the stock init.rc
+  already does `start ril-daemon` when `ro.hw.ks.ready=1`); added `android.hardware.radio@1.1 IRadio/ISap slot1` and
+  `radio.deprecated@1.0 IOemHook slot1` to `/vendor/etc/vintf/manifest.xml` (original kept as /tmp copy; diff in
+  tools/android/lte/vintf-manifest-radio.diff). Reproduce: `tools/android/lte/install-lte-lineage16.sh`.
+- After reboot: kickstart, qmuxd, netmgrd, ril-daemon all `running`, rmnet_usb0..3 up, RILQ (qcril) initialised, Android
+  telephony (RILJ/GsmCdmaPhone) talking to it. SELinux still Enforcing; only denial in the LTE path:
+  `kickstart` cannot set property `efsks.pid` (harmless so far).
+- Result: `qcril_uim_print_card_status: card_error: No ATR received`, `Number of apps: 0`, `SIM absent`, radio unavailable ->
+  no SIM detected by the modem (tray empty/unseated, or a SIM the modem cannot read). Needs a SIM in the tray; then check
+  `getprop gsm.sim.state`, `gsm.operator.alpha`, `dumpsys telephony.registry`, APN settings.
+- Not yet done: sepolicy for efsks.pid, IMSA (`qmi_client_init failure(31) for IMSA`, VoLTE not needed), SIM test, data test.
