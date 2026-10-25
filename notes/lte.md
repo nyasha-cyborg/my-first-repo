@@ -730,3 +730,23 @@ metric 200, `ping -I wwan0 1.1.1.1` 4/4 (27-77 ms).
   `ip link` for wwan0, `getprop gsm.sim.state`.
 - 15:30 owner: **LTE works on stock Android 7.1.1** (mobile data up, nothing to configure). Stock vendor stack
   (qcks/qmuxd/netmgrd/ril) is the reference for the pmOS modem flow, now confirmed working end to end on this unit.
+
+## 2026-10-26 00:20 — MILESTONE: LTE modem boots on LineageOS 16 after transplanting the stock vendor LTE files
+Owner plan: "update kernel and enable LTE; port security updates later". LineageOS 16 (Wi-Fi build) already ships the init
+services (`kickstart`, `qmuxd`, `netmgrd` in /vendor/etc/init/init.rc, `ro.boot.baseband=ROW`) and the 3.10 kernel mdm driver,
+but not the Qualcomm files or `rild`.
+- Done (reversible, additive): extracted stock `vendor.img` (`debugfs rdump`), pushed 96 files (62 MB) with `adb root; adb remount;
+  adb push stage/. /vendor/` — bins (`qcks ks efsks qmuxd netmgrd port-bridge qmiproxy ATFWD-daemon time_daemon irsc_util
+  bridgemgrd ds_fmc_appd nl_listener radish dsdnsutil`), libs (`lib64`+`lib`: libqmi*, libril-qc-qmi-1, libdsi_netctrl,
+  libnetmgr, libidl, libdiag, libmdmdetect, ...), `/vendor/firmware/mdm/image/*` (24 modem images) + `radiover.cfg`;
+  `chmod 755` bins, `restorecon -R`. File list: `notes/android-reference/lte-transplant-files.txt`. Rollback = delete exactly
+  those paths (all `comm -13` extras, nothing overwritten) and `rm -rf /data/qcks`.
+- Needed by hand: `mkdir -p /data/qcks/mdm; chown system:system; chmod 770; restorecon` (stock init creates it; Lineage's
+  /vendor/etc/init/init.rc has the mkdir lines but they ran before the dir was needed / not applied on this boot - check).
+- `setprop ctl.start kickstart` (SELinux still Enforcing, no denials): modem powered via /dev/mdm, boot ROM 05c6:9008, Sahara
+  uploads all images + efs1/efs2 (wrapper `dd`s EF1/EF2 into /data/qcks), `ks -m -w /data/efs/ -p /dev/efs_hsic_bridge` runs,
+  modem re-enumerates as **05c6:9048 "Qualcomm CDMA Technologies MSM"**, kernel registers **rmnet_usb0..3**, `ro.hw.ks.ready=1`.
+- Missing for telephony: `rild` (Android 9 `/vendor/bin/hw/rild` not in this build; `libril.so`, `libreference-ril.so` are in
+  /vendor/lib64), `android.hardware.radio@1.x`/`deprecated IOemHook` entries in /vendor/etc/vintf/manifest.xml, rild init
+  service (`vendor.ril-daemon`), sepolicy for qmuxd/netmgrd/rild, then a SIM test. Raw EF1/EF2/RCA/CDR backups are in
+  ~/Downloads/nexus9/modem-private (never commit them).
