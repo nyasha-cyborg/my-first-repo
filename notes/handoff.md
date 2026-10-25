@@ -415,3 +415,15 @@ Next actions, in order:
 - Flickering blocks during video (a sync race, not caused by the WC change); backlight unsteady at low
   levels; PMIC -121 NAK bursts at DFLL takeover; LTE in pmOS; Bluetooth.
 - Software playback config: `tools/pmos/etc-mpv/mpv.conf` (480p H.264, vo=gpu).
+
+## >>> NEXT (owner request 2026-10-25 ~23:30): probe Android to learn why pmOS was slow and flickered
+
+Tablet state: stock 7.1.1 flashed but stuck at the Google FRP lock; LineageOS 16 (20251224, retiredtab, Wi-Fi build, no
+LTE) + TWRP 3.5.0_9-0 are in /tmp/n9lineage (re-download from sourceforge retiredtab/Nexus 9/16.0 if /tmp is gone;
+md5 file next to the zip). Flash path: Power+VolDown -> fastboot flash recovery twrp.img -> boot TWRP -> format data ->
+adb sideload ROM. Once Android runs (root adb), measure and write results into notes/gpu.md and display-progress.md:
+- CPU/GPU/EMC clocks and governors under load (cpufreq, devfreq, /d/clk/clk_summary, nvhost/gk20a sysfs), thermal
+  trips and throttling, cl_dvfs behaviour, idle states.
+- Display: panel/DSI live register values, backlight PWM, CABC/MIE, clocks; compare to mainline (flicker was NOT
+  present on stock Android, so it is a mainline driver difference).
+- Video: how the HW decoder path is driven (vendor libs in /vendor via REA).
