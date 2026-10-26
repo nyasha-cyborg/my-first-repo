@@ -92,3 +92,4 @@ DENYUSB (0005-*, as requested). Candidates for a later wave if secD proves stabl
   drivers as BUG() crashes. If a BUG names a specific cache/driver, that is a real bug to fix,
   not a reason to drop the hardening right away.
 - 11:56-12:11 boot-secD.img x2: USB OK (20 s), no oops, cameraserver running, Wi-Fi on, nvavp IOVA OK. LTE not registered both runs because the SIM was removed by the owner (qcril card_error 3 'No ATR', card_state 2). LTE needs a recheck with the SIM back in before/after flashing.
+- 12:15 FLASHED (owner approved): LNX = boot-secD.img (sha256 392ec77b..., verified on-device), boots 3.10.108-gc12ca048de8, 0 oops. Backups: lnx-lineage16-20251224-3.10.103.img, boot-3.10.108-secC.img, boot-secC-nvavp.img in ~/Downloads/nexus9/boot-backups/. TODO: LTE recheck when SIM is back.
