@@ -1,0 +1,3 @@
+# Nexus 9 tuning (nexus9 repo tools/android/n9-tuning.rc): keep more apps resident in compressed zram instead of killing/reloading them.
+on boot
+    write /proc/sys/vm/swappiness 100

@@ -97,3 +97,10 @@ Source of truth: downstream `arch/arm/mach-tegra/tegra12_emc.c` (linckandrea/and
   `/data/efs system:system 0771`. cameraserver then stays up and writes factory_copy_0.bin / nvcam_cache_*.bin.
 - Follow-up for a proper fix: sepolicy `allow vendor_init system_data_file:dir { write add_name }` or create the dirs from
   a `u:r:init` rc (system init), or ship them in the ROM. If /data is wiped again, repeat.
+
+## 2026-10-26 14:35 — smoothness tuning on LineageOS 16 (secD kernel)
+- Measured: RAM 1835 MB total, ~155 MB free; zram0 768 MB (130 MB used); eMMC scheduler noop, read_ahead 128 KB; governor
+  interactive (max 2.397 GHz). Biggest memory user by far: Firefox (~790 MB PSS across 4 processes).
+- Applied (reversible): animation scales 0.5 (window/transition/animator; revert with `settings put global ... 1.0`);
+  vm.swappiness 60 -> 100 via /vendor/etc/init/n9-tuning.rc (copy in tools/android/; lost on ROM update) so more apps stay in zram.
+- Not changed: CPU governor (NVIDIA-tuned, thermal-safe), lowmemorykiller minfree, scheduler.
